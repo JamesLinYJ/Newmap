@@ -1,0 +1,19 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "city": "上海市",
+        "name": "上海候选点 A"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          121.479,
+          31.23
+        ]
+      }
+    }
+  ]
+}
