@@ -1,0 +1,10 @@
+{
+  "name": "@geo-agent-platform/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src-ts/index.ts"
+  }
+}
+

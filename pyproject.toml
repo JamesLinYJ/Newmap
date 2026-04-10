@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geo-agent-platform"
+version = "0.1.0"
+description = "Chinese-first GIS agent platform MVP with FastAPI, LangGraph and MapLibre."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116.0",
+  "httpx>=0.28.0",
+  "langgraph>=0.3.0",
+  "pydantic>=2.11.0",
+  "pydantic-settings>=2.8.0",
+  "pyproj>=3.7.0",
+  "psycopg[binary]>=3.2.0",
+  "python-multipart>=0.0.9",
+  "shapely>=2.0.0",
+  "uvicorn[standard]>=0.35.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.25.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "apps/api/src",
+  "apps/qgis-runtime/src",
+  "apps/worker/src",
+  "packages/agent-core/src",
+  "packages/model-adapters/src",
+  "packages/tool-registry/src",
+  "packages/gis-postgis/src",
+  "packages/gis-qgis/src",
+  "packages/gis-common/src",
+  "packages/map-publisher/src",
+  "packages/shared-types/src"
+]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = [
+  "apps/api/src",
+  "apps/qgis-runtime/src",
+  "apps/worker/src",
+  "packages/agent-core/src",
+  "packages/model-adapters/src",
+  "packages/tool-registry/src",
+  "packages/gis-postgis/src",
+  "packages/gis-qgis/src",
+  "packages/gis-common/src",
+  "packages/map-publisher/src",
+  "packages/shared-types/src"
+]

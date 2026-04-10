@@ -1,0 +1,51 @@
+{
+  "type": "FeatureCollection",
+  "name": "hospitals",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Hotel-Dieu de Paris",
+        "city": "巴黎"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [2.3492, 48.8549]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Saint-Louis Hospital",
+        "city": "巴黎"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [2.3689, 48.8717]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Charite Mitte",
+        "city": "柏林"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [13.3761, 52.5250]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Ruijin Hospital",
+        "city": "上海市"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [121.4693, 31.2151]
+      }
+    }
+  ]
+}
+

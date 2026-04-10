@@ -1,0 +1,19 @@
+{
+  "name": "geo-agent-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "packages/shared-types"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "build:web": "npm run build --workspace apps/web",
+    "lint:web": "npm run lint --workspace apps/web",
+    "test:web": "npm run test --workspace apps/web",
+    "dev:api": "PYTHONPATH=apps/api/src:apps/worker/src:packages/agent-core/src:packages/model-adapters/src:packages/tool-registry/src:packages/gis-postgis/src:packages/gis-qgis/src:packages/gis-common/src:packages/map-publisher/src:packages/shared-types/src python3 -m uvicorn api_app.main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:qgis-runtime": "PYTHONPATH=apps/qgis-runtime/src:packages/gis-qgis/src:packages/gis-common/src:packages/shared-types/src python3 -m uvicorn qgis_runtime_app.main:app --reload --host 0.0.0.0 --port 8090",
+    "test:api": "pytest -q",
+    "test": "npm run test:api"
+  }
+}

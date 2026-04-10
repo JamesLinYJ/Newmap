@@ -1,0 +1,74 @@
+{
+  "type": "FeatureCollection",
+  "name": "admin_boundaries",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "巴黎",
+        "name_en": "Paris",
+        "country": "France",
+        "kind": "city"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[2.2241, 48.8156], [2.4699, 48.8156], [2.4699, 48.9022], [2.2241, 48.9022], [2.2241, 48.8156]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "柏林",
+        "name_en": "Berlin",
+        "country": "Germany",
+        "kind": "city"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[13.0884, 52.3383], [13.7611, 52.3383], [13.7611, 52.6755], [13.0884, 52.6755], [13.0884, 52.3383]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "上海市",
+        "name_en": "Shanghai",
+        "country": "China",
+        "kind": "municipality"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[120.85, 30.66], [122.12, 30.66], [122.12, 31.88], [120.85, 31.88], [120.85, 30.66]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Springfield",
+        "name_en": "Springfield, Illinois",
+        "country": "United States",
+        "kind": "city",
+        "disambiguation": "Illinois"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-89.7440, 39.7320], [-89.5660, 39.7320], [-89.5660, 39.8530], [-89.7440, 39.8530], [-89.7440, 39.7320]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Springfield",
+        "name_en": "Springfield, Missouri",
+        "country": "United States",
+        "kind": "city",
+        "disambiguation": "Missouri"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-93.3790, 37.1380], [-93.1900, 37.1380], [-93.1900, 37.2610], [-93.3790, 37.2610], [-93.3790, 37.1380]]]
+      }
+    }
+  ]
+}
+

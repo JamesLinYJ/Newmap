@@ -1,0 +1,40 @@
+{
+  "type": "FeatureCollection",
+  "name": "candidate_sites",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "巴黎候选点 A",
+        "city": "巴黎"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [2.3410, 48.8620]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "柏林候选点 A",
+        "city": "柏林"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [13.4050, 52.5200]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "上海候选点 A",
+        "city": "上海市"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [121.4790, 31.2300]
+      }
+    }
+  ]
+}
+

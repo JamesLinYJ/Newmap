@@ -1,0 +1,62 @@
+{
+  "type": "FeatureCollection",
+  "name": "metro_stations",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Chatelet",
+        "city": "巴黎"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [2.3470, 48.8583]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Gare du Nord",
+        "city": "巴黎"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [2.3553, 48.8809]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Alexanderplatz",
+        "city": "柏林"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [13.4125, 52.5219]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Berlin Hbf",
+        "city": "柏林"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [13.3695, 52.5251]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "人民广场",
+        "city": "上海市"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [121.4753, 31.2380]
+      }
+    }
+  ]
+}
+

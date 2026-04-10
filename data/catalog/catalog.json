@@ -1,0 +1,37 @@
+{
+  "layers": [
+    {
+      "layer_key": "admin_boundaries",
+      "name": "行政区边界",
+      "source_type": "builtin",
+      "geometry_type": "Polygon",
+      "srid": 4326,
+      "description": "内置全球演示边界图层"
+    },
+    {
+      "layer_key": "metro_stations",
+      "name": "地铁站",
+      "source_type": "builtin",
+      "geometry_type": "Point",
+      "srid": 4326,
+      "description": "内置地铁站演示数据"
+    },
+    {
+      "layer_key": "hospitals",
+      "name": "医院",
+      "source_type": "builtin",
+      "geometry_type": "Point",
+      "srid": 4326,
+      "description": "内置医院演示数据"
+    },
+    {
+      "layer_key": "candidate_sites",
+      "name": "候选点位",
+      "source_type": "builtin",
+      "geometry_type": "Point",
+      "srid": 4326,
+      "description": "内置候选点演示数据"
+    }
+  ]
+}
+
