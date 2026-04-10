@@ -10,7 +10,7 @@ services:
       - api
       - qgis-server
     ports:
-      - "80:80"
+      - "${WEB_PORT:-80}:80"
 
   api:
     build:
