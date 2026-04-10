@@ -22,7 +22,7 @@ fi
 
 add_repo() {
   local repo_url="$1"
-  yum-config-manager --add-repo "${repo_url}"
+  curl -fsSL "${repo_url}" -o /etc/yum.repos.d/docker-ce.repo
 }
 
 install_docker_packages() {
