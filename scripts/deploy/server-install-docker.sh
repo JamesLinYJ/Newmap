@@ -59,8 +59,17 @@ if [[ "${install_ok:-0}" != "1" ]]; then
   exit 1
 fi
 
+DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-https://hd1esep4.mirror.aliyuncs.com}"
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": ["${DOCKER_REGISTRY_MIRRORS}"]
+}
+EOF
+
 echo "[step] 启动 Docker"
 systemctl enable --now docker
+systemctl restart docker
 
 echo "[ok] Docker 安装完成"
 docker --version
