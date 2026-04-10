@@ -23,7 +23,13 @@ data/system/*.sqlite3
 qgis/published/*
 !qgis/published/data/
 !qgis/published/data/.gitkeep
+qgis/published/data/*
+!qgis/published/data/.gitkeep
 !qgis/published/projects/
 !qgis/published/projects/.gitkeep
+qgis/published/projects/*
+!qgis/published/projects/.gitkeep
 !qgis/published/workspaces/
+!qgis/published/workspaces/.gitkeep
+qgis/published/workspaces/*
 !qgis/published/workspaces/.gitkeep

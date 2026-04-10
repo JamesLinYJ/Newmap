@@ -32,8 +32,16 @@ else
   git remote set-url origin "${REPO_URL}"
 fi
 
+echo "[step] 清理运行时产物追踪"
+while IFS= read -r -d '' tracked_file; do
+  git rm --cached --ignore-unmatch -- "${tracked_file}"
+done < <(find qgis/published -type f ! -name '.gitkeep' -print0)
+while IFS= read -r -d '' tracked_file; do
+  git rm --cached --ignore-unmatch -- "${tracked_file}"
+done < <(find data/system -maxdepth 1 -type f -name '*.sqlite3' -print0 2>/dev/null || true)
+
 echo "[step] 提交并推送代码"
-git add . ":(exclude)*.pdf"
+git add -A -- . ":(exclude)*.pdf"
 if ! git diff --cached --quiet; then
   git commit -m "${COMMIT_MESSAGE}"
 fi
