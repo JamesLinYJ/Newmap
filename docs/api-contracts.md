@@ -4,6 +4,7 @@
 
 - `POST /api/v1/sessions`
 - `GET /api/v1/sessions/{id}`
+- `GET /api/v1/sessions/{id}/runs`
 - `GET /api/v1/system/components`
 
 ## Analysis

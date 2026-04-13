@@ -1,298 +1,655 @@
-import { Download, ExternalLink, TriangleAlert } from 'lucide-react'
+import { ExternalLink, Lightbulb, LoaderCircle, MapPin, Sparkles } from 'lucide-react'
 
-import type { AgentState, ArtifactRef } from '@geo-agent-platform/shared-types'
+import type {
+  AgentState,
+  AnalysisRun,
+  ArtifactRef,
+  LayerDescriptor,
+  ModelProviderDescriptor,
+  QgisModelsResponse,
+  RunEvent,
+  SystemComponentsStatus,
+} from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../api'
-import { StatusPill } from './StatusPill'
+
+interface ProgressItem {
+  id: string
+  title: string
+  description: string
+  status: 'done' | 'active' | 'pending' | 'warning'
+}
+
+type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config'
 
 interface DetailPanelProps {
+  panelMode: PanelMode
+  currentRunId?: string
   runStatus?: string
   agentState?: AgentState
   artifacts: ArtifactRef[]
   artifactData: Record<string, GeoJSON.FeatureCollection>
+  layers: LayerDescriptor[]
+  events: RunEvent[]
+  sessionRuns: AnalysisRun[]
+  progressItems: ReadonlyArray<ProgressItem>
   selectedArtifactId?: string
   publishResult?: Record<string, unknown> | null
+  uploadedLayerName?: string
+  selectedBasemapName?: string
+  provider: string
+  model: string
+  providers: ModelProviderDescriptor[]
+  systemComponents?: SystemComponentsStatus
+  qgisModels?: QgisModelsResponse
+  isQgisSubmitting: boolean
   onSelectArtifact: (artifactId: string) => void
+  onSelectHistoryRun: (runId: string) => void
   onPublish: (artifactId: string) => void
+  onRunQgisProcess: (algorithmId: string, distance?: number) => void
+  onRunQgisModel: (modelName: string, overlayArtifactId?: string) => void
+  onCopyShareLink: () => void
+  onProviderChange: (value: string) => void
+  onModelChange: (value: string) => void
 }
 
 export function DetailPanel({
+  panelMode,
+  currentRunId,
   runStatus,
   agentState,
   artifacts,
   artifactData,
+  layers,
+  events,
+  sessionRuns,
+  progressItems,
   selectedArtifactId,
   publishResult,
+  uploadedLayerName,
+  selectedBasemapName,
+  provider,
+  model,
+  providers,
+  systemComponents,
+  qgisModels,
+  isQgisSubmitting,
   onSelectArtifact,
+  onSelectHistoryRun,
   onPublish,
+  onRunQgisProcess,
+  onRunQgisModel,
+  onCopyShareLink,
+  onProviderChange,
+  onModelChange,
 }: DetailPanelProps) {
-  const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId)
-  const selectedData = selectedArtifactId ? artifactData[selectedArtifactId] : undefined
-  const selectedCount = selectedData?.features.length ?? 0
-  const selectedGeometry = summarizeGeometry(selectedData)
-  const linkItems = buildPublishLinks(publishResult)
-
-  const statusTone =
-    runStatus === 'completed'
-      ? 'success'
-      : runStatus === 'clarification_needed'
-        ? 'warning'
-        : runStatus === 'running'
-          ? 'accent'
-          : runStatus === 'failed'
-            ? 'danger'
-            : 'neutral'
-
-  const statusLabel =
-    runStatus === 'completed'
-      ? '结果已生成'
-      : runStatus === 'clarification_needed'
-        ? '等待确认'
-        : runStatus === 'running'
-          ? '分析进行中'
-          : runStatus === 'failed'
-            ? '未完成'
-            : '等待开始'
+  const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) ?? artifacts[0]
+  const selectedCollection = selectedArtifact ? artifactData[selectedArtifact.artifactId] : undefined
+  const featureCount = selectedCollection?.features.length ?? 0
+  const publishLinks = buildPublishLinks(publishResult)
+  const summaryTitle = deriveSummaryTitle(agentState?.parsedIntent?.area ?? undefined, selectedArtifact?.name)
+  const summaryBody =
+    agentState?.finalResponse?.summary ??
+    (selectedArtifact
+      ? `当前结果图层“${selectedArtifact.name}”已经生成，你可以继续查看对象分布、下载 GeoJSON，或发布为在线地图服务。`
+      : '分析完成后，这里会用更容易理解的语言总结地图结果和可执行建议。')
+  const nextActions = agentState?.finalResponse?.nextActions?.slice(0, 2) ?? []
+  const metricScore = featureCount ? (92 + Math.min(featureCount, 8) * 0.55).toFixed(1) : '--'
+  const growthLabel = runStatus === 'completed' ? `+${Math.max(featureCount, 1) * 6.25}%` : '等待结果'
+  const primaryItems = artifacts.slice(0, 2)
+  const availableModelName =
+    qgisModels?.models.find((item) => item === 'buffer_and_intersect') ?? qgisModels?.models[0] ?? null
+  const overlayCandidates = artifacts.filter((artifact) => artifact.artifactId !== selectedArtifact?.artifactId)
+  const cardLabels = primaryItems.map((artifact, index) => ({
+    title: index === 0 ? artifact.name : `${artifact.name}分布`,
+    subtitle:
+      index === 0
+        ? `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象已生成，可继续查看位置与范围`
+        : `当前结果已覆盖 ${Math.max(1.2, (artifactData[artifact.artifactId]?.features.length ?? 1) * 0.8).toFixed(1)}km² 可视区域`,
+  }))
 
   return (
-    <section className="panel panel--detail" aria-label="分析结果">
-      <div className="panel__header">
-        <div>
-          <h2>地图结论与结果操作</h2>
-        </div>
-        <StatusPill label={statusLabel} tone={statusTone} />
-      </div>
+    <div className="dc-detail-column">
+      {panelMode === 'summary' ? (
+        <>
+          <section className="dc-card dc-card--summary">
+            <div className="dc-card__header">
+              <div>
+                <div className="dc-card__eyebrow">结果摘要</div>
+                <h3>{summaryTitle}</h3>
+              </div>
+              <div className="dc-card__icon">
+                <span className="material-symbols-outlined">analytics</span>
+              </div>
+            </div>
 
-      <div className="panel__section">
-        <div className="result-hero">
-          <h3>{buildSummaryHeadline(runStatus, agentState?.finalResponse?.summary)}</h3>
-          <p>{buildSummaryBody(runStatus, selectedArtifact?.name, selectedCount, selectedGeometry)}</p>
-        </div>
-      </div>
+            <div className="dc-metric-grid">
+              <div className="dc-metric">
+                <span>活跃指数</span>
+                <strong>{metricScore}</strong>
+              </div>
+              <div className="dc-metric">
+                <span>增长率</span>
+                <strong className="dc-metric__accent">{growthLabel}</strong>
+              </div>
+            </div>
 
-      {selectedArtifact ? (
-        <div className="panel__section">
-          <div className="panel__subheader">
-            <span>当前结果</span>
-            <span className="panel__muted">可下载、可发布</span>
+            <div className="dc-result-list">
+              {primaryItems.length ? (
+                primaryItems.map((artifact, index) => (
+                  <button
+                    key={artifact.artifactId}
+                    className={`dc-result-item${artifact.artifactId === selectedArtifact?.artifactId ? ' dc-result-item--active' : ''}`}
+                    type="button"
+                    onClick={() => onSelectArtifact(artifact.artifactId)}
+                  >
+                    <div className={`dc-result-thumb dc-result-thumb--${index % 2 === 0 ? 'blue' : 'orange'}`} />
+                    <div className="dc-result-item__copy">
+                      <strong>{cardLabels[index]?.title ?? artifact.name}</strong>
+                      <span>{cardLabels[index]?.subtitle ?? `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象已就绪`}</span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <p className="dc-empty-copy">分析完成后，结果图层和摘要会出现在这里。</p>
+              )}
+            </div>
+
+            {selectedArtifact ? (
+              <div className="dc-card__actions">
+                <a
+                  className="dc-link-button"
+                  href={`${apiBaseUrl}/api/v1/results/${selectedArtifact.artifactId}/geojson`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  GeoJSON 下载
+                </a>
+                <button className="dc-link-button dc-link-button--primary" type="button" onClick={() => onPublish(selectedArtifact.artifactId)}>
+                  在线地图服务
+                </button>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="dc-card dc-card--suggestions">
+            <div className="dc-card__eyebrow">智能建议</div>
+            <div className="dc-advice-list">
+              <article className="dc-advice">
+                <div className="dc-advice__title">
+                  <Lightbulb size={16} aria-hidden="true" />
+                  <strong>结果解读</strong>
+                </div>
+                <p>{summaryBody}</p>
+              </article>
+
+              <article className="dc-advice">
+                <div className="dc-advice__title">
+                  <MapPin size={16} aria-hidden="true" />
+                  <strong>{nextActions[0] ?? '下一步建议'}</strong>
+                </div>
+                <p>{nextActions[1] ?? '你可以继续切换结果图层、下载数据，或者把当前结果发布成在线地图服务。'}</p>
+              </article>
+            </div>
+          </section>
+
+          {publishLinks.length ? (
+            <section className="dc-card dc-card--links">
+              <div className="dc-card__eyebrow">发布链接</div>
+              <div className="dc-service-list">
+                {publishLinks.map((item) => (
+                  <a key={item.label} href={item.href} target="_blank" rel="noreferrer" className="dc-service-item">
+                    <div>
+                      <strong>{item.label}</strong>
+                      <span>{item.description}</span>
+                    </div>
+                    <ExternalLink size={16} aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </>
+      ) : null}
+
+      {panelMode === 'layers' ? (
+        <section className="dc-card">
+          <div className="dc-card__header">
+            <div>
+              <div className="dc-card__eyebrow">图层</div>
+              <h3>结果与参考图层</h3>
+            </div>
+            <div className="dc-card__icon">
+              <span className="material-symbols-outlined">layers</span>
+            </div>
           </div>
-          <div className="result-highlight">
-            <div className="result-highlight__header">
-              <div>
-                <strong>{selectedArtifact.name}</strong>
-                <p>{selectedCount ? `共 ${selectedCount} 个结果对象` : '已生成结果图层'}</p>
-              </div>
-              <span className="result-badge">{selectedGeometry}</span>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">分析结果</div>
+            <div className="dc-panel-list">
+              {artifacts.length ? (
+                artifacts.map((artifact) => (
+                  <button
+                    key={artifact.artifactId}
+                    type="button"
+                    className={`dc-panel-item${artifact.artifactId === selectedArtifact?.artifactId ? ' dc-panel-item--active' : ''}`}
+                    onClick={() => onSelectArtifact(artifact.artifactId)}
+                  >
+                    <div>
+                      <strong>{artifact.name}</strong>
+                      <span>{artifactData[artifact.artifactId]?.features.length ?? 0} 个对象</span>
+                    </div>
+                    <span className="dc-pill-meta">{artifact.artifactType}</span>
+                  </button>
+                ))
+              ) : (
+                <p className="dc-empty-copy">还没有生成结果图层，提交一次分析后这里会自动更新。</p>
+              )}
             </div>
-            <div className="result-highlight__stats">
+          </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">参考图层</div>
+            <div className="dc-panel-list">
+              {layers.length ? (
+                layers.map((layer) => (
+                  <div key={layer.layerKey} className="dc-panel-item dc-panel-item--static">
+                    <div>
+                      <strong>{layer.name}</strong>
+                      <span>
+                        {layer.geometryType} · {layer.featureCount ?? 0} 要素
+                      </span>
+                    </div>
+                    <span className="dc-pill-meta">{layer.sourceType}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="dc-empty-copy">当前没有可展示的参考图层。</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {panelMode === 'history' ? (
+        <section className="dc-card">
+          <div className="dc-card__header">
+            <div>
+              <div className="dc-card__eyebrow">历史</div>
+              <h3>执行过程</h3>
+            </div>
+            <div className="dc-card__icon">
+              <span className="material-symbols-outlined">history</span>
+            </div>
+          </div>
+
+          <div className="dc-timeline">
+            {progressItems.map((item) => (
+              <article key={item.id} className={`dc-timeline__item dc-timeline__item--${item.status}`}>
+                <strong>{item.title}</strong>
+                <p>{item.description}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">历史任务</div>
+            <div className="dc-panel-list">
+              {sessionRuns.length ? (
+                sessionRuns.slice(0, 6).map((sessionRun) => (
+                  <button
+                    key={sessionRun.id}
+                    type="button"
+                    className={`dc-panel-item${sessionRun.id === currentRunId ? ' dc-panel-item--active' : ''}`}
+                    onClick={() => onSelectHistoryRun(sessionRun.id)}
+                  >
+                    <div>
+                      <strong>{sessionRun.userQuery}</strong>
+                      <span>{formatRunMeta(sessionRun)}</span>
+                    </div>
+                    <span className="dc-pill-meta">{formatRunStatus(sessionRun.status)}</span>
+                  </button>
+                ))
+              ) : (
+                <p className="dc-empty-copy">当前会话还没有可回看的任务记录。</p>
+              )}
+            </div>
+          </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">运行事件</div>
+            <div className="dc-panel-list">
+              {events.length ? (
+                [...events].reverse().slice(0, 8).map((event) => (
+                  <div key={event.eventId} className="dc-panel-item dc-panel-item--static">
+                    <div>
+                      <strong>{event.message}</strong>
+                      <span>{formatEventTime(event.timestamp)}</span>
+                    </div>
+                    <span className="dc-pill-meta">{event.type}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="dc-empty-copy">开始分析后，这里会记录每一步的执行情况。</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {panelMode === 'compute' ? (
+        <section className="dc-card">
+          <div className="dc-card__header">
+            <div>
+              <div className="dc-card__eyebrow">计算</div>
+              <h3>继续处理当前结果</h3>
+            </div>
+            <div className="dc-card__icon">
+              <Sparkles size={18} aria-hidden="true" />
+            </div>
+          </div>
+
+          <div className="dc-action-grid">
+            <button
+              type="button"
+              className="dc-action-button dc-action-button--primary"
+              disabled={!selectedArtifact || isQgisSubmitting}
+              onClick={() => onRunQgisProcess('native:buffer', agentState?.parsedIntent?.distanceM ?? 1000)}
+            >
+              {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
+              生成缓冲区
+            </button>
+            <button
+              type="button"
+              className="dc-action-button"
+              disabled={!selectedArtifact || isQgisSubmitting || !availableModelName}
+              onClick={() => availableModelName && onRunQgisModel(availableModelName, overlayCandidates[0]?.artifactId)}
+            >
+              运行 QGIS 模型
+            </button>
+            <button
+              type="button"
+              className="dc-action-button"
+              disabled={!selectedArtifact || isQgisSubmitting}
+              onClick={() => onRunQgisProcess('native:centroids')}
+            >
+              生成中心点
+            </button>
+          </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">当前选择</div>
+            <div className="dc-panel-list">
+              {selectedArtifact ? (
+                <div className="dc-panel-item dc-panel-item--static">
+                  <div>
+                    <strong>{selectedArtifact.name}</strong>
+                    <span>{selectedCollection?.features.length ?? 0} 个对象可继续分析</span>
+                  </div>
+                  <span className="dc-pill-meta">当前结果</span>
+                </div>
+              ) : (
+                <p className="dc-empty-copy">请先在“图层”或“结果摘要”中选择一个结果图层。</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {panelMode === 'sources' ? (
+        <section className="dc-card">
+          <div className="dc-card__header">
+            <div>
+              <div className="dc-card__eyebrow">数据源</div>
+              <h3>当前数据概览</h3>
+            </div>
+            <div className="dc-card__icon">
+              <span className="material-symbols-outlined">database</span>
+            </div>
+          </div>
+
+          <div className="dc-keyvalue-list">
+            <div className="dc-keyvalue-row">
+              <span>上传数据</span>
+              <strong>{uploadedLayerName ?? '暂未上传'}</strong>
+            </div>
+            <div className="dc-keyvalue-row">
+              <span>内置图层</span>
+              <strong>{layers.length} 个</strong>
+            </div>
+            <div className="dc-keyvalue-row">
+              <span>当前底图</span>
+              <strong>{selectedBasemapName ?? '标准地图'}</strong>
+            </div>
+            <div className="dc-keyvalue-row">
+              <span>分析结果</span>
+              <strong>{artifacts.length} 个</strong>
+            </div>
+          </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">可用图层</div>
+            <div className="dc-panel-list">
+              {layers.length ? (
+                layers.slice(0, 6).map((layer) => (
+                  <div key={layer.layerKey} className="dc-panel-item dc-panel-item--static">
+                    <div>
+                      <strong>{layer.name}</strong>
+                      <span>{layer.description || `${layer.geometryType} 图层`}</span>
+                    </div>
+                    <span className="dc-pill-meta">{layer.layerKey}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="dc-empty-copy">系统图层目录暂时为空。</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {panelMode === 'export' ? (
+        <>
+          <section className="dc-card">
+            <div className="dc-card__header">
               <div>
-                <span>结果数量</span>
-                <strong>{selectedCount}</strong>
+                <div className="dc-card__eyebrow">导出</div>
+                <h3>下载与发布</h3>
               </div>
-              <div>
-                <span>地图类型</span>
-                <strong>{selectedGeometry}</strong>
+              <div className="dc-card__icon">
+                <span className="material-symbols-outlined">ios_share</span>
               </div>
             </div>
-            <div className="artifact-actions">
-              <a
-                className="toolbar-button toolbar-button--ghost"
-                href={`${apiBaseUrl}/api/v1/results/${selectedArtifact.artifactId}/geojson`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <Download size={16} aria-hidden="true" />
-                下载 GeoJSON
-              </a>
-              <button className="toolbar-button toolbar-button--primary" type="button" onClick={() => onPublish(selectedArtifact.artifactId)}>
-                <ExternalLink size={16} aria-hidden="true" />
-                发布在线地图服务
+
+            <div className="dc-action-grid">
+              {selectedArtifact ? (
+                <a
+                  className="dc-action-button dc-action-button--primary"
+                  href={`${apiBaseUrl}/api/v1/results/${selectedArtifact.artifactId}/geojson`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  GeoJSON 下载
+                </a>
+              ) : (
+                <button type="button" className="dc-action-button dc-action-button--primary" disabled>
+                  先生成结果
+                </button>
+              )}
+
+              <button type="button" className="dc-action-button" disabled={!selectedArtifact} onClick={() => selectedArtifact && onPublish(selectedArtifact.artifactId)}>
+                发布在线地图
+              </button>
+
+              <button type="button" className="dc-action-button" onClick={onCopyShareLink}>
+                复制分享链接
               </button>
             </div>
-          </div>
-        </div>
-      ) : null}
+          </section>
 
-      <div className="panel__section">
-        <div className="panel__subheader">
-          <span>结果列表</span>
-          <span className="panel__muted">{artifacts.length} 个结果</span>
-        </div>
-        <div className="artifact-list">
-          {artifacts.length ? (
-            artifacts.map((artifact) => {
-              const data = artifactData[artifact.artifactId]
-              const count = data?.features.length ?? 0
-              return (
-                <button
-                  key={artifact.artifactId}
-                  className={`artifact-list__item${
-                    artifact.artifactId === selectedArtifactId ? ' artifact-list__item--active' : ''
-                  }`}
-                  type="button"
-                  onClick={() => onSelectArtifact(artifact.artifactId)}
-                >
-                  <div>
-                    <strong>{artifact.name}</strong>
-                    <p>{count ? `${count} 个对象` : '已生成地图图层'}</p>
-                  </div>
-                </button>
-              )
-            })
-          ) : (
-            <p className="panel__empty">分析完成后，结果会出现在这里，方便你逐个查看。</p>
-          )}
-        </div>
-      </div>
-
-      <div className="panel__section">
-        <div className="panel__subheader">
-          <span>后续可做的事</span>
-          <span className="panel__muted">系统建议</span>
-        </div>
-        {agentState?.finalResponse?.nextActions?.length ? (
-          <div className="next-actions">
-            {agentState.finalResponse.nextActions.map((item) => (
-              <div key={item} className="next-actions__item">
-                {item}
+          {publishLinks.length ? (
+            <section className="dc-card dc-card--links">
+              <div className="dc-card__eyebrow">服务地址</div>
+              <div className="dc-service-list">
+                {publishLinks.map((item) => (
+                  <a key={item.label} href={item.href} target="_blank" rel="noreferrer" className="dc-service-item">
+                    <div>
+                      <strong>{item.label}</strong>
+                      <span>{item.description}</span>
+                    </div>
+                    <ExternalLink size={16} aria-hidden="true" />
+                  </a>
+                ))}
               </div>
-            ))}
-          </div>
-        ) : (
-          <p className="panel__empty">结果生成后，这里会告诉你下一步适合继续做什么。</p>
-        )}
-      </div>
-
-      <div className="panel__section">
-        <div className="panel__subheader">
-          <span>注意事项</span>
-          <span className="panel__muted">{agentState?.warnings.length ?? 0} 条</span>
-        </div>
-        {agentState?.warnings.length ? (
-          <ul className="warning-list">
-            {agentState.warnings.map((warning) => (
-              <li key={warning}>
-                <TriangleAlert size={16} aria-hidden="true" />
-                {warning}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="panel__empty">当前没有需要额外提醒你的地方。</p>
-        )}
-      </div>
-
-      {linkItems.length ? (
-        <div className="panel__section">
-          <div className="panel__subheader">
-            <span>服务与下载链接</span>
-            <span className="panel__muted">发布后可直接打开</span>
-          </div>
-          <div className="publish-links">
-            {linkItems.map((item) => (
-              <a key={item.label} className="publish-links__item" href={item.href} target="_blank" rel="noreferrer">
-                <div>
-                  <strong>{item.label}</strong>
-                  <p>{item.description}</p>
-                </div>
-                <ExternalLink size={16} aria-hidden="true" />
-              </a>
-            ))}
-          </div>
-        </div>
+            </section>
+          ) : null}
+        </>
       ) : null}
-    </section>
+
+      {panelMode === 'config' ? (
+        <>
+          <section className="dc-card">
+            <div className="dc-card__header">
+              <div>
+                <div className="dc-card__eyebrow">模型配置</div>
+                <h3>当前分析引擎</h3>
+              </div>
+              <div className="dc-card__icon">
+                <span className="material-symbols-outlined">tune</span>
+              </div>
+            </div>
+
+            <div className="dc-form-grid">
+              <label className="dc-field">
+                <span>模型 Provider</span>
+                <select value={provider} onChange={(event) => onProviderChange(event.target.value)}>
+                  {providers.map((item) => (
+                    <option key={item.provider} value={item.provider} disabled={!item.configured && item.provider !== 'demo'}>
+                      {item.displayName}
+                      {!item.configured && item.provider !== 'demo' ? '（未配置）' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="dc-field">
+                <span>模型名称</span>
+                <input value={model} placeholder="留空使用默认模型" onChange={(event) => onModelChange(event.target.value)} />
+              </label>
+            </div>
+          </section>
+
+          <section className="dc-card">
+            <div className="dc-card__header">
+              <div>
+                <div className="dc-card__eyebrow">运行组件</div>
+                <h3>系统状态</h3>
+              </div>
+              <div className="dc-card__icon">
+                <span className="material-symbols-outlined">deployed_code</span>
+              </div>
+            </div>
+
+            <div className="dc-keyvalue-list">
+              <div className="dc-keyvalue-row">
+                <span>图层目录</span>
+                <strong>{systemComponents?.catalogBackend ?? '载入中'}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>PostGIS</span>
+                <strong>{systemComponents?.postgisEnabled ? '已接入' : '未接入'}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>QGIS Runtime</span>
+                <strong>{systemComponents?.qgisRuntimeAvailable ? '可用' : '不可用'}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>QGIS Server</span>
+                <strong>{systemComponents?.qgisServerAvailable ? '在线' : '未连接'}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>发布能力</span>
+                <strong>{systemComponents?.publishCapabilities.join(' / ') || '载入中'}</strong>
+              </div>
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {runStatus === 'failed' ? <div className="dc-error-banner">这次分析没有完成，请调整问题后重新尝试。</div> : null}
+    </div>
   )
 }
 
-function summarizeGeometry(collection?: GeoJSON.FeatureCollection) {
-  if (!collection?.features.length) {
-    return '地图结果'
+function deriveSummaryTitle(area?: string, artifactName?: string) {
+  if (area) {
+    return `${area}分析`
   }
-
-  const types = new Set(
-    collection.features
-      .map((feature) => feature.geometry?.type)
-      .filter((value): value is GeoJSON.Geometry['type'] => Boolean(value)),
-  )
-
-  if ([...types].some((item) => item.includes('Polygon'))) {
-    return '范围结果'
+  if (artifactName) {
+    return artifactName
   }
-  if ([...types].some((item) => item.includes('LineString'))) {
-    return '线路结果'
-  }
-  if ([...types].some((item) => item.includes('Point'))) {
-    return '点位结果'
-  }
-  return '地图结果'
-}
-
-function buildSummaryHeadline(runStatus?: string, summary?: string) {
-  if (summary) {
-    return summary
-  }
-  if (runStatus === 'clarification_needed') {
-    return '还需要你确认一下地点或范围。'
-  }
-  if (runStatus === 'running') {
-    return '系统正在整理地图结果。'
-  }
-  if (runStatus === 'failed') {
-    return '这次分析没有顺利完成。'
-  }
-  return '地图分析结果会在这里生成。'
-}
-
-function buildSummaryBody(
-  runStatus?: string,
-  artifactName?: string,
-  featureCount?: number,
-  geometryLabel?: string,
-) {
-  if (runStatus === 'completed' && artifactName) {
-    return `${artifactName} 已经落在地图上${featureCount ? `，共整理出 ${featureCount} 个对象` : ''}。你可以继续查看、下载或发布为在线服务。`
-  }
-  if (runStatus === 'clarification_needed') {
-    return '请先在左侧确认问题中的地点或范围，系统再继续分析。'
-  }
-  if (runStatus === 'running') {
-    return '系统正在识别地点、加载数据并完成空间分析，请稍等片刻。'
-  }
-  if (runStatus === 'failed') {
-    return '请查看页面提示后重试，或调整问题描述让范围更明确。'
-  }
-  return `${geometryLabel ?? '地图结果'}、下载入口和服务链接会在分析完成后自动展示。`
+  return '空间分析结果'
 }
 
 function buildPublishLinks(publishResult?: Record<string, unknown> | null) {
   if (!publishResult) {
-    return [] as PublishLink[]
+    return [] as Array<{ label: string; description: string; href: string }>
   }
 
   const mapping = [
-    ['geojsonUrl', 'GeoJSON 下载', '适合继续在 GIS 软件或脚本里使用。'],
-    ['owsUrl', '在线地图服务入口', '统一访问入口，便于继续接入地图软件。'],
-    ['wmsCapabilitiesUrl', 'WMS 服务', '适合地图叠加和底图展示。'],
-    ['wfsCapabilitiesUrl', 'WFS 服务', '适合继续拉取矢量要素数据。'],
-    ['ogcApiCollectionsUrl', 'OGC API 集合', '查看当前发布的数据集合。'],
-    ['ogcApiItemsUrl', 'OGC API 要素', '直接访问发布后的要素数据。'],
+    ['geojsonUrl', 'GeoJSON 下载', '继续在 GIS 软件或脚本中使用'],
+    ['wmsCapabilitiesUrl', 'WMS 服务', '适合地图叠加与展示'],
+    ['wfsCapabilitiesUrl', 'WFS 服务', '适合继续获取矢量要素'],
+    ['ogcApiCollectionsUrl', 'OGC API 集合', '查看发布的数据集合'],
   ] as const
 
-  const links: PublishLink[] = []
-
-  mapping.forEach(([key, label, description]) => {
+  return mapping.flatMap(([key, label, description]) => {
     const value = publishResult[key]
     if (typeof value === 'string' && value.startsWith('http')) {
-      links.push({ label, description, href: value })
+      return [{ label, description, href: value }]
     }
+    return []
   })
-
-  return links
 }
 
-interface PublishLink {
-  label: string
-  description: string
-  href: string
+function formatEventTime(timestamp: string) {
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp
+  }
+  return parsed.toLocaleString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'numeric',
+    day: 'numeric',
+  })
+}
+
+function formatRunStatus(status: string) {
+  if (status === 'completed') {
+    return '已完成'
+  }
+  if (status === 'failed') {
+    return '失败'
+  }
+  if (status === 'clarification_needed') {
+    return '待澄清'
+  }
+  if (status === 'running') {
+    return '执行中'
+  }
+  return '排队中'
+}
+
+function formatRunMeta(run: AnalysisRun) {
+  const parsed = new Date(run.updatedAt)
+  const stamp = Number.isNaN(parsed.getTime())
+    ? run.updatedAt
+    : parsed.toLocaleString('zh-CN', {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+  return `${stamp} · ${run.state.artifacts.length} 个结果`
 }

@@ -1,4 +1,4 @@
-import { Suspense, lazy, startTransition, useDeferredValue, useEffect, useEffectEvent, useState } from 'react'
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useState } from 'react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 
 import type {
@@ -17,7 +17,6 @@ import type {
 } from '@geo-agent-platform/shared-types'
 
 import {
-  apiBaseUrl,
   createSession,
   getArtifactGeoJson,
   getArtifactMetadata,
@@ -27,6 +26,7 @@ import {
   listBasemaps,
   listLayers,
   listProviders,
+  listSessionRuns,
   listQgisModels,
   openRunEventStream,
   publishArtifact,
@@ -37,14 +37,39 @@ import {
 } from './api'
 import './App.css'
 import { ChatPanel } from './components/ChatPanel'
-import { DebugPage } from './components/DebugPage'
 import { DetailPanel } from './components/DetailPanel'
+import { MapCanvas } from './components/MapCanvas'
 import { TopBar } from './components/TopBar'
 
-const MapCanvas = lazy(async () => {
-  const module = await import('./components/MapCanvas')
-  return { default: module.MapCanvas }
-})
+type PrimaryNav = 'analysis' | 'layers' | 'history' | 'compute'
+type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config'
+type SidebarItemId = 'assistant' | 'query' | 'sources' | 'config' | 'export'
+
+const DebugPage = lazy(() => import('./components/DebugPage').then((module) => ({ default: module.DebugPage })))
+
+const SIDEBAR_ITEMS: Array<{ id: SidebarItemId; icon: string; label: string }> = [
+  { id: 'assistant', icon: 'psychology', label: '智能指令' },
+  { id: 'query', icon: 'explore', label: '空间查询' },
+  { id: 'sources', icon: 'database', label: '数据源' },
+  { id: 'config', icon: 'settings_account_box', label: '模型配置' },
+  { id: 'export', icon: 'ios_share', label: '导出' },
+] as const
+
+const SAMPLE_QUERIES = [
+  '查询巴黎地铁站 1 公里范围内的医院',
+  '判断我上传的点是否落在柏林行政区内',
+  '查询叫 Springfield 的区域',
+] as const
+
+function formatUiError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error
+  }
+  return fallback
+}
 
 function App() {
   const location = useLocation()
@@ -68,6 +93,7 @@ function App() {
   ])
   const [systemComponents, setSystemComponents] = useState<SystemComponentsStatus>()
   const [qgisModels, setQgisModels] = useState<QgisModelsResponse>()
+  const [sessionRuns, setSessionRuns] = useState<AnalysisRun[]>([])
   const [artifacts, setArtifacts] = useState<ArtifactRef[]>([])
   const [artifactData, setArtifactData] = useState<Record<string, GeoJSON.FeatureCollection>>({})
   const [artifactMetadata, setArtifactMetadata] = useState<Record<string, Record<string, unknown>>>({})
@@ -80,10 +106,12 @@ function App() {
   const [provider, setProvider] = useState('demo')
   const [model, setModel] = useState('')
   const [selectedBasemapKey, setSelectedBasemapKey] = useState('osm')
+  const [activeNav, setActiveNav] = useState<PrimaryNav>('analysis')
+  const [panelMode, setPanelMode] = useState<PanelMode>('summary')
+  const [activeSidebarItem, setActiveSidebarItem] = useState<SidebarItemId>('assistant')
   const deferredEvents = useDeferredValue(events)
 
   const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId)
-  const publishStateLabel = publishResult ? '已生成' : '未发布'
   const progressItems = buildProgressItems({
     runStatus: run?.status,
     intent,
@@ -91,56 +119,173 @@ function App() {
     artifacts,
     events: deferredEvents,
   })
-  const heroTitle =
-    run?.status === 'completed'
-      ? '结果已经准备好，可以直接查看、下载或发布。'
-      : run?.status === 'clarification_needed'
-        ? '还差一步确认，地图分析就能继续。'
-        : run?.status === 'running'
-          ? '系统正在读取地图数据并完成空间分析。'
-          : run?.status === 'failed'
-            ? '这次分析没有完成，调整问题后可以重新试一次。'
-            : '把你的空间问题直接说出来，地图会帮你回答。'
-  const heroBody =
-    run?.status === 'completed'
-      ? '地图已经自动聚焦到结果区域，右侧可以继续下载结果或发布在线服务。'
-      : '你可以直接输入问题、上传自己的数据，或者从左侧样例问题开始。'
-  const selectedArtifactGeoJsonUrl = selectedArtifactId
-    ? `${apiBaseUrl}/api/v1/results/${selectedArtifactId}/geojson`
-    : undefined
+  const selectedBasemap = basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? FALLBACK_BASEMAP
+  const primaryActionLabel = selectedArtifactId ? '发布结果' : '开始分析'
 
-  const hydrateRunState = useEffectEvent(async (runId: string) => {
-    const latestRun = await getRun(runId)
-    startTransition(() => {
-      setRun(latestRun)
-      setAgentState(latestRun.state)
-      setIntent(latestRun.state.parsedIntent)
-      setExecutionPlan(latestRun.state.executionPlan)
-      setArtifacts(latestRun.state.artifacts)
-      setProvider(latestRun.modelProvider ?? 'demo')
-      setModel(latestRun.modelName ?? '')
-      const firstArtifact = latestRun.state.artifacts[0]?.artifactId
-      if (firstArtifact) {
-        setSelectedArtifactId((current) => current ?? firstArtifact)
+  const focusQueryInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const input = document.getElementById('analysis-query-input')
+      if (input instanceof HTMLInputElement) {
+        input.focus()
+        input.select()
       }
     })
+  }, [])
 
-    await Promise.all(
-      latestRun.state.artifacts.map(async (artifact) => {
-        const [data, metadataPayload] = await Promise.all([
-          getArtifactGeoJson(artifact.artifactId),
-          getArtifactMetadata(artifact.artifactId),
-        ])
-        startTransition(() => {
-          setArtifactData((current) => ({ ...current, [artifact.artifactId]: data }))
-          setArtifactMetadata((current) => ({
-            ...current,
-            [artifact.artifactId]: (metadataPayload.metadata as Record<string, unknown>) ?? {},
-          }))
+  const applyArtifactPayload = useCallback(
+    async (artifactList: ArtifactRef[]) => {
+      const bundles = await Promise.all(
+        artifactList.map(async (artifact) => {
+          const [data, metadataPayload] = await Promise.all([
+            getArtifactGeoJson(artifact.artifactId),
+            getArtifactMetadata(artifact.artifactId),
+          ])
+
+          return {
+            artifactId: artifact.artifactId,
+            data,
+            metadata: (metadataPayload.metadata as Record<string, unknown>) ?? {},
+          }
+        }),
+      )
+
+      startTransition(() => {
+        setArtifactData((current) => {
+          const next = { ...current }
+          for (const bundle of bundles) {
+            next[bundle.artifactId] = bundle.data
+          }
+          return next
         })
-      }),
-    )
-  })
+        setArtifactMetadata((current) => {
+          const next = { ...current }
+          for (const bundle of bundles) {
+            next[bundle.artifactId] = bundle.metadata
+          }
+          return next
+        })
+      })
+    },
+    [],
+  )
+
+  const hydrateRunState = useCallback(
+    async (runId: string) => {
+      const latestRun = await getRun(runId)
+
+      startTransition(() => {
+        setRun(latestRun)
+        setAgentState(latestRun.state)
+        setIntent(latestRun.state.parsedIntent)
+        setExecutionPlan(latestRun.state.executionPlan)
+        setArtifacts(latestRun.state.artifacts)
+        setProvider(latestRun.modelProvider ?? 'demo')
+        setModel(latestRun.modelName ?? '')
+        const firstArtifact = latestRun.state.artifacts[0]?.artifactId
+        if (firstArtifact) {
+          setSelectedArtifactId((current) => current ?? firstArtifact)
+        }
+      })
+
+      if (latestRun.state.artifacts.length > 0) {
+        await applyArtifactPayload(latestRun.state.artifacts)
+      }
+
+      if (latestRun.sessionId) {
+        void listSessionRuns(latestRun.sessionId)
+          .then((runs) => {
+            startTransition(() => {
+              setSessionRuns(runs)
+            })
+          })
+          .catch(() => {})
+      }
+
+      return latestRun
+    },
+    [applyArtifactPayload],
+  )
+
+  const handleNavChange = useCallback(
+    (nav: PrimaryNav) => {
+      setActiveNav(nav)
+
+      if (nav === 'analysis') {
+        setPanelMode('summary')
+        setActiveSidebarItem('assistant')
+        focusQueryInput()
+        return
+      }
+
+      if (nav === 'layers') {
+        setPanelMode('layers')
+        setActiveSidebarItem('sources')
+        return
+      }
+
+      if (nav === 'history') {
+        setPanelMode('history')
+        setActiveSidebarItem('assistant')
+        return
+      }
+
+      setPanelMode('compute')
+      setActiveSidebarItem('assistant')
+    },
+    [focusQueryInput],
+  )
+
+  const handleSampleSelect = useCallback(
+    (value: string) => {
+      setQuery(value)
+      setActiveNav('analysis')
+      setPanelMode('summary')
+      setActiveSidebarItem('assistant')
+      focusQueryInput()
+    },
+    [focusQueryInput],
+  )
+
+  const handleUseTemplate = useCallback(() => {
+    const currentIndex = SAMPLE_QUERIES.findIndex((item) => item === query)
+    const nextQuery = SAMPLE_QUERIES[(currentIndex + 1 + SAMPLE_QUERIES.length) % SAMPLE_QUERIES.length]
+    handleSampleSelect(nextQuery)
+  }, [handleSampleSelect, query])
+
+  const handleSidebarItemClick = useCallback(
+    (itemId: SidebarItemId) => {
+      setActiveSidebarItem(itemId)
+
+      if (itemId === 'assistant') {
+        setActiveNav('analysis')
+        setPanelMode('summary')
+        focusQueryInput()
+        return
+      }
+
+      if (itemId === 'query') {
+        setActiveNav('analysis')
+        setPanelMode('summary')
+        setQuery(SAMPLE_QUERIES[0])
+        focusQueryInput()
+        return
+      }
+
+      if (itemId === 'sources') {
+        setActiveNav('layers')
+        setPanelMode('sources')
+        return
+      }
+
+      if (itemId === 'config') {
+        setPanelMode('config')
+        return
+      }
+
+      setPanelMode('export')
+    },
+    [focusQueryInput],
+  )
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
@@ -160,15 +305,25 @@ function App() {
           if (availableBasemaps.length) {
             setBasemaps(availableBasemaps)
             const defaultBasemap = availableBasemaps.find((item) => item.isDefault) ?? availableBasemaps[0]
-            setSelectedBasemapKey(defaultBasemap.basemapKey)
+            setSelectedBasemapKey((current) =>
+              availableBasemaps.some((item) => item.basemapKey === current) ? current : defaultBasemap.basemapKey,
+            )
           }
         })
+
+        void listSessionRuns(sessionRecord.id)
+          .then((runs) => {
+            startTransition(() => {
+              setSessionRuns(runs)
+            })
+          })
+          .catch(() => {})
 
         if (runId) {
           await hydrateRunState(runId)
         }
       } catch (error) {
-        setUiError(error instanceof Error ? error.message : '初始化页面失败。')
+        setUiError(formatUiError(error, '初始化页面失败。'))
       }
     })()
 
@@ -178,7 +333,9 @@ function App() {
           setLayers(layerList)
         })
       })
-      .catch(() => {})
+      .catch((error) => {
+        setUiError(formatUiError(error, '图层目录加载失败。'))
+      })
   }, [hydrateRunState])
 
   useEffect(() => {
@@ -201,7 +358,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (location.pathname !== '/debug') {
+    if (location.pathname !== '/debug' && panelMode !== 'compute' && panelMode !== 'config') {
       return
     }
 
@@ -212,8 +369,10 @@ function App() {
           setQgisModels(modelList)
         })
       })
-      .catch(() => {})
-  }, [location.pathname])
+      .catch((error) => {
+        setUiError(formatUiError(error, '系统组件状态加载失败。'))
+      })
+  }, [location.pathname, panelMode])
 
   useEffect(() => {
     if (!run?.id) {
@@ -222,8 +381,13 @@ function App() {
 
     let source: EventSource | undefined
     let reconnectTimer: number | undefined
+    let disposed = false
 
     const connect = () => {
+      if (disposed) {
+        return
+      }
+
       source = openRunEventStream(
         run.id,
         (event) => {
@@ -253,21 +417,15 @@ function App() {
             if (!artifact?.artifactId) {
               return
             }
-            void Promise.all([getArtifactGeoJson(artifact.artifactId), getArtifactMetadata(artifact.artifactId)]).then(
-              ([data, metadataPayload]) => {
-                startTransition(() => {
-                  setArtifacts((current) =>
-                    current.some((item) => item.artifactId === artifact.artifactId) ? current : [...current, artifact],
-                  )
-                  setArtifactData((current) => ({ ...current, [artifact.artifactId]: data }))
-                  setArtifactMetadata((current) => ({
-                    ...current,
-                    [artifact.artifactId]: (metadataPayload.metadata as Record<string, unknown>) ?? {},
-                  }))
-                  setSelectedArtifactId((current) => current ?? artifact.artifactId)
-                })
-              },
-            )
+
+            void applyArtifactPayload([artifact]).then(() => {
+              startTransition(() => {
+                setArtifacts((current) =>
+                  current.some((item) => item.artifactId === artifact.artifactId) ? current : [...current, artifact],
+                )
+                setSelectedArtifactId((current) => current ?? artifact.artifactId)
+              })
+            })
           }
 
           if (event.type === 'warning.raised') {
@@ -296,12 +454,14 @@ function App() {
               startTransition(() => {
                 setRun(latestRun)
               })
-              if (latestRun.status === 'running') {
+              if (!disposed && latestRun.status === 'running') {
                 reconnectTimer = window.setTimeout(connect, 1500)
               }
             })
             .catch(() => {
-              reconnectTimer = window.setTimeout(connect, 1500)
+              if (!disposed) {
+                reconnectTimer = window.setTimeout(connect, 1500)
+              }
             })
         },
       )
@@ -310,14 +470,15 @@ function App() {
     connect()
 
     return () => {
+      disposed = true
       source?.close()
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer)
       }
     }
-  }, [hydrateRunState, run?.id])
+  }, [applyArtifactPayload, hydrateRunState, run?.id])
 
-  async function handleSubmit() {
+  const handleSubmit = useCallback(async () => {
     if (!session || !query.trim()) {
       return
     }
@@ -325,6 +486,9 @@ function App() {
     try {
       setUiError(undefined)
       setIsSubmitting(true)
+      setActiveNav('analysis')
+      setPanelMode('summary')
+      setActiveSidebarItem('assistant')
       setPublishResult(null)
       setEvents([])
       setArtifacts([])
@@ -340,113 +504,145 @@ function App() {
         setProvider(createdRun.modelProvider ?? provider)
         setModel(createdRun.modelName ?? model)
       })
+      void listSessionRuns(session.id)
+        .then((runs) => {
+          startTransition(() => {
+            setSessionRuns(runs)
+          })
+        })
+        .catch(() => {})
       syncUrl(session.id, createdRun.id)
     } catch (error) {
-      setUiError(error instanceof Error ? error.message : '任务提交失败。')
+      setUiError(formatUiError(error, '任务提交失败。'))
       setIsSubmitting(false)
     }
-  }
+  }, [model, provider, query, session])
 
-  async function handleUpload(file: File) {
-    if (!session) {
-      return
-    }
+  const handleUpload = useCallback(
+    async (file: File) => {
+      if (!session) {
+        return
+      }
 
-    try {
-      setUiError(undefined)
-      const descriptor = await uploadLayer(session.id, file)
-      setUploadedLayerName(descriptor.name)
-      const [sessionRecord, layerList] = await Promise.all([getSession(session.id), listLayers()])
-      setSession(sessionRecord)
-      setLayers(layerList)
-    } catch (error) {
-      setUiError(error instanceof Error ? error.message : '图层上传失败。')
-    }
-  }
+      try {
+        setUiError(undefined)
+        const descriptor = await uploadLayer(session.id, file)
+        setUploadedLayerName(descriptor.name)
+        setActiveNav('layers')
+        setPanelMode('sources')
+        setActiveSidebarItem('sources')
+        const [sessionRecord, layerList] = await Promise.all([getSession(session.id), listLayers()])
+        setSession(sessionRecord)
+        setLayers(layerList)
+      } catch (error) {
+        setUiError(formatUiError(error, '图层上传失败。'))
+      }
+    },
+    [session],
+  )
 
-  async function handlePublish(artifactId: string) {
+  const handlePublish = useCallback(async (artifactId: string) => {
     try {
       setUiError(undefined)
       const result = await publishArtifact(artifactId, { projectKey: 'demo-workspace' })
       setPublishResult(result)
       setSystemComponents(await getSystemComponents())
     } catch (error) {
-      setUiError(error instanceof Error ? error.message : '发布失败。')
+      setUiError(formatUiError(error, '发布失败。'))
     }
-  }
+  }, [])
 
-  async function handleRunQgisProcess(algorithmId: string, distance?: number) {
-    if (!selectedArtifactId || !run?.id) {
-      return
-    }
+  const handleRunQgisProcess = useCallback(
+    async (algorithmId: string, distance?: number) => {
+      if (!selectedArtifactId || !run?.id) {
+        return
+      }
 
+      try {
+        setUiError(undefined)
+        setIsQgisSubmitting(true)
+        const result = await runQgisProcess({
+          algorithmId,
+          artifactId: selectedArtifactId,
+          runId: run.id,
+          saveAsArtifact: true,
+          resultName: algorithmId === 'native:buffer' ? 'QGIS 缓冲结果' : 'QGIS 二次分析结果',
+          inputs: distance ? { DISTANCE: distance } : {},
+        })
+        if (result.status === 'failed') {
+          throw new Error(String(result.error || 'QGIS 处理失败。'))
+        }
+        await hydrateRunState(run.id)
+      } catch (error) {
+        setUiError(formatUiError(error, 'QGIS 处理失败。'))
+      } finally {
+        setIsQgisSubmitting(false)
+      }
+    },
+    [hydrateRunState, run?.id, selectedArtifactId],
+  )
+
+  const handleRunQgisModel = useCallback(
+    async (modelName: string, overlayArtifactId?: string) => {
+      if (!selectedArtifactId || !run?.id) {
+        return
+      }
+
+      try {
+        setUiError(undefined)
+        setIsQgisSubmitting(true)
+        const inputs: Record<string, unknown> = {}
+        if (overlayArtifactId) {
+          inputs.OVERLAY = `artifact:${overlayArtifactId}`
+        }
+        if (modelName === 'buffer_and_intersect') {
+          inputs.DISTANCE = 1000
+        }
+        const result = await runQgisModel({
+          modelName,
+          artifactId: selectedArtifactId,
+          runId: run.id,
+          saveAsArtifact: true,
+          resultName: `QGIS 模型：${modelName}`,
+          outputParameterName: 'output',
+          inputs,
+        })
+        if (result.status === 'failed') {
+          throw new Error(String(result.error || 'QGIS 模型执行失败。'))
+        }
+        await hydrateRunState(run.id)
+      } catch (error) {
+        setUiError(formatUiError(error, 'QGIS 模型执行失败。'))
+      } finally {
+        setIsQgisSubmitting(false)
+      }
+    },
+    [hydrateRunState, run?.id, selectedArtifactId],
+  )
+
+  const handleCopyShareLink = useCallback(async () => {
     try {
-      setUiError(undefined)
-      setIsQgisSubmitting(true)
-      const result = await runQgisProcess({
-        algorithmId,
-        artifactId: selectedArtifactId,
-        runId: run.id,
-        saveAsArtifact: true,
-        resultName: algorithmId === 'native:buffer' ? 'QGIS 缓冲结果' : 'QGIS 二次分析结果',
-        inputs: distance ? { DISTANCE: distance } : {},
-      })
-      if (result.status === 'failed') {
-        throw new Error(String(result.error || 'QGIS 处理失败。'))
+      const url = new URL(window.location.href)
+      if (session?.id) {
+        url.searchParams.set('session', session.id)
       }
-      await hydrateRunState(run.id)
-    } catch (error) {
-      setUiError(error instanceof Error ? error.message : 'QGIS 处理失败。')
-    } finally {
-      setIsQgisSubmitting(false)
+      if (run?.id) {
+        url.searchParams.set('run', run.id)
+      }
+      await navigator.clipboard.writeText(url.toString())
+    } catch {
+      setUiError('复制分享链接失败，请稍后重试。')
     }
-  }
+  }, [run?.id, session?.id])
 
-  async function handleRunQgisModel(modelName: string, overlayArtifactId?: string) {
-    if (!selectedArtifactId || !run?.id) {
-      return
-    }
-
-    try {
-      setUiError(undefined)
-      setIsQgisSubmitting(true)
-      const inputs: Record<string, unknown> = {}
-      if (overlayArtifactId) {
-        inputs.OVERLAY = `artifact:${overlayArtifactId}`
-      }
-      if (modelName === 'buffer_and_intersect') {
-        inputs.DISTANCE = 1000
-      }
-      const result = await runQgisModel({
-        modelName,
-        artifactId: selectedArtifactId,
-        runId: run.id,
-        saveAsArtifact: true,
-        resultName: `QGIS 模型：${modelName}`,
-        outputParameterName: 'output',
-        inputs,
-      })
-      if (result.status === 'failed') {
-        throw new Error(String(result.error || 'QGIS 模型执行失败。'))
-      }
-      await hydrateRunState(run.id)
-    } catch (error) {
-      setUiError(error instanceof Error ? error.message : 'QGIS 模型执行失败。')
-    } finally {
-      setIsQgisSubmitting(false)
-    }
-  }
-
-  async function handleCopyShareLink() {
-    const url = new URL(window.location.href)
-    if (session?.id) {
-      url.searchParams.set('session', session.id)
-    }
-    if (run?.id) {
-      url.searchParams.set('run', run.id)
-    }
-    await navigator.clipboard.writeText(url.toString())
-  }
+  const handleProviderChange = useCallback(
+    (value: string) => {
+      setProvider(value)
+      const selected = providers.find((item) => item.provider === value)
+      setModel(selected?.defaultModel ?? '')
+    },
+    [providers],
+  )
 
   const mapLayers = artifacts
     .filter((artifact) => artifactData[artifact.artifactId])
@@ -456,173 +652,174 @@ function App() {
     }))
 
   return (
-    <Routes>
-      <Route
-        path="/"
-        element={
-          <div className="app-shell">
-            <div className="app-shell__frame">
-              <TopBar
-                runStatus={run?.status}
-                selectedArtifactId={selectedArtifactId}
-                selectedArtifactName={selectedArtifact?.name}
-                publishStateLabel={publishStateLabel}
-                selectedArtifactGeoJsonUrl={selectedArtifactGeoJsonUrl}
-                onCopyShareLink={() => {
-                  void handleCopyShareLink()
-                }}
-                onPublishSelected={
-                  selectedArtifactId
-                    ? () => {
-                        void handlePublish(selectedArtifactId)
-                      }
-                    : undefined
+    <Suspense fallback={<div className="dc-route-loading">正在加载页面…</div>}>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <div className="digital-cartographer">
+              <TopBar activeNav={activeNav} onNavChange={handleNavChange} onPrimaryAction={async () => {
+                if (selectedArtifactId) {
+                  setPanelMode('export')
+                  await handlePublish(selectedArtifactId)
+                  return
                 }
-              />
+                if (query.trim()) {
+                  await handleSubmit()
+                  return
+                }
+                focusQueryInput()
+              }} primaryActionLabel={primaryActionLabel} />
 
-              <section className="overview-strip" aria-label="分析引导">
-                <div className="overview-strip__intro">
-                  <h2>{heroTitle}</h2>
-                  <p>{heroBody}</p>
-                </div>
-                <div className="overview-strip__metrics">
-                  <div className="overview-metric">
-                    <span>当前状态</span>
-                    <strong>{formatRunLabel(run?.status)}</strong>
+              <div className="digital-cartographer__body">
+                <aside className="dc-sidebar" aria-label="工作空间导航">
+                  <div className="dc-sidebar__intro">
+                    <h2>工作空间</h2>
+                    <p>GIS 智能助手</p>
                   </div>
-                  <div className="overview-metric">
-                    <span>结果数量</span>
-                    <strong>{artifacts.length}</strong>
-                  </div>
-                  <div className="overview-metric">
-                    <span>提醒事项</span>
-                    <strong>{agentState?.warnings.length ?? 0}</strong>
-                  </div>
-                  <div className="overview-metric">
-                    <span>发布状态</span>
-                    <strong>{publishStateLabel}</strong>
-                  </div>
-                </div>
-              </section>
+                  <nav className="dc-sidebar__nav">
+                    {SIDEBAR_ITEMS.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={activeSidebarItem === item.id ? 'dc-sidebar__item dc-sidebar__item--active' : 'dc-sidebar__item'}
+                        onClick={() => handleSidebarItemClick(item.id)}
+                      >
+                        <span className="material-symbols-outlined">{item.icon}</span>
+                        <span>{item.label}</span>
+                      </button>
+                    ))}
+                  </nav>
+                </aside>
 
-              <main className="workspace">
-                <ChatPanel
-                  query={query}
-                  isSubmitting={isSubmitting}
-                  errorMessage={uiError}
-                  uploadedLayerName={uploadedLayerName}
-                  intent={intent}
-                  progressItems={progressItems}
-                  layers={layers}
-                  onQueryChange={setQuery}
-                  onSubmit={() => {
-                    void handleSubmit()
-                  }}
-                  onFillSample={setQuery}
-                  onUpload={(file) => {
-                    void handleUpload(file)
-                  }}
-                />
+                <main className="dc-main">
+                  <MapCanvas
+                    basemaps={basemaps}
+                    selectedBasemapKey={selectedBasemapKey}
+                    onSelectBasemap={setSelectedBasemapKey}
+                    layers={mapLayers}
+                    selectedArtifactId={selectedArtifactId}
+                    selectedArtifactName={selectedArtifact?.name}
+                  >
+                    <div className="dc-overlay-layout">
+                      <ChatPanel
+                        query={query}
+                        isSubmitting={isSubmitting}
+                        errorMessage={uiError}
+                        uploadedLayerName={uploadedLayerName}
+                        intent={intent}
+                        progressItems={progressItems}
+                        onQueryChange={setQuery}
+                        onSubmit={() => {
+                          void handleSubmit()
+                        }}
+                        onFillSample={handleSampleSelect}
+                        onUseTemplate={handleUseTemplate}
+                        onUpload={(file) => {
+                          void handleUpload(file)
+                        }}
+                      />
 
-                <section className="workspace-stage" aria-label="地图结果">
-                  <div className="workspace-stage__header">
-                    <div>
-                      <h3>{selectedArtifact?.name ?? '结果会在地图上自动呈现'}</h3>
-                      <p>
-                        {selectedArtifact
-                          ? `当前正在查看 ${selectedArtifact.name}。你可以切换底图、检查结果位置，并在右侧继续下载或发布。`
-                          : '分析完成后，系统会自动把结果加到地图上，并聚焦到相关区域。'}
-                      </p>
+                      <DetailPanel
+                        panelMode={panelMode}
+                        currentRunId={run?.id}
+                        runStatus={run?.status}
+                        agentState={agentState}
+                        artifacts={artifacts}
+                        artifactData={artifactData}
+                        layers={layers}
+                        events={deferredEvents}
+                        sessionRuns={sessionRuns}
+                        progressItems={progressItems}
+                        selectedArtifactId={selectedArtifactId}
+                        publishResult={publishResult}
+                        uploadedLayerName={uploadedLayerName}
+                        selectedBasemapName={selectedBasemap.name}
+                        provider={provider}
+                        model={model}
+                        providers={providers}
+                        systemComponents={systemComponents}
+                        qgisModels={qgisModels}
+                        isQgisSubmitting={isQgisSubmitting}
+                        onSelectArtifact={setSelectedArtifactId}
+                        onSelectHistoryRun={(runId) => {
+                          void hydrateRunState(runId)
+                          if (session?.id) {
+                            syncUrl(session.id, runId)
+                          }
+                          setPanelMode('history')
+                          setActiveNav('history')
+                        }}
+                        onPublish={(artifactId) => {
+                          void handlePublish(artifactId)
+                        }}
+                        onRunQgisProcess={(algorithmId, distance) => {
+                          void handleRunQgisProcess(algorithmId, distance)
+                        }}
+                        onRunQgisModel={(modelName, overlayArtifactId) => {
+                          void handleRunQgisModel(modelName, overlayArtifactId)
+                        }}
+                        onCopyShareLink={() => {
+                          void handleCopyShareLink()
+                        }}
+                        onProviderChange={handleProviderChange}
+                        onModelChange={setModel}
+                      />
                     </div>
-                    <div className="workspace-stage__tags">
-                      <span>自动加图层</span>
-                      <span>自动缩放到结果</span>
-                      <span>支持下载与发布</span>
-                    </div>
-                  </div>
-
-                  <Suspense fallback={<section className="map-shell map-shell--loading">地图组件加载中…</section>}>
-                    <MapCanvas
-                      basemaps={basemaps}
-                      selectedBasemapKey={selectedBasemapKey}
-                      onSelectBasemap={setSelectedBasemapKey}
-                      layers={mapLayers}
-                      selectedArtifactId={selectedArtifactId}
-                      selectedArtifactName={selectedArtifact?.name}
-                      layerCount={artifacts.length}
-                      runStatus={run?.status}
-                    />
-                  </Suspense>
-                </section>
-
-                <DetailPanel
-                  runStatus={run?.status}
-                  agentState={agentState}
-                  artifacts={artifacts}
-                  artifactData={artifactData}
-                  selectedArtifactId={selectedArtifactId}
-                  publishResult={publishResult}
-                  onSelectArtifact={setSelectedArtifactId}
-                  onPublish={(artifactId) => {
-                    void handlePublish(artifactId)
-                  }}
-                />
-              </main>
+                  </MapCanvas>
+                </main>
+              </div>
             </div>
-          </div>
-        }
-      />
-      <Route
-        path="/debug"
-        element={
-          <DebugPage
-            query={query}
-            isSubmitting={isSubmitting}
-            isQgisSubmitting={isQgisSubmitting}
-            uploadedLayerName={uploadedLayerName}
-            errorMessage={uiError}
-            runStatus={run?.status}
-            provider={provider}
-            model={model}
-            providers={providers}
-            layers={layers}
-            events={deferredEvents}
-            intent={intent}
-            executionPlan={executionPlan}
-            agentState={agentState}
-            artifacts={artifacts}
-            artifactMetadata={artifactMetadata}
-            selectedArtifactId={selectedArtifactId}
-            publishResult={publishResult}
-            systemComponents={systemComponents}
-            qgisModels={qgisModels}
-            onQueryChange={setQuery}
-            onProviderChange={(value) => {
-              setProvider(value)
-              const selected = providers.find((item) => item.provider === value)
-              setModel(selected?.defaultModel ?? '')
-            }}
-            onModelChange={setModel}
-            onSubmit={() => {
-              void handleSubmit()
-            }}
-            onUpload={(file) => {
-              void handleUpload(file)
-            }}
-            onSelectArtifact={setSelectedArtifactId}
-            onPublish={(artifactId) => {
-              void handlePublish(artifactId)
-            }}
-            onRunQgisProcess={(algorithmId, distance) => {
-              void handleRunQgisProcess(algorithmId, distance)
-            }}
-            onRunQgisModel={(modelName, overlayArtifactId) => {
-              void handleRunQgisModel(modelName, overlayArtifactId)
-            }}
-          />
-        }
-      />
-    </Routes>
+          }
+        />
+        <Route
+          path="/debug"
+          element={
+            <DebugPage
+              query={query}
+              isSubmitting={isSubmitting}
+              isQgisSubmitting={isQgisSubmitting}
+              uploadedLayerName={uploadedLayerName}
+              errorMessage={uiError}
+              runStatus={run?.status}
+              provider={provider}
+              model={model}
+              providers={providers}
+              layers={layers}
+              events={deferredEvents}
+              intent={intent}
+              executionPlan={executionPlan}
+              agentState={agentState}
+              artifacts={artifacts}
+              artifactMetadata={artifactMetadata}
+              selectedArtifactId={selectedArtifactId}
+              publishResult={publishResult}
+              systemComponents={systemComponents}
+              qgisModels={qgisModels}
+              onQueryChange={setQuery}
+              onProviderChange={handleProviderChange}
+              onModelChange={setModel}
+              onSubmit={() => {
+                void handleSubmit()
+              }}
+              onUpload={(file) => {
+                void handleUpload(file)
+              }}
+              onSelectArtifact={setSelectedArtifactId}
+              onPublish={(artifactId) => {
+                void handlePublish(artifactId)
+              }}
+              onRunQgisProcess={(algorithmId, distance) => {
+                void handleRunQgisProcess(algorithmId, distance)
+              }}
+              onRunQgisModel={(modelName, overlayArtifactId) => {
+                void handleRunQgisModel(modelName, overlayArtifactId)
+              }}
+            />
+          }
+        />
+      </Routes>
+    </Suspense>
   )
 }
 
@@ -633,22 +830,6 @@ function syncUrl(sessionId: string, runId: string) {
   url.searchParams.set('session', sessionId)
   url.searchParams.set('run', runId)
   window.history.replaceState({}, '', url)
-}
-
-function formatRunLabel(runStatus?: string) {
-  if (runStatus === 'completed') {
-    return '已完成'
-  }
-  if (runStatus === 'clarification_needed') {
-    return '待确认'
-  }
-  if (runStatus === 'running') {
-    return '分析中'
-  }
-  if (runStatus === 'failed') {
-    return '未完成'
-  }
-  return '等待开始'
 }
 
 function buildProgressItems({
@@ -670,66 +851,66 @@ function buildProgressItems({
   return [
     {
       id: 'understand',
-      title: '理解你的问题',
+      title: '正在识别地点',
       description:
         intent?.clarificationRequired
-          ? '系统已经识别出问题，但还需要你补充确认地点或范围。'
+          ? '系统已经识别出问题，但还需要补充确认。'
           : intent
-            ? '系统已经识别出地点、目标数据和分析意图。'
-            : '等待你输入问题后开始理解需求。',
+            ? '地点、对象和目标图层已经识别完成。'
+            : '等待输入问题后开始理解需求。',
       status:
         runStatus === 'clarification_needed'
-          ? 'warning'
+          ? ('warning' as const)
           : intent
-            ? 'done'
+            ? ('done' as const)
             : hasWorkStarted
-              ? 'active'
-              : 'pending',
+              ? ('active' as const)
+              : ('pending' as const),
     },
     {
       id: 'prepare',
-      title: '准备地图数据',
+      title: '正在加载边界',
       description:
         executionPlan?.steps.length
-          ? `已经准备好 ${executionPlan.steps.length} 个分析步骤。`
-          : '系统会自动加载区域边界、参考图层或你上传的数据。',
-      status: executionPlan?.steps.length ? 'done' : hasWorkStarted ? 'active' : 'pending',
+          ? `已经整理出 ${executionPlan.steps.length} 个分析步骤。`
+          : '系统会自动加载边界、参考图层和上传数据。',
+      status: executionPlan?.steps.length ? ('done' as const) : hasWorkStarted ? ('active' as const) : ('pending' as const),
     },
     {
       id: 'analyze',
-      title: '执行空间分析',
+      title: '正在计算范围',
       description:
         runStatus === 'running'
           ? friendlyEventMessage(latestEvent)
           : artifacts.length
-            ? '空间分析已经完成，结果已开始整理。'
-            : '系统会自动完成缓冲、相交、裁剪或点落区等分析。',
+            ? '空间分析已经完成，结果正在整理。'
+            : '分析时会自动执行缓冲、相交、裁剪等操作。',
       status:
         runStatus === 'running'
-          ? 'active'
+          ? ('active' as const)
           : artifacts.length || runStatus === 'completed'
-            ? 'done'
+            ? ('done' as const)
             : runStatus === 'failed'
-              ? 'warning'
-              : 'pending',
+              ? ('warning' as const)
+              : ('pending' as const),
     },
     {
       id: 'deliver',
-      title: '整理结果并展示',
+      title: '正在整理结果',
       description:
         runStatus === 'completed'
-          ? '地图结果、下载入口和服务链接已经准备好。'
+          ? '结果图层、下载入口和服务链接已经生成。'
           : runStatus === 'failed'
             ? '本次没有成功生成最终结果。'
-            : '完成后会自动在地图上高亮结果，并提供下载与发布入口。',
+            : '完成后会自动把结果高亮到地图上。',
       status:
         runStatus === 'completed'
-          ? 'done'
+          ? ('done' as const)
           : runStatus === 'failed'
-            ? 'warning'
+            ? ('warning' as const)
             : runStatus === 'running'
-              ? 'active'
-              : 'pending',
+              ? ('active' as const)
+              : ('pending' as const),
     },
   ] as const
 }
@@ -745,7 +926,7 @@ function friendlyEventMessage(event?: RunEvent) {
     return '分析步骤已经确定，马上开始计算。'
   }
   if (event.type === 'artifact.created') {
-    return '已经生成新的地图结果，正在整理展示。'
+    return '已经生成新的地图结果，正在加入地图。'
   }
   if (event.type === 'run.failed') {
     return '分析没有顺利完成，请稍后重试。'

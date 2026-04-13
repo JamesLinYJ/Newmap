@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import logging
 from typing import Any
 
 import httpx
@@ -16,12 +18,16 @@ from gis_common.geojson import ensure_feature_collection
 
 from .layer_catalog import LayerCatalog
 
+logger = logging.getLogger(__name__)
 
 class SpatialAnalysisService:
     def __init__(self, catalog: LayerCatalog, *, nominatim_base_url: str = "https://nominatim.openstreetmap.org"):
         self.catalog = catalog
         self.nominatim_base_url = nominatim_base_url.rstrip("/")
         self._headers = {"User-Agent": "geo-agent-platform/0.1 (codex local demo)"}
+        self._allow_remote_lookup = os.getenv("GEO_AGENT_ENABLE_REMOTE_LOOKUP", "").lower() in {"1", "true", "yes"}
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            self._allow_remote_lookup = False
 
     def geocode_place(self, query: str) -> dict[str, Any]:
         local_matches = self.catalog.geocode(query)
@@ -65,8 +71,8 @@ class SpatialAnalysisService:
         if hasattr(self.catalog, "load_layer_collection"):
             try:
                 return self.catalog.load_layer_collection(layer_key, area_name=area_name, boundary=boundary)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PostGIS load_layer_collection failed for '%s': %s: %s", layer_key, exc.__class__.__name__, exc)
         collection = self.catalog.get_layer_collection(layer_key)
         if area_name:
             filtered = [
@@ -89,8 +95,8 @@ class SpatialAnalysisService:
         if hasattr(self.catalog, "buffer_collection"):
             try:
                 return self.catalog.buffer_collection(collection, distance_m)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PostGIS buffer_collection failed: %s: %s", exc.__class__.__name__, exc)
         if not collection["features"]:
             return {"type": "FeatureCollection", "features": []}
         centroid = unary_union([shape_from_feature(feature) for feature in collection["features"]]).centroid
@@ -105,8 +111,8 @@ class SpatialAnalysisService:
         if hasattr(self.catalog, "intersect_collections"):
             try:
                 return self.catalog.intersect_collections(left, right)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PostGIS intersect_collections failed: %s: %s", exc.__class__.__name__, exc)
         if not left["features"] or not right["features"]:
             return {"type": "FeatureCollection", "features": []}
         right_union = unary_union([shape_from_feature(feature) for feature in right["features"]])
@@ -128,16 +134,16 @@ class SpatialAnalysisService:
         if hasattr(self.catalog, "intersect_collections"):
             try:
                 return self.catalog.intersect_collections(left, right, clip=True)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PostGIS clip/intersect_collections failed: %s: %s", exc.__class__.__name__, exc)
         return self.intersect(left, right)
 
     def point_in_polygon(self, points: dict[str, Any], polygons: dict[str, Any]) -> dict[str, Any]:
         if hasattr(self.catalog, "point_in_polygon_collection"):
             try:
                 return self.catalog.point_in_polygon_collection(points, polygons)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PostGIS point_in_polygon_collection failed: %s: %s", exc.__class__.__name__, exc)
         if not points["features"] or not polygons["features"]:
             return {"type": "FeatureCollection", "features": []}
         polygon_union = unary_union([shape_from_feature(feature) for feature in polygons["features"]])
@@ -154,8 +160,8 @@ class SpatialAnalysisService:
         if hasattr(self.catalog, "spatial_join_collection"):
             try:
                 return self.catalog.spatial_join_collection(points, polygons)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PostGIS spatial_join_collection failed: %s: %s", exc.__class__.__name__, exc)
         joined_features = []
         for point_feature in points["features"]:
             point_shape = shape_from_feature(point_feature)
@@ -179,8 +185,8 @@ class SpatialAnalysisService:
         if hasattr(self.catalog, "distance_query_collection"):
             try:
                 return self.catalog.distance_query_collection(source, target, distance_m)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PostGIS distance_query_collection failed: %s: %s", exc.__class__.__name__, exc)
         if not source["features"] or not target["features"]:
             return {"type": "FeatureCollection", "features": []}
         centroid = unary_union([shape_from_feature(feature) for feature in source["features"]]).centroid
@@ -211,8 +217,10 @@ class SpatialAnalysisService:
         return "当前分析采用局部投影近似米制计算，跨大范围场景建议复核 CRS。"
 
     def _search_nominatim(self, query: str, polygon_geojson: bool = False) -> list[dict[str, Any]]:
+        if not self._allow_remote_lookup:
+            return []
         try:
-            with httpx.Client(timeout=15, headers=self._headers) as client:
+            with httpx.Client(timeout=2.5, headers=self._headers) as client:
                 response = client.get(
                     f"{self.nominatim_base_url}/search",
                     params={
@@ -224,7 +232,8 @@ class SpatialAnalysisService:
                 )
                 response.raise_for_status()
                 payload = response.json()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Remote geocode lookup failed for '%s': %s: %s", query, exc.__class__.__name__, exc)
             return []
         return payload if isinstance(payload, list) else []
 

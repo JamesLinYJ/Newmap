@@ -1,8 +1,6 @@
-import { LoaderCircle, Paperclip, Play, Upload } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 
-import type { LayerDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
-
-import { StatusPill } from './StatusPill'
+import type { UserIntent } from '@geo-agent-platform/shared-types'
 
 interface ProgressItem {
   id: string
@@ -18,20 +16,19 @@ interface ChatPanelProps {
   uploadedLayerName?: string
   intent?: UserIntent
   progressItems: ReadonlyArray<ProgressItem>
-  layers: LayerDescriptor[]
   onQueryChange: (value: string) => void
   onSubmit: () => void
   onFillSample: (value: string) => void
+  onUseTemplate: () => void
   onUpload: (file: File) => void
 }
 
+const QUICK_ACTIONS = ['生成热力图', '识别高密度区', '选址推荐'] as const
 const SAMPLE_QUERIES = [
   '查询巴黎地铁站 1 公里范围内的医院',
   '判断我上传的点是否落在柏林行政区内',
   '查询叫 Springfield 的区域',
-  '裁剪上海市范围内的候选点',
-  '查询柏林地铁站 500 米范围内的医院并发布结果',
-]
+] as const
 
 export function ChatPanel({
   query,
@@ -40,148 +37,133 @@ export function ChatPanel({
   uploadedLayerName,
   intent,
   progressItems,
-  layers,
   onQueryChange,
   onSubmit,
   onFillSample,
+  onUseTemplate,
   onUpload,
 }: ChatPanelProps) {
-  const featuredLayers = layers.slice(0, 4)
+  const liveStatus =
+    progressItems.find((item) => item.status === 'active' || item.status === 'warning') ?? progressItems.at(-1)
+  const assistantIntro = intent?.clarificationRequired
+    ? '我已经识别到你的空间问题，不过当前还有一个地点或范围需要你确认，确认后我会继续把结果落到地图上。'
+    : uploadedLayerName
+      ? `我已经接入你上传的数据“${uploadedLayerName}”。你可以继续描述范围、目标对象和分析方式，我会自动组织步骤。`
+      : '你好，我是你的 GIS 助手。你可以直接告诉我想看哪个区域、哪些对象，以及希望做什么空间分析，我会把过程和结果展示在地图上。'
+  const userPromptPreview = query || '比如：查询某个区域内的医院、学校、站点关系，或者判断上传点位是否落在指定行政区内。'
 
   return (
-    <section className="panel panel--chat" aria-label="任务输入">
-      <div className="panel__header">
-        <div>
-          <h2>你想在地图上弄清什么？</h2>
+    <div className="dc-chat-column">
+      <section className="dc-chat-shell">
+        <div className="dc-chat-shell__header">
+          <div className="dc-chat-shell__identity">
+            <div className="dc-avatar dc-avatar--assistant">
+              <span className="material-symbols-outlined">smart_toy</span>
+            </div>
+            <div>
+              <strong>GIS 助手</strong>
+              <span>{intent?.clarificationRequired ? '等待你确认范围' : '地图分析会同步显示在右侧和地图上'}</span>
+            </div>
+          </div>
+          <div className={`dc-chat-shell__status dc-chat-shell__status--${liveStatus?.status ?? 'pending'}`}>
+            {liveStatus?.title ?? '待命'}
+          </div>
         </div>
-        <StatusPill label={isSubmitting ? '正在处理' : '等待提问'} tone={isSubmitting ? 'accent' : 'neutral'} />
-      </div>
 
-      <div className="panel__section">
-        {errorMessage ? (
-          <div className="clarification-box clarification-box--error" role="alert">
-            {errorMessage}
+        <div className="dc-chat-shell__intro">
+          <p>{assistantIntro}</p>
+          <div className="dc-chip-row">
+            {QUICK_ACTIONS.map((item, index) => (
+              <button
+                key={item}
+                className="dc-chip"
+                type="button"
+                onClick={() => onFillSample(SAMPLE_QUERIES[index] ?? SAMPLE_QUERIES[0])}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="dc-chat-shell__query">
+          <div className="dc-chat-shell__query-label">当前问题</div>
+          <p>{userPromptPreview}</p>
+        </div>
+
+        {intent?.clarificationRequired ? (
+          <div className="dc-clarification">
+            <strong>{intent.clarificationQuestion}</strong>
+            <div className="dc-clarification__options">
+              {intent.clarificationOptions?.map((option) => (
+                <button key={option.label} type="button" className="dc-clarification__option" onClick={() => onFillSample(option.label)}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
 
-        <label className="composer__label" htmlFor="query-input">
-          输入你的空间问题
-        </label>
-        <textarea
-          id="query-input"
-          className="composer__textarea"
-          placeholder="例如：查询巴黎地铁站 1 公里范围内的医院"
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-        />
-        <div className="composer__actions">
-          <label className="toolbar-button toolbar-button--ghost upload-button" htmlFor="layer-upload">
-            <Upload size={16} aria-hidden="true" />
-            上传自己的数据
-          </label>
-          <input
-            id="layer-upload"
-            name="layer-upload"
-            type="file"
-            accept=".geojson,.json,.gpkg"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) {
-                onUpload(file)
-              }
-              event.target.value = ''
-            }}
-          />
-          <button
-            className="toolbar-button toolbar-button--primary"
-            type="button"
-            onClick={onSubmit}
-            disabled={!query.trim() || isSubmitting}
-          >
-            {isSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
-            {isSubmitting ? '正在分析' : '开始分析'}
-          </button>
-        </div>
-        <div className="composer__helper">
-          {uploadedLayerName ? (
-            <span>
-              <Paperclip size={14} aria-hidden="true" />
-              已接入你的数据：{uploadedLayerName}
-            </span>
-          ) : (
-            <span>支持直接分析系统参考数据，也支持上传自己的 GeoJSON 或 GPKG 数据。</span>
-          )}
-        </div>
-      </div>
+        {errorMessage ? <div className="dc-error-banner">{errorMessage}</div> : null}
 
-      {intent?.clarificationRequired ? (
-        <div className="panel__section">
-          <div className="panel__subheader">
-            <span>还需要你确认一下</span>
-          </div>
-          <div className="clarification-box" role="alert">
-            <p>{intent.clarificationQuestion}</p>
-            {intent.clarificationOptions?.length ? (
-              <div className="clarification-options">
-                {intent.clarificationOptions.map((option) => (
-                  <div key={option.label} className="clarification-option">
-                    <strong>{option.label}</strong>
-                    <span>{option.description}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+        <div className="dc-stage-note">
+          <span className="material-symbols-outlined">insights</span>
+          <div>
+            <strong>{liveStatus?.title ?? '等待开始分析'}</strong>
+            <p>{liveStatus?.description ?? '系统会根据你的问题自动拆解空间步骤，并把结果同步到地图和右侧摘要卡片。'}</p>
           </div>
         </div>
-      ) : null}
 
-      <div className="panel__section">
-        <div className="panel__subheader">
-          <span>推荐问题</span>
-          <span className="panel__muted">点一下就能试</span>
-        </div>
-        <div className="sample-list sample-list--stacked">
-          {SAMPLE_QUERIES.map((sample) => (
-            <button key={sample} className="sample-list__item" type="button" onClick={() => onFillSample(sample)}>
-              {sample}
+        <div className="dc-composer dc-composer--inline">
+          <div className="dc-composer__field">
+            <span className="material-symbols-outlined">auto_awesome</span>
+            <input
+              id="analysis-query-input"
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="描述您的空间分析需求，如：“分析地铁站周边的商业活力...”"
+            />
+            <button type="button" className="dc-composer__send" onClick={onSubmit} disabled={isSubmitting || !query.trim()}>
+              {isSubmitting ? <LoaderCircle size={20} className="spin" aria-hidden="true" /> : <span className="material-symbols-outlined">send</span>}
             </button>
-          ))}
-        </div>
-      </div>
+          </div>
 
-      <div className="panel__section">
-        <div className="panel__subheader">
-          <span>当前进度</span>
-          <span className="panel__muted">系统会自动更新</span>
-        </div>
-        <ol className="progress-list">
-          {progressItems.map((item) => (
-            <li key={item.id} className={`progress-list__item progress-list__item--${item.status}`}>
-              <div className="progress-list__marker" aria-hidden="true" />
-              <div>
-                <strong>{item.title}</strong>
-                <p>{item.description}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </div>
+          <div className="dc-composer__footer">
+            <label className="dc-utility" htmlFor="layer-upload">
+              <span className="material-symbols-outlined">attach_file</span>
+              添加数据集
+            </label>
+            <input
+              id="layer-upload"
+              type="file"
+              hidden
+              accept=".geojson,.json,.gpkg"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) {
+                  onUpload(file)
+                }
+                event.target.value = ''
+              }}
+            />
 
-      <div className="panel__section">
-        <div className="panel__subheader">
-          <span>系统已准备好的数据</span>
-          <span className="panel__muted">可直接参与分析</span>
+            <button type="button" className="dc-utility dc-utility--button" onClick={onUseTemplate}>
+              <span className="material-symbols-outlined">history_edu</span>
+              使用模板
+            </button>
+          </div>
+
+          {uploadedLayerName ? <p className="dc-composer__hint">已接入你的数据：{uploadedLayerName}</p> : null}
         </div>
-        <div className="friendly-layer-list">
-          {featuredLayers.map((layer) => (
-            <div key={layer.layerKey} className="friendly-layer-list__item">
-              <strong>{layer.name}</strong>
-              <p>{layer.description || `${layer.featureCount ?? 0} 个对象，可直接用于空间分析。`}</p>
-            </div>
-          ))}
-        </div>
+      </section>
+
+      <div className="dc-sample-row" aria-label="推荐问题">
+        {SAMPLE_QUERIES.map((sample) => (
+          <button key={sample} type="button" className="dc-sample-pill" onClick={() => onFillSample(sample)}>
+            {sample}
+          </button>
+        ))}
       </div>
-    </section>
+    </div>
   )
 }

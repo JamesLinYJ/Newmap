@@ -407,7 +407,12 @@ class PostGISLayerCatalog(LayerCatalog):
             )
 
     def _connect(self):
-        return psycopg.connect(self.database_url, autocommit=True)
+        try:
+            return psycopg.connect(self.database_url, autocommit=True, connect_timeout=1)
+        except psycopg.OperationalError as exc:
+            raise psycopg.OperationalError(
+                f"PostGIS connection failed for '{self.database_url}': {exc.__class__.__name__}: {exc}"
+            ) from exc
 
     def _metadata_exists(self, cur, layer_key: str) -> bool:
         cur.execute("SELECT 1 FROM layers_metadata WHERE layer_key = %s", (layer_key,))

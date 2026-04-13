@@ -1,21 +1,19 @@
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@400;600;700;800&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 :root {
-  --color-primary: #1c1917;
-  --color-secondary: #44403c;
-  --color-accent: #ca8a04;
-  --color-accent-strong: #a16207;
-  --color-signal: #2563eb;
-  --color-background: #fafaf9;
+  --color-primary: #00687a;
+  --color-secondary: #3c646f;
+  --color-accent: #00a3bf;
+  --color-accent-strong: #00687a;
+  --color-signal: #d48136;
+  --color-background: #f7f9fb;
   --color-surface: #ffffff;
-  --color-panel: #f8f5f1;
-  --color-text: #0c0a09;
-  --color-muted: #57534e;
-  --color-line: rgba(28, 25, 23, 0.12);
-  --font-sans:
-    'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
-    sans-serif;
-  --font-mono: 'Fira Code', 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --color-panel: #f2f4f6;
+  --color-text: #191c1e;
+  --color-muted: #5f6b70;
+  --color-line: rgba(188, 201, 205, 0.65);
+  --font-sans: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
   color: var(--color-text);
   background: var(--color-background);
   font-family: var(--font-sans);
@@ -41,6 +39,8 @@ body,
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
+  background: var(--color-background);
 }
 
 button,

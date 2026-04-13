@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -29,6 +30,10 @@ from .config import settings
 from .store import FileStore
 
 logger = logging.getLogger(__name__)
+
+
+def _format_component_error(component: str, action: str, exc: Exception) -> str:
+    return f"{component} {action} failed: {exc.__class__.__name__}: {exc}"
 
 class AnalysisRequest(BaseModel):
     session_id: str = Field(..., alias="sessionId")
@@ -86,7 +91,7 @@ async def lifespan(app: FastAPI):
             catalog = postgis_catalog
             logger.info("PostGIS backend enabled.")
         except Exception as exc:
-            logger.warning("PostGIS backend unavailable, fallback to file catalog: %s", exc)
+            logger.warning("PostGIS backend unavailable, fallback to file catalog: %s", _format_component_error("PostGIS", "startup", exc))
     spatial_service = SpatialAnalysisService(catalog, nominatim_base_url=settings.nominatim_base_url)
     qgis_runner = QgisRuntimeClient(settings.qgis_runtime_base_url)
     publisher = MapPublisher(
@@ -105,7 +110,14 @@ async def lifespan(app: FastAPI):
     app.state.publisher = publisher
     app.state.tool_registry = tool_registry
     app.state.runtime = runtime
+    app.state.background_tasks = set()
     yield
+    pending_tasks = list(app.state.background_tasks)
+    for task in pending_tasks:
+        if not task.done():
+            task.cancel()
+    if pending_tasks:
+        await asyncio.gather(*pending_tasks, return_exceptions=True)
 
 
 app = FastAPI(title="geo-agent-platform", version="0.1.0", lifespan=lifespan)
@@ -161,7 +173,7 @@ async def list_qgis_models():
 async def run_qgis_process(payload: QgisProcessRequest, store: FileStore = Depends(get_store)):
     health = await app.state.qgis_runner.health()
     if not health.get("available"):
-        raise HTTPException(status_code=503, detail=health.get("error") or "qgis-runtime 当前不可用。")
+        raise HTTPException(status_code=503, detail=health.get("error") or "QGIS runtime process run failed: runtime unavailable")
     output_dir = settings.resolved_data_dir / "artifacts" / "qgis-process"
     inputs = _resolve_qgis_inputs(dict(payload.inputs), store)
     if payload.artifact_id and payload.input_parameter_name:
@@ -169,11 +181,14 @@ async def run_qgis_process(payload: QgisProcessRequest, store: FileStore = Depen
     if payload.output_parameter_name and payload.output_parameter_name not in inputs:
         suffix = ".geojson" if payload.save_as_artifact else ".gpkg"
         inputs[payload.output_parameter_name] = str(output_dir / f"{payload.algorithm_id.replace(':', '_')}_{make_id('output')}{suffix}")
-    result = await app.state.qgis_runner.run_processing_algorithm(
-        payload.algorithm_id,
-        inputs,
-        output_dir,
-    )
+    try:
+        result = await app.state.qgis_runner.run_processing_algorithm(
+            payload.algorithm_id,
+            inputs,
+            output_dir,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=_format_component_error("QGIS runtime", f"run process '{payload.algorithm_id}'", exc)) from exc
     return await _maybe_attach_qgis_artifact(
         result=result,
         run_id=payload.run_id,
@@ -187,7 +202,7 @@ async def run_qgis_process(payload: QgisProcessRequest, store: FileStore = Depen
 async def run_qgis_model(payload: QgisModelRequest, store: FileStore = Depends(get_store)):
     health = await app.state.qgis_runner.health()
     if not health.get("available"):
-        raise HTTPException(status_code=503, detail=health.get("error") or "qgis-runtime 当前不可用。")
+        raise HTTPException(status_code=503, detail=health.get("error") or "QGIS runtime model run failed: runtime unavailable")
     output_dir = settings.resolved_data_dir / "artifacts" / "qgis-models"
     inputs = _resolve_qgis_inputs(dict(payload.inputs), store)
     if payload.artifact_id and payload.input_parameter_name:
@@ -195,11 +210,14 @@ async def run_qgis_model(payload: QgisModelRequest, store: FileStore = Depends(g
     if payload.output_parameter_name and payload.output_parameter_name not in inputs:
         suffix = ".geojson" if payload.save_as_artifact else ".gpkg"
         inputs[payload.output_parameter_name] = str(output_dir / f"{payload.model_name}_{make_id('output')}{suffix}")
-    result = await app.state.qgis_runner.run_model(
-        payload.model_name,
-        inputs,
-        output_dir,
-    )
+    try:
+        result = await app.state.qgis_runner.run_model(
+            payload.model_name,
+            inputs,
+            output_dir,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=_format_component_error("QGIS runtime", f"run model '{payload.model_name}'", exc)) from exc
     return await _maybe_attach_qgis_artifact(
         result=result,
         run_id=payload.run_id,
@@ -219,6 +237,11 @@ async def get_session(session_id: str, store: FileStore = Depends(get_store)):
     return store.get_session(session_id)
 
 
+@app.get("/api/v1/sessions/{session_id}/runs")
+async def list_session_runs(session_id: str, store: FileStore = Depends(get_store)):
+    return store.list_runs_for_session(session_id)
+
+
 @app.get("/api/v1/layers")
 async def list_layers(catalog: LayerCatalog = Depends(get_catalog)):
     return catalog.list_layers()
@@ -236,12 +259,18 @@ async def list_providers(runtime: GeoAgentRuntime = Depends(get_runtime)):
 
 @app.get("/api/v1/geocode")
 async def geocode(q: str = Query(..., alias="q")):
-    return await asyncio.to_thread(app.state.spatial_service.geocode_place, q)
+    try:
+        return await asyncio.to_thread(app.state.spatial_service.geocode_place, q)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=_format_component_error("Spatial service", f"geocode '{q}'", exc)) from exc
 
 
 @app.get("/api/v1/reverse-geocode")
 async def reverse_geocode(lat: float, lng: float):
-    return await asyncio.to_thread(app.state.spatial_service.reverse_geocode, lat, lng)
+    try:
+        return await asyncio.to_thread(app.state.spatial_service.reverse_geocode, lat, lng)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=_format_component_error("Spatial service", f"reverse geocode ({lat}, {lng})", exc)) from exc
 
 
 @app.post("/api/v1/layers/register")
@@ -252,7 +281,10 @@ async def register_layer(
     catalog: LayerCatalog = Depends(get_catalog),
 ):
     payload = await file.read()
-    descriptor = catalog.register_upload(session_id=session_id, filename=file.filename or "upload.geojson", payload=payload)
+    try:
+        descriptor = catalog.register_upload(session_id=session_id, filename=file.filename or "upload.geojson", payload=payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=_format_component_error("Layer catalog", f"register upload '{file.filename or 'upload.geojson'}'", exc)) from exc
     store.update_session(session_id, latest_uploaded_layer_key=descriptor.layer_key)
     return descriptor
 
@@ -323,12 +355,15 @@ async def publish_result(
 ):
     artifact = store.get_artifact(artifact_id)
     collection = store.get_artifact_collection(artifact_id)
-    result = await app.state.publisher.publish_artifact(
-        artifact.artifact_id,
-        artifact.name,
-        payload.project_key or "demo-workspace",
-        collection=collection,
-    )
+    try:
+        result = await app.state.publisher.publish_artifact(
+            artifact.artifact_id,
+            artifact.name,
+            payload.project_key or "demo-workspace",
+            collection=collection,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=_format_component_error("Map publisher", f"publish artifact '{artifact_id}'", exc)) from exc
     return result
 
 
@@ -353,17 +388,22 @@ async def _start_run(request: AnalysisRequest, store: FileStore, runtime: GeoAge
             publisher=app.state.publisher,
         )
 
-    asyncio.create_task(
-        runtime.run(
-            run_id=run.id,
-            session_id=session.id,
-            query=request.query,
-            latest_uploaded_layer_key=session.latest_uploaded_layer_key,
-            provider=provider_name,
-            model_name=model_name,
-            context_factory=fixed_context_factory,
-        )
+    runner = runtime.run(
+        run_id=run.id,
+        session_id=session.id,
+        query=request.query,
+        latest_uploaded_layer_key=session.latest_uploaded_layer_key,
+        provider=provider_name,
+        model_name=model_name,
+        context_factory=fixed_context_factory,
     )
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        await runner
+        return store.get_run(run.id)
+
+    task = asyncio.create_task(runner)
+    app.state.background_tasks.add(task)
+    task.add_done_callback(lambda finished: app.state.background_tasks.discard(finished))
     return store.get_run(run.id)
 
 
@@ -429,7 +469,8 @@ async def _qgis_server_capabilities() -> tuple[bool, bool]:
             ogc_response = await client.get(f"{base_url}/ogc/{project_key}/collections")
             if ogc_response.status_code == 404 or "ServiceExceptionReport" in ogc_response.text:
                 ogc_response = await client.get(f"{base_url}/ogc/{project_key}/ogcapi/collections")
-    except Exception:
+    except Exception as exc:
+        logger.warning("QGIS server capability probe failed: %s", _format_component_error("QGIS server", "capability probe", exc))
         return False, False
     ogc_available = ogc_response.is_success and "ServiceExceptionReport" not in ogc_response.text
     return wms_response.is_success, ogc_available

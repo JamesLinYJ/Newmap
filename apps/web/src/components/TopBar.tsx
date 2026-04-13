@@ -1,92 +1,40 @@
-import { Download, ExternalLink, Share2 } from 'lucide-react'
-
-import { StatusPill } from './StatusPill'
-
 interface TopBarProps {
-  runStatus?: string
-  selectedArtifactId?: string
-  selectedArtifactName?: string
-  publishStateLabel: string
-  selectedArtifactGeoJsonUrl?: string
-  onCopyShareLink: () => void
-  onPublishSelected?: () => void
+  activeNav: 'analysis' | 'layers' | 'history' | 'compute'
+  onNavChange: (nav: 'analysis' | 'layers' | 'history' | 'compute') => void
+  onPrimaryAction: () => void
+  primaryActionLabel: string
 }
 
-export function TopBar({
-  runStatus,
-  selectedArtifactId,
-  selectedArtifactName,
-  publishStateLabel,
-  selectedArtifactGeoJsonUrl,
-  onCopyShareLink,
-  onPublishSelected,
-}: TopBarProps) {
-  const statusTone =
-    runStatus === 'completed'
-      ? 'success'
-      : runStatus === 'clarification_needed'
-        ? 'warning'
-        : runStatus === 'running'
-          ? 'accent'
-          : runStatus === 'failed'
-            ? 'danger'
-            : 'neutral'
+const NAV_ITEMS = [
+  { id: 'analysis', label: '分析' },
+  { id: 'layers', label: '图层' },
+  { id: 'history', label: '历史' },
+  { id: 'compute', label: '计算' },
+] as const
 
-  const statusLabel =
-    runStatus === 'completed'
-      ? '分析完成'
-      : runStatus === 'clarification_needed'
-        ? '等待确认'
-        : runStatus === 'running'
-          ? '正在分析'
-          : runStatus === 'failed'
-            ? '分析失败'
-            : '准备开始'
-
+export function TopBar({ activeNav, onNavChange, onPrimaryAction, primaryActionLabel }: TopBarProps) {
   return (
-    <header className="topbar">
-      <div className="topbar__brand">
-        <div className="topbar__brand-mark" aria-hidden="true">
-          <span />
-          <span />
-        </div>
-        <div className="topbar__brand-copy">
-          <div className="topbar__title-row">
-            <h1>地图分析助手</h1>
-            <StatusPill label={statusLabel} tone={statusTone} />
-          </div>
-          <p>直接描述你的空间问题，系统会在地图上给出结论、结果图层和可下载结果。</p>
-        </div>
+    <header className="dc-topbar">
+      <div className="dc-topbar__brand">
+        <h1>空间智能工作台</h1>
+        <nav className="dc-topbar__nav" aria-label="主导航">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={activeNav === item.id ? 'dc-topbar__nav-item dc-topbar__nav-item--active' : 'dc-topbar__nav-item'}
+              onClick={() => onNavChange(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
       </div>
 
-      <div className="topbar__meta" aria-label="当前结果状态">
-        <div className="topbar__metric">
-          <span>当前结果</span>
-          <strong>{selectedArtifactName ?? '等待分析结果'}</strong>
-        </div>
-        <div className="topbar__metric">
-          <span>地图服务</span>
-          <strong>{publishStateLabel}</strong>
-        </div>
-      </div>
-
-      <div className="topbar__actions">
-        <button className="toolbar-button toolbar-button--primary" type="button" onClick={onCopyShareLink}>
-          <Share2 size={16} aria-hidden="true" />
-          复制分享链接
+      <div className="dc-topbar__actions">
+        <button className="dc-topbar__cta" type="button" onClick={onPrimaryAction}>
+          {primaryActionLabel}
         </button>
-        {selectedArtifactId && selectedArtifactGeoJsonUrl ? (
-          <a className="toolbar-button toolbar-button--ghost" href={selectedArtifactGeoJsonUrl} target="_blank" rel="noreferrer">
-            <Download size={16} aria-hidden="true" />
-            下载结果
-          </a>
-        ) : null}
-        {selectedArtifactId ? (
-          <button className="toolbar-button toolbar-button--ghost" type="button" onClick={onPublishSelected}>
-            <ExternalLink size={16} aria-hidden="true" />
-            发布地图服务
-          </button>
-        ) : null}
       </div>
     </header>
   )

@@ -1,19 +1,17 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { type PropsWithChildren, useCallback, useEffect, useRef, useState } from 'react'
 import maplibregl, { LngLatBounds, Map, type StyleSpecification } from 'maplibre-gl'
 
 import type { ArtifactRef, BasemapDescriptor } from '@geo-agent-platform/shared-types'
 
 type GeoJsonPayload = GeoJSON.FeatureCollection
 
-interface MapCanvasProps {
+interface MapCanvasProps extends PropsWithChildren {
   basemaps: BasemapDescriptor[]
   selectedBasemapKey: string
   onSelectBasemap: (basemapKey: string) => void
   layers: Array<{ artifact: ArtifactRef; data: GeoJsonPayload }>
   selectedArtifactId?: string
   selectedArtifactName?: string
-  layerCount: number
-  runStatus?: string
 }
 
 export function MapCanvas({
@@ -23,22 +21,48 @@ export function MapCanvas({
   layers,
   selectedArtifactId,
   selectedArtifactName,
-  layerCount,
-  runStatus,
+  children,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<Map | null>(null)
+  const boundsRef = useRef<LngLatBounds | null>(null)
+  const appliedBasemapKeyRef = useRef<string | null>(null)
   const [cursor, setCursor] = useState('114.0579, 22.5431')
   const activeBasemap =
     basemaps.find((item) => item.basemapKey === selectedBasemapKey) ??
     basemaps.find((item) => item.isDefault) ??
     basemaps[0] ??
     FALLBACK_BASEMAP
-  const visibleArtifactCount = layers.filter((item) => item.data.features.length).length
 
-  const handlePointerMove = useEffectEvent((lng: number, lat: number) => {
+  const cycleBasemap = useCallback(() => {
+    if (!basemaps.length) {
+      return
+    }
+    const currentIndex = basemaps.findIndex((item) => item.basemapKey === selectedBasemapKey)
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % basemaps.length : 0
+    onSelectBasemap(basemaps[nextIndex]?.basemapKey ?? basemaps[0].basemapKey)
+  }, [basemaps, onSelectBasemap, selectedBasemapKey])
+
+  const focusSelection = useCallback(() => {
+    const map = mapRef.current
+    if (!map) {
+      return
+    }
+    const selectionBounds = selectedArtifactId
+      ? boundsFromCollection(layers.find((item) => item.artifact.artifactId === selectedArtifactId)?.data)
+      : boundsRef.current
+
+    if (selectionBounds && !selectionBounds.isEmpty()) {
+      map.fitBounds(selectionBounds, { padding: 120, duration: 900, maxZoom: 14 })
+      return
+    }
+
+    map.flyTo({ center: [121.4737, 31.2304], zoom: 11.2 })
+  }, [layers, selectedArtifactId])
+
+  const handlePointerMove = useCallback((lng: number, lat: number) => {
     setCursor(`${lng.toFixed(4)}, ${lat.toFixed(4)}`)
-  })
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) {
@@ -48,23 +72,21 @@ export function MapCanvas({
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: buildBasemapStyle(activeBasemap),
-      center: [13.4049, 52.52],
-      zoom: 3.2,
+      center: [121.4737, 31.2304],
+      zoom: 11.2,
+      attributionControl: false,
     })
 
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right')
-    map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left')
     map.on('mousemove', (event) => handlePointerMove(event.lngLat.lng, event.lngLat.lat))
-    map.on('load', () => {
-      map.resize()
-    })
-
-    mapRef.current = map
+    map.on('load', () => map.resize())
 
     const resizeObserver = new ResizeObserver(() => {
       map.resize()
     })
     resizeObserver.observe(containerRef.current)
+
+    mapRef.current = map
+    appliedBasemapKeyRef.current = activeBasemap.basemapKey
 
     return () => {
       resizeObserver.disconnect()
@@ -75,16 +97,21 @@ export function MapCanvas({
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !activeBasemap) {
+    if (!map) {
       return
     }
 
+    if (appliedBasemapKeyRef.current === activeBasemap.basemapKey) {
+      return
+    }
+
+    appliedBasemapKeyRef.current = activeBasemap.basemapKey
     map.setStyle(buildBasemapStyle(activeBasemap))
   }, [activeBasemap])
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !activeBasemap) {
+    if (!map) {
       return
     }
 
@@ -97,22 +124,24 @@ export function MapCanvas({
         if (!data.features.length) {
           return
         }
+
         const sourceId = `artifact-${artifact.artifactId}`
         const fillId = `${sourceId}-fill`
-        const lineId = `${sourceId}-line`
-        const strokeId = `${sourceId}-stroke`
-        const circleId = `${sourceId}-circle`
+        const outlineId = `${sourceId}-outline`
+        const pathId = `${sourceId}-path`
+        const pointId = `${sourceId}-point`
         const color =
           artifact.artifactId === selectedArtifactId
-            ? '#ca8a04'
-            : ['#2563eb', '#0f766e', '#1d4ed8', '#7c3aed'][index % 4]
+            ? '#00687a'
+            : ['#00a3bf', '#d48136', '#5b8def', '#4c956c'][index % 4]
 
         map.addSource(sourceId, {
           type: 'geojson',
-          data: data,
+          data,
         })
 
         const geometryTypes = collectGeometryTypes(data)
+
         if (geometryTypes.has('Polygon') || geometryTypes.has('MultiPolygon')) {
           map.addLayer({
             id: fillId,
@@ -120,36 +149,37 @@ export function MapCanvas({
             source: sourceId,
             paint: {
               'fill-color': color,
-              'fill-opacity': artifact.artifactId === selectedArtifactId ? 0.24 : 0.12,
+              'fill-opacity': artifact.artifactId === selectedArtifactId ? 0.24 : 0.16,
             },
           })
           map.addLayer({
-            id: lineId,
+            id: outlineId,
             type: 'line',
             source: sourceId,
             paint: {
               'line-color': color,
               'line-width': artifact.artifactId === selectedArtifactId ? 3 : 2,
+              'line-opacity': 0.85,
             },
           })
         }
 
         if (geometryTypes.has('LineString') || geometryTypes.has('MultiLineString')) {
           map.addLayer({
-            id: strokeId,
+            id: pathId,
             type: 'line',
             source: sourceId,
             paint: {
               'line-color': color,
-              'line-width': artifact.artifactId === selectedArtifactId ? 4 : 2.5,
-              'line-opacity': artifact.artifactId === selectedArtifactId ? 0.95 : 0.75,
+              'line-width': artifact.artifactId === selectedArtifactId ? 4 : 2.4,
+              'line-opacity': 0.92,
             },
           })
         }
 
         if (geometryTypes.has('Point') || geometryTypes.has('MultiPoint')) {
           map.addLayer({
-            id: circleId,
+            id: pointId,
             type: 'circle',
             source: sourceId,
             paint: {
@@ -162,11 +192,13 @@ export function MapCanvas({
         }
 
         extendBounds(bounds, data)
-        hasBounds = hasBounds || Boolean(data.features?.length)
+        hasBounds = true
       })
 
+      boundsRef.current = hasBounds ? bounds : null
+
       if (hasBounds && !bounds.isEmpty()) {
-        map.fitBounds(bounds, { padding: 64, duration: 800, maxZoom: 13 })
+        map.fitBounds(bounds, { padding: 120, duration: 900, maxZoom: 14 })
       }
     }
 
@@ -176,51 +208,43 @@ export function MapCanvas({
     }
 
     map.once('styledata', syncLayers)
-  }, [activeBasemap, layers, selectedArtifactId])
+  }, [layers, selectedArtifactId, activeBasemap])
 
   return (
-    <section className="map-shell" aria-label="地图主视图">
-      <div ref={containerRef} className="map-shell__canvas" />
-      <div className="map-shell__hud">
-        <div className="map-shell__chip">
-          <span>当前查看</span>
-          <strong>{selectedArtifactName ?? '等待分析结果'}</strong>
-        </div>
-        <div className="map-shell__chip">
-          <span>已上图结果</span>
-          <strong>{visibleArtifactCount || layerCount}</strong>
-        </div>
-        <div className="map-shell__chip">
-          <span>当前状态</span>
-          <strong>{formatRunStatus(runStatus)}</strong>
-        </div>
+    <section className="dc-map-stage" aria-label="地图画布">
+      <div ref={containerRef} className="dc-map-stage__canvas" />
+      <div className="dc-map-stage__wash" />
+
+      <div className="dc-map-stage__overlay">{children}</div>
+
+      <div className="dc-map-stage__status">
+        <span>{selectedArtifactName ?? '等待结果'}</span>
+        <strong>{cursor}</strong>
       </div>
-      <div className="map-shell__overlay">
-        <div className="map-shell__legend">
-          <span>底图</span>
-          <strong>{formatBasemapName(activeBasemap)}</strong>
+
+      <div className="dc-map-stage__controls">
+        <div className="dc-map-stage__zoom">
+          <button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="放大地图">
+            <span className="material-symbols-outlined">add</span>
+          </button>
+          <div className="dc-map-stage__zoom-divider" />
+          <button type="button" onClick={() => mapRef.current?.zoomOut()} aria-label="缩小地图">
+            <span className="material-symbols-outlined">remove</span>
+          </button>
         </div>
-        <div className="map-shell__legend">
-          <span>坐标</span>
-          <strong>{cursor}</strong>
-        </div>
+        <button type="button" className="dc-map-stage__icon" onClick={cycleBasemap} aria-label="切换底图">
+          <span className="material-symbols-outlined">layers</span>
+        </button>
+        <button type="button" className="dc-map-stage__icon" onClick={focusSelection} aria-label="定位到当前结果">
+          <span className="material-symbols-outlined">my_location</span>
+        </button>
       </div>
-      {basemaps.length ? (
-        <div className="map-shell__basemap-switch" aria-label="底图切换">
-          {basemaps.map((basemap) => (
-            <button
-              key={basemap.basemapKey}
-            className={`map-shell__basemap-button${
-                basemap.basemapKey === selectedBasemapKey ? ' map-shell__basemap-button--active' : ''
-              }`}
-              type="button"
-              onClick={() => onSelectBasemap(basemap.basemapKey)}
-            >
-              {formatBasemapName(basemap)}
-            </button>
-          ))}
-        </div>
-      ) : null}
+
+      <div className="dc-map-stage__basemap-chip">
+        <button type="button" className="dc-map-stage__basemap dc-map-stage__basemap--active" onClick={cycleBasemap}>
+          {formatBasemapName(activeBasemap)}
+        </button>
+      </div>
     </section>
   )
 }
@@ -237,31 +261,15 @@ const FALLBACK_BASEMAP: BasemapDescriptor = {
   isDefault: true,
 }
 
-function formatRunStatus(runStatus?: string) {
-  if (runStatus === 'running') {
-    return '正在分析'
-  }
-  if (runStatus === 'completed') {
-    return '已完成'
-  }
-  if (runStatus === 'clarification_needed') {
-    return '等待确认'
-  }
-  if (runStatus === 'failed') {
-    return '未完成'
-  }
-  return '等待开始'
-}
-
 function formatBasemapName(basemap?: BasemapDescriptor) {
   if (!basemap) {
-    return '未选择'
-  }
-  if (basemap.kind === 'imagery') {
-    return '影像地图'
+    return '标准地图'
   }
   if (basemap.provider === 'osm') {
     return '开源地图'
+  }
+  if (basemap.kind === 'imagery') {
+    return '影像地图'
   }
   return '标准地图'
 }
@@ -277,24 +285,16 @@ function buildBasemapStyle(basemap?: BasemapDescriptor): StyleSpecification {
       tileSize: 256,
       attribution: basemap.attribution,
     }
-    layers.push({
-      id: 'basemap',
-      type: 'raster',
-      source: 'basemap',
-    })
+    layers.push({ id: 'basemap', type: 'raster', source: 'basemap' })
 
     if (basemap.labelTileUrls.length) {
-      sources.basemap_labels = {
+      sources.labels = {
         type: 'raster',
         tiles: basemap.labelTileUrls,
         tileSize: 256,
         attribution: basemap.attribution,
       }
-      layers.push({
-        id: 'basemap-labels',
-        type: 'raster',
-        source: 'basemap_labels',
-      })
+      layers.push({ id: 'labels', type: 'raster', source: 'labels' })
     }
   }
 
@@ -314,6 +314,7 @@ function removeArtifactLayers(map: Map) {
         map.removeLayer(layer.id)
       }
     })
+
   Object.keys(style.sources)
     .filter((sourceId) => sourceId.startsWith('artifact-'))
     .forEach((sourceId) => {
@@ -323,45 +324,50 @@ function removeArtifactLayers(map: Map) {
     })
 }
 
-function collectGeometryTypes(payload: GeoJsonPayload) {
-  const geometryTypes = new Set<string>()
-  payload.features?.forEach((feature) => {
+function collectGeometryTypes(collection: GeoJSON.FeatureCollection) {
+  const types = new Set<string>()
+  collection.features.forEach((feature) => {
     if (feature.geometry?.type) {
-      geometryTypes.add(feature.geometry.type)
+      types.add(feature.geometry.type)
     }
   })
-  return geometryTypes
+  return types
 }
 
-function extendBounds(bounds: LngLatBounds, payload: GeoJsonPayload) {
-  payload.features?.forEach((feature) => {
-    visitCoordinates(feature.geometry, (lng, lat) => bounds.extend([lng, lat]))
+function extendBounds(bounds: LngLatBounds, collection: GeoJSON.FeatureCollection) {
+  collection.features.forEach((feature) => {
+    const geometry = feature.geometry
+    if (!geometry) {
+      return
+    }
+    appendGeometry(bounds, geometry)
   })
 }
 
-function visitCoordinates(
-  geometry: GeoJSON.Geometry | null,
-  visitor: (lng: number, lat: number) => void,
-) {
-  if (!geometry) {
+function boundsFromCollection(collection?: GeoJSON.FeatureCollection) {
+  if (!collection?.features.length) {
+    return null
+  }
+  const bounds = new LngLatBounds()
+  extendBounds(bounds, collection)
+  return bounds.isEmpty() ? null : bounds
+}
+
+function appendGeometry(bounds: LngLatBounds, geometry: GeoJSON.Geometry) {
+  if (geometry.type === 'GeometryCollection') {
+    geometry.geometries.forEach((child) => appendGeometry(bounds, child))
     return
   }
+  appendCoordinates(bounds, geometry.coordinates)
+}
 
-  const walk = (value: unknown) => {
-    if (geometry.type === 'GeometryCollection' && 'geometries' in geometry) {
-      geometry.geometries.forEach((item) => visitCoordinates(item, visitor))
-      return
-    }
-    if (Array.isArray(value) && typeof value[0] === 'number' && typeof value[1] === 'number') {
-      visitor(value[0], value[1])
-      return
-    }
-    if (Array.isArray(value)) {
-      value.forEach(walk)
-    }
+function appendCoordinates(bounds: LngLatBounds, coordinates: unknown) {
+  if (!Array.isArray(coordinates)) {
+    return
   }
-
-  if ('coordinates' in geometry) {
-    walk(geometry.coordinates)
+  if (typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
+    bounds.extend([coordinates[0], coordinates[1]])
+    return
   }
+  coordinates.forEach((child) => appendCoordinates(bounds, child))
 }

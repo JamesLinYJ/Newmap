@@ -46,6 +46,15 @@ class FileStore:
         self.save_session(updated)
         return updated
 
+    def list_runs_for_session(self, session_id: str) -> list[AnalysisRunRecord]:
+        self.get_session(session_id)
+        runs: list[AnalysisRunRecord] = []
+        for path in self.analysis_dir.glob("*.json"):
+            run = AnalysisRunRecord.model_validate_json(path.read_text(encoding="utf-8"))
+            if run.session_id == session_id:
+                runs.append(run)
+        return sorted(runs, key=lambda item: item.updated_at, reverse=True)
+
     def create_run(
         self,
         session_id: str,

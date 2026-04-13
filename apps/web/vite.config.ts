@@ -8,4 +8,21 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('maplibre-gl')) {
+            return 'maplibre'
+          }
+          if (id.includes('react-router-dom')) {
+            return 'router'
+          }
+          if (id.includes('lucide-react')) {
+            return 'icons'
+          }
+        },
+      },
+    },
+  },
 })

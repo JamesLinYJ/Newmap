@@ -17,6 +17,13 @@ from .parser import (
 )
 
 
+def _format_agent_error(exc: Exception, *, tool: str | None = None, step_id: str | None = None) -> str:
+    prefix = "分析执行失败"
+    if step_id or tool:
+        prefix = f"分析执行失败(step={step_id or 'unknown'}, tool={tool or 'unknown'})"
+    return f"{prefix}: {exc.__class__.__name__}: {exc}"
+
+
 class AgentState(TypedDict, total=False):
     session_id: str
     user_query: str
@@ -75,9 +82,10 @@ class GeoAgentRuntime:
             model = AgentStateModel.model_validate(final_state)
             self.store.complete_run(run_id, model)
         except Exception as exc:
+            formatted_error = _format_agent_error(exc)
             final_response = AgentFinalResponse(
                 summary="分析执行失败。",
-                limitations=[str(exc)],
+                limitations=[formatted_error],
                 next_actions=["检查任务参数", "检查图层与服务状态", "修正后重试"],
             )
             failed_state = AgentStateModel(
@@ -87,7 +95,7 @@ class GeoAgentRuntime:
                 model_name=model_name,
                 current_step=0,
                 warnings=[],
-                errors=[str(exc)],
+                errors=[formatted_error],
                 final_response=final_response,
             )
             self.store.append_event(
@@ -295,10 +303,11 @@ class GeoAgentRuntime:
                         warnings=warnings,
                     )
                 except Exception as exc:
+                    formatted_error = _format_agent_error(exc, tool=step.tool, step_id=step.id)
                     tool_results[-1].status = "failed"
                     tool_results[-1].completed_at = now_utc()
-                    tool_results[-1].message = str(exc)
-                    errors = list(state.get("errors", [])) + [str(exc)]
+                    tool_results[-1].message = formatted_error
+                    errors = list(state.get("errors", [])) + [formatted_error]
                     self.store.update_run_state(
                         run_id,
                         current_step=index - 1,
@@ -382,7 +391,7 @@ class GeoAgentRuntime:
                         collection=latest_collection,
                     )
                 except Exception as exc:
-                    errors.append(str(exc))
+                    errors.append(_format_agent_error(exc, tool="publish_to_qgis_project", step_id="publish"))
             event_type = EventType.RUN_FAILED if state.get("errors") else EventType.RUN_COMPLETED
             if errors:
                 event_type = EventType.RUN_FAILED
