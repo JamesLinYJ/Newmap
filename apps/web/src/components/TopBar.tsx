@@ -1,3 +1,13 @@
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - 顶部导航栏组件
+//
+//   文件:       TopBar.tsx
+//
+//   日期:       2026年04月14日
+//   作者:       JamesLinYJ
+// --------------------------------------------------------------------------
+
 interface TopBarProps {
   activeNav: 'analysis' | 'layers' | 'history' | 'compute'
   onNavChange: (nav: 'analysis' | 'layers' | 'history' | 'compute') => void
@@ -13,6 +23,9 @@ const NAV_ITEMS = [
 ] as const
 
 export function TopBar({ activeNav, onNavChange, onPrimaryAction, primaryActionLabel }: TopBarProps) {
+  // 顶部导航栏
+  //
+  // 负责主导航切换与全局主操作入口，保持桌面端与移动端信息架构的顶层一致性。
   return (
     <header className="dc-topbar">
       <div className="dc-topbar__brand">

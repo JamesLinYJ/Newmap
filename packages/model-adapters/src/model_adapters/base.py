@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 模型适配器基础抽象
+#
+#   文件:       base.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -6,6 +16,9 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
+# BaseModelAdapter
+#
+# 各类模型 provider 的统一抽象层。
 class BaseModelAdapter(ABC):
     def __init__(self, provider: str):
         self.provider = provider

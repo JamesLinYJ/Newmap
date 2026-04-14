@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 意图解析与计划构建
+#
+#   文件:       parser.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import re
@@ -17,6 +27,9 @@ LAYER_KEYWORDS: dict[str, tuple[str, ...]] = {
 KNOWN_AREAS = ("巴黎", "Paris", "柏林", "Berlin", "上海", "上海市", "Springfield")
 
 
+# 意图解析与执行计划构建
+#
+# 这里先用规则做稳定底座，再允许模型参与增强和修正。
 def parse_user_intent(query: str, latest_uploaded_layer_key: str | None = None) -> UserIntent:
     text = query.strip()
     normalized = text.lower()
@@ -83,6 +96,7 @@ def parse_user_intent(query: str, latest_uploaded_layer_key: str | None = None) 
 
 
 def build_execution_plan(query: str, intent: UserIntent, latest_uploaded_layer_key: str | None = None) -> ExecutionPlan:
+    # 执行计划构建器。
     if intent.clarification_required:
         return ExecutionPlan(goal="clarification_needed", steps=[])
 

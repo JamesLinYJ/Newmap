@@ -1,12 +1,25 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 共享数据结构定义
+#
+#   文件:       schemas.py
+# 
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+# 命名转换
+#
+# 后端内部保持 snake_case，接口层统一输出 camelCase。
 def to_camel(value: str) -> str:
     parts = value.split("_")
     return parts[0] + "".join(word.capitalize() for word in parts[1:])
@@ -21,6 +34,9 @@ class CamelModel(BaseModel):
 
 
 class EventType(str, Enum):
+    # 运行事件类型
+    #
+    # 用于 API 事件流、持久化事件日志和前端调试页统一消费。
     INTENT_PARSED = "intent.parsed"
     PLAN_READY = "plan.ready"
     STEP_STARTED = "step.started"
@@ -113,6 +129,20 @@ class BasemapDescriptor(CamelModel):
 class PublishRequest(CamelModel):
     project_key: str | None = "demo-workspace"
 
+    @field_validator("project_key")
+    @classmethod
+    def validate_project_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if not candidate.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("projectKey 只能包含字母、数字、短横线和下划线。")
+        if candidate in {".", ".."} or "/" in candidate or "\\" in candidate:
+            raise ValueError("projectKey 不能包含路径分隔符。")
+        return candidate
+
 
 class RunEvent(CamelModel):
     event_id: str
@@ -169,7 +199,43 @@ class ModelProviderDescriptor(CamelModel):
     capabilities: list[str] = Field(default_factory=list)
 
 
+class ToolParameterOption(CamelModel):
+    label: str
+    value: str
+
+
+class ToolParameterDescriptor(CamelModel):
+    key: str
+    label: str
+    data_type: str
+    source: str = "text"
+    required: bool = False
+    description: str | None = None
+    placeholder: str | None = None
+    default_value: Any | None = None
+    options: list[ToolParameterOption] = Field(default_factory=list)
+
+
+class ToolDescriptor(CamelModel):
+    # 工具描述
+    #
+    # 这是前后端共享的工具展示与执行元数据结构。
+    name: str
+    label: str
+    description: str
+    group: str
+    tool_kind: str = "registry"
+    available: bool = True
+    tags: list[str] = Field(default_factory=list)
+    parameters: list[ToolParameterDescriptor] = Field(default_factory=list)
+    error: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
 class SystemComponentsStatus(CamelModel):
+    # 系统组件状态
+    #
+    # 汇总 catalog、QGIS、OGC API 与模型 provider 的当前可用性。
     catalog_backend: str
     postgis_enabled: bool
     qgis_runtime_available: bool

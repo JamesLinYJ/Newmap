@@ -6,6 +6,9 @@ ENV PATH="/opt/venv/bin:${PATH}"
 ENV QT_QPA_PLATFORM=offscreen
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_INDEX_URL=https://pypi.org/simple
 
 WORKDIR /opt/geo-agent
 
@@ -16,7 +19,8 @@ COPY data ./data
 COPY qgis ./qgis
 
 RUN python3 -m venv --system-site-packages "${VIRTUAL_ENV}" \
-  && "${VIRTUAL_ENV}/bin/pip" install -e .
+  && "${VIRTUAL_ENV}/bin/pip" install --upgrade pip setuptools wheel \
+  && "${VIRTUAL_ENV}/bin/pip" install --no-build-isolation --prefer-binary -e .
 
 WORKDIR /srv
 

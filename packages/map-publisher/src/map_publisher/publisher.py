@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 地图发布器实现
+#
+#   文件:       publisher.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -5,6 +15,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 
+# ProjectRuntime
+#
+# 发布器依赖的最小运行时协议，用于重建 QGIS 项目文件。
 class ProjectRuntime(Protocol):
     async def rebuild_project(
         self,
@@ -17,6 +30,9 @@ class ProjectRuntime(Protocol):
 
 
 class MapPublisher:
+    # MapPublisher
+    #
+    # 负责把 artifact GeoJSON 写入发布目录、维护工作区索引，并触发 QGIS 项目重建。
     def __init__(
         self,
         publish_dir: Path,
@@ -46,8 +62,12 @@ class MapPublisher:
         project_key: str,
         collection: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # 发布单个结果对象
+        #
+        # 结果会被写入工作区数据目录，并同步刷新 QGIS Server 使用的项目文件。
         if collection is None:
             raise ValueError("发布结果时必须提供 GeoJSON collection。")
+        project_key = self._validate_project_key(project_key)
 
         data_path = self.data_dir / f"{artifact_id}.geojson"
         data_path.write_text(json.dumps(collection, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -101,6 +121,16 @@ class MapPublisher:
     def _workspace_index_path(self, project_key: str) -> Path:
         return self.workspace_dir / f"{project_key}.json"
 
+    def _validate_project_key(self, project_key: str) -> str:
+        candidate = project_key.strip()
+        if not candidate:
+            raise ValueError("project_key 不能为空。")
+        if candidate in {".", ".."} or "/" in candidate or "\\" in candidate:
+            raise ValueError("project_key 不能包含路径分隔符。")
+        if not candidate.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("project_key 只能包含字母、数字、短横线和下划线。")
+        return candidate
+
     def _load_workspace_index(self, project_key: str) -> dict[str, dict[str, Any]]:
         path = self._workspace_index_path(project_key)
         if not path.exists():
@@ -128,6 +158,9 @@ class MapPublisher:
 
 
 def _infer_qgis_geometry_type(collection: dict[str, Any] | None) -> int:
+    # 几何类型推断
+    #
+    # 这里返回的是 QGIS Server 配置和工作区索引使用的简化类型编号。
     if not collection or not collection.get("features"):
         return 0
     geom_type = collection["features"][0].get("geometry", {}).get("type")

@@ -1,9 +1,20 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - PostGIS 图层目录实现
+#
+#   文件:       postgis_catalog.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 from psycopg import sql
@@ -15,6 +26,10 @@ from shared_types.schemas import LayerDescriptor
 from .layer_catalog import LayerCatalog
 
 
+# PostGISLayerCatalog
+#
+# PostGIS 后端版图层目录与分析实现。
+# 对外保持 LayerCatalog 风格接口，但会把更多工作交给数据库。
 class PostGISLayerCatalog(LayerCatalog):
     def __init__(self, data_dir: Path, database_url: str):
         super().__init__(data_dir)
@@ -43,6 +58,7 @@ class PostGISLayerCatalog(LayerCatalog):
             )
 
     def bootstrap_builtin_layers(self, force: bool = False) -> None:
+        # 内置图层灌库。
         catalog = json.loads((self.catalog_dir / "catalog.json").read_text(encoding="utf-8"))
         with self._connect() as conn, conn.cursor() as cur:
             for entry in catalog["layers"]:
@@ -407,11 +423,13 @@ class PostGISLayerCatalog(LayerCatalog):
             )
 
     def _connect(self):
+        # 数据库连接。
         try:
             return psycopg.connect(self.database_url, autocommit=True, connect_timeout=1)
         except psycopg.OperationalError as exc:
+            redacted_url = _redact_database_url(self.database_url)
             raise psycopg.OperationalError(
-                f"PostGIS connection failed for '{self.database_url}': {exc.__class__.__name__}: {exc}"
+                f"PostGIS connection failed for '{redacted_url}': {exc.__class__.__name__}: {exc}"
             ) from exc
 
     def _metadata_exists(self, cur, layer_key: str) -> bool:
@@ -433,7 +451,6 @@ class PostGISLayerCatalog(LayerCatalog):
 
     def _create_feature_table(self, cur, table_name: str, temporary: bool = False) -> None:
         temp_prefix = sql.SQL("TEMP ") if temporary else sql.SQL("")
-        on_commit = sql.SQL(" ON COMMIT DROP") if temporary else sql.SQL("")
         cur.execute(
             sql.SQL(
                 """
@@ -441,12 +458,11 @@ class PostGISLayerCatalog(LayerCatalog):
                     feature_id BIGSERIAL PRIMARY KEY,
                     properties JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                     geom geometry(Geometry, 4326)
-                ){on_commit}
+                )
                 """
             ).format(
                 temp_prefix=temp_prefix,
                 table_name=sql.Identifier(table_name),
-                on_commit=on_commit,
             )
         )
         if not temporary:
@@ -563,3 +579,16 @@ class PostGISLayerCatalog(LayerCatalog):
                 "geometries": [feature["geometry"] for feature in collection["features"]],
             },
         }
+
+
+def _redact_database_url(database_url: str) -> str:
+    try:
+        parts = urlsplit(database_url)
+    except Exception:
+        return "<redacted>"
+
+    hostname = parts.hostname or ""
+    port = f":{parts.port}" if parts.port else ""
+    username = parts.username or ""
+    netloc = f"{username}:***@{hostname}{port}" if username else f"{hostname}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))

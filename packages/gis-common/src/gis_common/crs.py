@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 坐标参考与投影工具
+#
+#   文件:       crs.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from functools import partial
@@ -8,6 +18,9 @@ from shapely.geometry import mapping, shape
 from shapely.ops import transform
 
 
+# CRS 与几何转换工具
+#
+# 提供局部米制投影选择、几何重投影以及 FeatureCollection 级别的坐标转换。
 def shape_from_feature(feature: dict[str, Any]):
     return shape(feature["geometry"])
 
@@ -40,4 +53,3 @@ def transform_feature_collection(payload: dict[str, Any], src_epsg: int, dst_eps
         transformed_geom = transform_geometry(geom, src_epsg, dst_epsg)
         transformed_features.append(feature_from_shape(transformed_geom, dict(feature.get("properties", {}))))
     return {"type": "FeatureCollection", "features": transformed_features}
-

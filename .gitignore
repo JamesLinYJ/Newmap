@@ -20,6 +20,13 @@ data/runs/*
 data/uploads/*
 !data/uploads/.gitkeep
 data/system/*.sqlite3
+apps/api/data/artifacts/*
+!apps/api/data/artifacts/.gitkeep
+apps/api/data/runs/*
+!apps/api/data/runs/.gitkeep
+apps/api/data/uploads/*
+!apps/api/data/uploads/.gitkeep
+apps/api/data/system/*.sqlite3
 qgis/published/*
 !qgis/published/data/
 !qgis/published/data/.gitkeep

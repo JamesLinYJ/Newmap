@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 文件存储实现
+#
+#   文件:       store.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +23,9 @@ from gis_common.ids import make_id, now_utc
 from shared_types.schemas import AgentStateModel, AnalysisRunRecord, ArtifactRef, RunEvent, SessionRecord
 
 
+# FileStore
+#
+# 本地文件版持久化存储，负责 session、run、event 与 artifact 的落盘和索引。
 class FileStore:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
@@ -63,6 +76,10 @@ class FileStore:
         model_provider: str = "demo",
         model_name: str | None = None,
     ) -> AnalysisRunRecord:
+        # Run 创建
+        #
+        # run 是一次分析或一次工具调用的主索引对象。
+        # 它把 session、用户输入、当前状态、artifact 和事件流串到同一个 id 下。
         state = AgentStateModel(
             session_id=session_id,
             user_query=user_query,
@@ -100,6 +117,10 @@ class FileStore:
         self._write_model(self.analysis_dir / f"{run.id}.json", run)
 
     def complete_run(self, run_id: str, state: AgentStateModel) -> AnalysisRunRecord:
+        # Run 收尾
+        #
+        # 最终状态并不是调用方直接给的，而是根据 errors 和
+        # clarification_required 自动推导，避免上层遗漏状态收敛。
         run = self.get_run(run_id)
         status = "completed"
         if state.errors:
@@ -111,6 +132,10 @@ class FileStore:
         return updated
 
     def update_run_state(self, run_id: str, *, status: str | None = None, **fields: Any) -> AnalysisRunRecord:
+        # Run 状态更新
+        #
+        # 每次更新都先把旧 state 与新增字段合并，再整体重新走 AgentStateModel 校验，
+        # 避免局部写入把 state 搞成半合法状态。
         run = self.get_run(run_id)
         updated_state = AgentStateModel.model_validate({**run.state.model_dump(mode="python"), **fields})
         update_fields: dict[str, Any] = {"state": updated_state, "updated_at": now_utc()}
@@ -121,6 +146,9 @@ class FileStore:
         return updated_run
 
     def append_event(self, run_id: str, event: RunEvent) -> None:
+        # 事件追加
+        #
+        # 同时写入持久化日志，并推送给当前订阅的 SSE 队列。
         path = self.events_dir / f"{run_id}.json"
         events = []
         if path.exists():
@@ -155,6 +183,13 @@ class FileStore:
         collection: dict[str, Any],
         metadata: dict[str, Any],
     ) -> ArtifactRef:
+        # GeoJSON artifact 持久化
+        #
+        # 同时写入三份东西：
+        # 1. 真正的 GeoJSON 文件。
+        # 2. metadata 文件。
+        # 3. artifact 索引文件。
+        # 这样后续既能按 artifact_id 查找，也能独立读取 metadata。
         artifact_dir = self.artifacts_dir / run_id
         artifact_dir.mkdir(parents=True, exist_ok=True)
         geojson_path = artifact_dir / f"{artifact_id}.geojson"
@@ -222,6 +257,10 @@ class FileStore:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _resolve_artifact_path(self, payload: dict[str, Any], *, path_type: str) -> Path:
+        # artifact 路径解析
+        #
+        # 优先使用新的 relative_path 索引；如果遇到历史数据，则兼容旧的绝对路径键，
+        # 最后再回退到按命名规则推导的默认路径。
         relative_key = f"{path_type}_relative_path"
         if relative_key in payload:
             candidate = self.data_dir / str(payload[relative_key])

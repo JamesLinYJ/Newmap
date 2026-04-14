@@ -1,6 +1,17 @@
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - 对话与任务面板
+//
+//   文件:       ChatPanel.tsx
+//
+//   日期:       2026年04月14日
+//   作者:       JamesLinYJ
+// --------------------------------------------------------------------------
+
 import { LoaderCircle } from 'lucide-react'
 
 import type { UserIntent } from '@geo-agent-platform/shared-types'
+import { AppIcon } from './AppIcon'
 
 interface ProgressItem {
   id: string
@@ -43,6 +54,7 @@ export function ChatPanel({
   onUseTemplate,
   onUpload,
 }: ChatPanelProps) {
+  // 聊天与任务提交面板。
   const liveStatus =
     progressItems.find((item) => item.status === 'active' || item.status === 'warning') ?? progressItems.at(-1)
   const assistantIntro = intent?.clarificationRequired
@@ -58,7 +70,7 @@ export function ChatPanel({
         <div className="dc-chat-shell__header">
           <div className="dc-chat-shell__identity">
             <div className="dc-avatar dc-avatar--assistant">
-              <span className="material-symbols-outlined">smart_toy</span>
+              <AppIcon name="smart_toy" size={20} />
             </div>
             <div>
               <strong>GIS 助手</strong>
@@ -107,7 +119,7 @@ export function ChatPanel({
         {errorMessage ? <div className="dc-error-banner">{errorMessage}</div> : null}
 
         <div className="dc-stage-note">
-          <span className="material-symbols-outlined">insights</span>
+          <AppIcon name="insights" size={18} />
           <div>
             <strong>{liveStatus?.title ?? '等待开始分析'}</strong>
             <p>{liveStatus?.description ?? '系统会根据你的问题自动拆解空间步骤，并把结果同步到地图和右侧摘要卡片。'}</p>
@@ -116,7 +128,7 @@ export function ChatPanel({
 
         <div className="dc-composer dc-composer--inline">
           <div className="dc-composer__field">
-            <span className="material-symbols-outlined">auto_awesome</span>
+            <AppIcon name="auto_awesome" size={18} />
             <input
               id="analysis-query-input"
               value={query}
@@ -124,13 +136,13 @@ export function ChatPanel({
               placeholder="描述您的空间分析需求，如：“分析地铁站周边的商业活力...”"
             />
             <button type="button" className="dc-composer__send" onClick={onSubmit} disabled={isSubmitting || !query.trim()}>
-              {isSubmitting ? <LoaderCircle size={20} className="spin" aria-hidden="true" /> : <span className="material-symbols-outlined">send</span>}
+              {isSubmitting ? <LoaderCircle size={20} className="spin" aria-hidden="true" /> : <AppIcon name="send" size={18} />}
             </button>
           </div>
 
           <div className="dc-composer__footer">
             <label className="dc-utility" htmlFor="layer-upload">
-              <span className="material-symbols-outlined">attach_file</span>
+              <AppIcon name="attach_file" size={16} />
               添加数据集
             </label>
             <input
@@ -148,7 +160,7 @@ export function ChatPanel({
             />
 
             <button type="button" className="dc-utility dc-utility--button" onClick={onUseTemplate}>
-              <span className="material-symbols-outlined">history_edu</span>
+              <AppIcon name="history_edu" size={16} />
               使用模板
             </button>
           </div>

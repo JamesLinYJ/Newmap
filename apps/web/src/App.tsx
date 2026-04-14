@@ -1,3 +1,13 @@
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - Web 应用壳
+//
+//   文件:       App.tsx
+//
+//   日期:       2026年04月14日
+//   作者:       JamesLinYJ
+// --------------------------------------------------------------------------
+
 import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useState } from 'react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 
@@ -13,11 +23,13 @@ import type {
   RunEvent,
   SessionRecord,
   SystemComponentsStatus,
+  ToolDescriptor,
   UserIntent,
 } from '@geo-agent-platform/shared-types'
 
 import {
   createSession,
+  deleteToolCatalogEntry,
   getArtifactGeoJson,
   getArtifactMetadata,
   getRun,
@@ -26,18 +38,23 @@ import {
   listBasemaps,
   listLayers,
   listProviders,
+  listTools,
+  listToolCatalogEntries,
   listSessionRuns,
   listQgisModels,
   openRunEventStream,
   publishArtifact,
   runQgisModel,
   runQgisProcess,
+  runTool,
   startAnalysis,
+  upsertToolCatalogEntry,
   uploadLayer,
 } from './api'
 import './App.css'
 import { ChatPanel } from './components/ChatPanel'
 import { DetailPanel } from './components/DetailPanel'
+import { AppIcon, type AppIconName } from './components/AppIcon'
 import { MapCanvas } from './components/MapCanvas'
 import { TopBar } from './components/TopBar'
 
@@ -47,12 +64,12 @@ type SidebarItemId = 'assistant' | 'query' | 'sources' | 'config' | 'export'
 
 const DebugPage = lazy(() => import('./components/DebugPage').then((module) => ({ default: module.DebugPage })))
 
-const SIDEBAR_ITEMS: Array<{ id: SidebarItemId; icon: string; label: string }> = [
-  { id: 'assistant', icon: 'psychology', label: '智能指令' },
-  { id: 'query', icon: 'explore', label: '空间查询' },
-  { id: 'sources', icon: 'database', label: '数据源' },
-  { id: 'config', icon: 'settings_account_box', label: '模型配置' },
-  { id: 'export', icon: 'ios_share', label: '导出' },
+const SIDEBAR_ITEMS: Array<{ id: SidebarItemId; icon: AppIconName; label: string; shortLabel: string }> = [
+  { id: 'assistant', icon: 'psychology', label: '智能指令', shortLabel: '助手' },
+  { id: 'query', icon: 'explore', label: '空间查询', shortLabel: '查询' },
+  { id: 'sources', icon: 'database', label: '数据源', shortLabel: '数据' },
+  { id: 'config', icon: 'settings_account_box', label: '模型配置', shortLabel: '模型' },
+  { id: 'export', icon: 'ios_share', label: '导出', shortLabel: '导出' },
 ] as const
 
 const SAMPLE_QUERIES = [
@@ -72,6 +89,11 @@ function formatUiError(error: unknown, fallback: string) {
 }
 
 function App() {
+  // 主应用壳
+  //
+  // 统一维护会话、运行状态、artifact、QGIS 工具、调试页数据和主工作台导航。
+  // 这里本质上是前端的状态编排中心：负责把 API、SSE、URL、地图与调试页
+  // 组织成一个稳定的工作台，而不是只渲染静态页面。
   const location = useLocation()
   const [query, setQuery] = useState('查询巴黎地铁站 1 公里范围内的医院')
   const [session, setSession] = useState<SessionRecord>()
@@ -93,6 +115,8 @@ function App() {
   ])
   const [systemComponents, setSystemComponents] = useState<SystemComponentsStatus>()
   const [qgisModels, setQgisModels] = useState<QgisModelsResponse>()
+  const [availableTools, setAvailableTools] = useState<ToolDescriptor[]>([])
+  const [toolCatalogEntries, setToolCatalogEntries] = useState<Array<Record<string, unknown>>>([])
   const [sessionRuns, setSessionRuns] = useState<AnalysisRun[]>([])
   const [artifacts, setArtifacts] = useState<ArtifactRef[]>([])
   const [artifactData, setArtifactData] = useState<Record<string, GeoJSON.FeatureCollection>>({})
@@ -100,8 +124,10 @@ function App() {
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [uploadedLayerName, setUploadedLayerName] = useState<string>()
   const [publishResult, setPublishResult] = useState<Record<string, unknown> | null>(null)
+  const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isQgisSubmitting, setIsQgisSubmitting] = useState(false)
+  const [isToolCatalogSubmitting, setIsToolCatalogSubmitting] = useState(false)
   const [uiError, setUiError] = useState<string>()
   const [provider, setProvider] = useState('demo')
   const [model, setModel] = useState('')
@@ -134,6 +160,10 @@ function App() {
 
   const applyArtifactPayload = useCallback(
     async (artifactList: ArtifactRef[]) => {
+      // artifact 水合
+      //
+      // 后端 run.state 里只有 ArtifactRef；真正地图需要的 GeoJSON 和 metadata
+      // 需要在这里补拉一次，并拆成两个索引表以便地图和详情面板分别消费。
       const bundles = await Promise.all(
         artifactList.map(async (artifact) => {
           const [data, metadataPayload] = await Promise.all([
@@ -171,6 +201,10 @@ function App() {
 
   const hydrateRunState = useCallback(
     async (runId: string) => {
+      // run 水合
+      //
+      // 当用户刷新页面、切换历史 run 或收到最终 SSE 事件时，
+      // 都通过这一条路径把 run、intent、plan、artifacts 与历史记录重新对齐。
       const latestRun = await getRun(runId)
 
       startTransition(() => {
@@ -288,6 +322,10 @@ function App() {
   )
 
   useEffect(() => {
+    // 首次加载初始化
+    //
+    // 优先恢复 URL 中的 session/run；如果没有则新建 session。
+    // 同时加载 basemap 和图层目录，保证首页第一次进入就有完整工作台骨架。
     const searchParams = new URLSearchParams(window.location.search)
     const sessionId = searchParams.get('session')
     const runId = searchParams.get('run')
@@ -339,6 +377,9 @@ function App() {
   }, [hydrateRunState])
 
   useEffect(() => {
+    // 模型提供方初始化
+    //
+    // 独立于 session 初始化，避免 provider 列表加载失败时影响首页基础骨架。
     void listProviders()
       .then((providerList) => {
         startTransition(() => {
@@ -358,15 +399,21 @@ function App() {
   }, [])
 
   useEffect(() => {
+    // 调试/计算工具预加载
+    //
+    // 只有在 /debug、compute 或 config 场景下才加载系统组件和工具目录，
+    // 避免首页初始加载被一堆调试数据拖慢。
     if (location.pathname !== '/debug' && panelMode !== 'compute' && panelMode !== 'config') {
       return
     }
 
-    void Promise.all([getSystemComponents(), listQgisModels()])
-      .then(([components, modelList]) => {
+    void Promise.all([getSystemComponents(), listQgisModels(), listTools(), listToolCatalogEntries()])
+      .then(([components, modelList, tools, catalogEntries]) => {
         startTransition(() => {
           setSystemComponents(components)
           setQgisModels(modelList)
+          setAvailableTools(tools)
+          setToolCatalogEntries(catalogEntries)
         })
       })
       .catch((error) => {
@@ -374,7 +421,26 @@ function App() {
       })
   }, [location.pathname, panelMode])
 
+  const refreshToolingState = useCallback(async () => {
+    const [components, modelList, tools, catalogEntries] = await Promise.all([
+      getSystemComponents(),
+      listQgisModels(),
+      listTools(),
+      listToolCatalogEntries(),
+    ])
+    startTransition(() => {
+      setSystemComponents(components)
+      setQgisModels(modelList)
+      setAvailableTools(tools)
+      setToolCatalogEntries(catalogEntries)
+    })
+  }, [])
+
   useEffect(() => {
+    // SSE 事件订阅
+    //
+    // 只要当前存在运行中的 run，就持续监听事件流，并在断开时按需重连。
+    // 这里同时负责把 intent、plan 和 artifact.created 等事件增量回灌进状态树。
     if (!run?.id) {
       return
     }
@@ -479,6 +545,9 @@ function App() {
   }, [applyArtifactPayload, hydrateRunState, run?.id])
 
   const handleSubmit = useCallback(async () => {
+    // 主分析提交流程
+    //
+    // 提交前会先清空上一个 run 的展示态，避免新旧结果叠在一起。
     if (!session || !query.trim()) {
       return
     }
@@ -520,6 +589,8 @@ function App() {
 
   const handleUpload = useCallback(
     async (file: File) => {
+      // 上传图层后立即刷新 session 和 layer catalog，
+      // 这样 latest_upload 与图层面板能立刻反映新数据。
       if (!session) {
         return
       }
@@ -542,6 +613,8 @@ function App() {
   )
 
   const handlePublish = useCallback(async (artifactId: string) => {
+    // 发布结果后顺手刷新 system components，
+    // 让详情面板里的服务状态和链接区与最新发布结果保持一致。
     try {
       setUiError(undefined)
       const result = await publishArtifact(artifactId, { projectKey: 'demo-workspace' })
@@ -554,6 +627,9 @@ function App() {
 
   const handleRunQgisProcess = useCallback(
     async (algorithmId: string, distance?: number) => {
+      // 轻量 QGIS algorithm 调用入口
+      //
+      // 目前主要服务于详情面板里的二次处理按钮，因此默认基于当前选中的 artifact 执行。
       if (!selectedArtifactId || !run?.id) {
         return
       }
@@ -584,6 +660,10 @@ function App() {
 
   const handleRunQgisModel = useCallback(
     async (modelName: string, overlayArtifactId?: string) => {
+      // QGIS 模型调用入口
+      //
+      // 与 algorithm 调用相比，模型通常需要额外输入映射，因此这里保留少量
+      // 面向 UI 的输入拼装逻辑，例如 overlay 和默认 DISTANCE。
       if (!selectedArtifactId || !run?.id) {
         return
       }
@@ -620,7 +700,78 @@ function App() {
     [hydrateRunState, run?.id, selectedArtifactId],
   )
 
+  const handleRunTool = useCallback(
+    async (tool: ToolDescriptor, args: Record<string, unknown>) => {
+      // 调试页工具工作台统一入口
+      //
+      // 无论是 registry、qgis_algorithm 还是 qgis_model，都在这里统一调度，
+      // 再把返回的 run 重新 hydrate 到主状态树。
+      if (!session?.id) {
+        return
+      }
+
+      try {
+        setUiError(undefined)
+        setIsQgisSubmitting(true)
+        const result = await runTool({
+          sessionId: session.id,
+          runId: run?.id,
+          toolName: tool.name,
+          toolKind: tool.toolKind,
+          args,
+        })
+        setToolRunResult(result)
+        const nextRunId = typeof result.run === 'object' && result.run && 'id' in result.run ? String(result.run.id) : run?.id
+        if (nextRunId) {
+          await hydrateRunState(nextRunId)
+          if (session.id) {
+            syncUrl(session.id, nextRunId)
+          }
+        }
+      } catch (error) {
+        setUiError(formatUiError(error, `${tool.label} 执行失败。`))
+      } finally {
+        setIsQgisSubmitting(false)
+      }
+    },
+    [hydrateRunState, run?.id, session?.id],
+  )
+
+  const handleUpsertToolCatalogEntry = useCallback(
+    async (tool: ToolDescriptor, payload: Record<string, unknown>, sortOrder?: number) => {
+      try {
+        setUiError(undefined)
+        setIsToolCatalogSubmitting(true)
+        await upsertToolCatalogEntry(tool.toolKind, tool.name, payload, sortOrder)
+        await refreshToolingState()
+      } catch (error) {
+        setUiError(formatUiError(error, `${tool.label} 目录配置保存失败。`))
+      } finally {
+        setIsToolCatalogSubmitting(false)
+      }
+    },
+    [refreshToolingState],
+  )
+
+  const handleDeleteToolCatalogEntry = useCallback(
+    async (tool: ToolDescriptor) => {
+      try {
+        setUiError(undefined)
+        setIsToolCatalogSubmitting(true)
+        await deleteToolCatalogEntry(tool.toolKind, tool.name)
+        await refreshToolingState()
+      } catch (error) {
+        setUiError(formatUiError(error, `${tool.label} 目录配置删除失败。`))
+      } finally {
+        setIsToolCatalogSubmitting(false)
+      }
+    },
+    [refreshToolingState],
+  )
+
   const handleCopyShareLink = useCallback(async () => {
+    // 分享链接只编码 session/run 两个关键上下文，
+    // 这样页面恢复逻辑可以复用现有初始化路径，不需要额外的分享态协议。
     try {
       const url = new URL(window.location.href)
       if (session?.id) {
@@ -685,23 +836,17 @@ function App() {
                         className={activeSidebarItem === item.id ? 'dc-sidebar__item dc-sidebar__item--active' : 'dc-sidebar__item'}
                         onClick={() => handleSidebarItemClick(item.id)}
                       >
-                        <span className="material-symbols-outlined">{item.icon}</span>
-                        <span>{item.label}</span>
+                        <AppIcon name={item.icon} size={18} />
+                        <span className="dc-sidebar__label dc-sidebar__label--full">{item.label}</span>
+                        <span className="dc-sidebar__label dc-sidebar__label--compact">{item.shortLabel}</span>
                       </button>
                     ))}
                   </nav>
                 </aside>
 
                 <main className="dc-main">
-                  <MapCanvas
-                    basemaps={basemaps}
-                    selectedBasemapKey={selectedBasemapKey}
-                    onSelectBasemap={setSelectedBasemapKey}
-                    layers={mapLayers}
-                    selectedArtifactId={selectedArtifactId}
-                    selectedArtifactName={selectedArtifact?.name}
-                  >
-                    <div className="dc-overlay-layout">
+                  <div className="dc-main__workspace">
+                    <div className="dc-main__assistant">
                       <ChatPanel
                         query={query}
                         isSubmitting={isSubmitting}
@@ -719,7 +864,20 @@ function App() {
                           void handleUpload(file)
                         }}
                       />
+                    </div>
 
+                    <div className="dc-main__map">
+                      <MapCanvas
+                        basemaps={basemaps}
+                        selectedBasemapKey={selectedBasemapKey}
+                        onSelectBasemap={setSelectedBasemapKey}
+                        layers={mapLayers}
+                        selectedArtifactId={selectedArtifactId}
+                        selectedArtifactName={selectedArtifact?.name}
+                      />
+                    </div>
+
+                    <div className="dc-main__detail">
                       <DetailPanel
                         panelMode={panelMode}
                         currentRunId={run?.id}
@@ -766,7 +924,7 @@ function App() {
                         onModelChange={setModel}
                       />
                     </div>
-                  </MapCanvas>
+                  </div>
                 </main>
               </div>
             </div>
@@ -782,9 +940,12 @@ function App() {
               uploadedLayerName={uploadedLayerName}
               errorMessage={uiError}
               runStatus={run?.status}
+              currentRunId={run?.id}
+              currentSessionId={session?.id}
               provider={provider}
               model={model}
               providers={providers}
+              sessionRuns={sessionRuns}
               layers={layers}
               events={deferredEvents}
               intent={intent}
@@ -794,8 +955,12 @@ function App() {
               artifactMetadata={artifactMetadata}
               selectedArtifactId={selectedArtifactId}
               publishResult={publishResult}
+              toolRunResult={toolRunResult}
+              toolCatalogEntries={toolCatalogEntries}
               systemComponents={systemComponents}
               qgisModels={qgisModels}
+              tools={availableTools}
+              isToolCatalogSubmitting={isToolCatalogSubmitting}
               onQueryChange={setQuery}
               onProviderChange={handleProviderChange}
               onModelChange={setModel}
@@ -814,6 +979,15 @@ function App() {
               }}
               onRunQgisModel={(modelName, overlayArtifactId) => {
                 void handleRunQgisModel(modelName, overlayArtifactId)
+              }}
+              onRunTool={(tool, args) => {
+                void handleRunTool(tool, args)
+              }}
+              onUpsertToolCatalogEntry={(tool, payload, sortOrder) => {
+                void handleUpsertToolCatalogEntry(tool, payload, sortOrder)
+              }}
+              onDeleteToolCatalogEntry={(tool) => {
+                void handleDeleteToolCatalogEntry(tool)
               }}
             />
           }

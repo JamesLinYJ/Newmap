@@ -1,3 +1,16 @@
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - 前端共享类型定义
+//
+//   文件:       index.ts
+//
+//   日期:       2026年04月14日
+//   作者:       JamesLinYJ
+// --------------------------------------------------------------------------
+
+// 共享前端类型定义
+//
+// 与 Python 侧 shared_types.schemas 保持语义一致，供 Web 端直接消费接口数据。
 export type EventType =
   | 'intent.parsed'
   | 'plan.ready'
@@ -142,6 +155,36 @@ export interface ModelProviderDescriptor {
   configured: boolean
   defaultModel?: string | null
   capabilities: string[]
+}
+
+export interface ToolParameterOption {
+  label: string
+  value: string
+}
+
+export interface ToolParameterDescriptor {
+  key: string
+  label: string
+  dataType: string
+  source: string
+  required: boolean
+  description?: string | null
+  placeholder?: string | null
+  defaultValue?: unknown
+  options: ToolParameterOption[]
+}
+
+export interface ToolDescriptor {
+  name: string
+  label: string
+  description: string
+  group: string
+  toolKind: string
+  available: boolean
+  tags: string[]
+  parameters: ToolParameterDescriptor[]
+  error?: string | null
+  meta: Record<string, unknown>
 }
 
 export interface SystemComponentsStatus {

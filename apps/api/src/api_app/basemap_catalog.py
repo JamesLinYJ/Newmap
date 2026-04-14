@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 底图库目录
+#
+#   文件:       basemap_catalog.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -7,6 +17,9 @@ from pathlib import Path
 from shared_types.schemas import BasemapDescriptor
 
 
+# BasemapCatalog
+#
+# 底图库目录存储。使用 SQLite 维护底图模板，并根据配置渲染最终瓦片 URL。
 class BasemapCatalog:
     def __init__(self, data_dir: Path, *, tianditu_api_key: str | None = None):
         self.data_dir = data_dir

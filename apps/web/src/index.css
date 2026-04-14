@@ -1,19 +1,19 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@400;600;700;800&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+@import url('https://fonts.font.im/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --color-primary: #00687a;
-  --color-secondary: #3c646f;
-  --color-accent: #00a3bf;
-  --color-accent-strong: #00687a;
-  --color-signal: #d48136;
-  --color-background: #f7f9fb;
+  --color-primary: #0f172a;
+  --color-secondary: #1e293b;
+  --color-accent: #2563eb;
+  --color-accent-strong: #1d4ed8;
+  --color-signal: #16a34a;
+  --color-background: #eef3f8;
   --color-surface: #ffffff;
-  --color-panel: #f2f4f6;
-  --color-text: #191c1e;
-  --color-muted: #5f6b70;
-  --color-line: rgba(188, 201, 205, 0.65);
-  --font-sans: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --color-panel: #f8fafc;
+  --color-text: #0f172a;
+  --color-muted: #475569;
+  --color-line: #d7e0ea;
+  --font-sans: 'Fira Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'Fira Code', 'IBM Plex Mono', 'JetBrains Mono', monospace;
   color: var(--color-text);
   background: var(--color-background);
   font-family: var(--font-sans);
@@ -41,6 +41,7 @@ body {
   min-width: 320px;
   overflow-x: hidden;
   background: var(--color-background);
+  color: var(--color-text);
 }
 
 button,

@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - GeoJSON 工具
+#
+#   文件:       geojson.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -5,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
+# GeoJSON 读写与归一化工具。
 def ensure_feature_collection(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("type") == "FeatureCollection":
         payload.setdefault("features", [])
@@ -23,4 +34,3 @@ def save_geojson(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         json.dump(ensure_feature_collection(payload), handle, ensure_ascii=False, indent=2)
-

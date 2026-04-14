@@ -1,3 +1,13 @@
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - 详情面板组件
+//
+//   文件:       DetailPanel.tsx
+//
+//   日期:       2026年04月14日
+//   作者:       JamesLinYJ
+// --------------------------------------------------------------------------
+
 import { ExternalLink, Lightbulb, LoaderCircle, MapPin, Sparkles } from 'lucide-react'
 
 import type {
@@ -12,6 +22,7 @@ import type {
 } from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../api'
+import { AppIcon } from './AppIcon'
 
 interface ProgressItem {
   id: string
@@ -83,6 +94,12 @@ export function DetailPanel({
   onProviderChange,
   onModelChange,
 }: DetailPanelProps) {
+  // 右侧详情面板
+  //
+  // 根据当前导航模式切换摘要、图层、历史、计算、配置等内容，
+  // 并承接 artifact、运行历史和 QGIS 二次处理入口。
+  // 这里不是纯展示区，而是“结果消费与后续动作面板”：
+  // 用户看摘要、切换结果、回看历史、执行二次处理和发布结果都在这层完成。
   const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) ?? artifacts[0]
   const selectedCollection = selectedArtifact ? artifactData[selectedArtifact.artifactId] : undefined
   const featureCount = selectedCollection?.features.length ?? 0
@@ -119,7 +136,7 @@ export function DetailPanel({
                 <h3>{summaryTitle}</h3>
               </div>
               <div className="dc-card__icon">
-                <span className="material-symbols-outlined">analytics</span>
+                <AppIcon name="analytics" size={18} />
               </div>
             </div>
 
@@ -215,14 +232,14 @@ export function DetailPanel({
       {panelMode === 'layers' ? (
         <section className="dc-card">
           <div className="dc-card__header">
-            <div>
-              <div className="dc-card__eyebrow">图层</div>
-              <h3>结果与参考图层</h3>
+              <div>
+                <div className="dc-card__eyebrow">图层</div>
+                <h3>结果与参考图层</h3>
+              </div>
+              <div className="dc-card__icon">
+                <AppIcon name="layers" size={18} />
+              </div>
             </div>
-            <div className="dc-card__icon">
-              <span className="material-symbols-outlined">layers</span>
-            </div>
-          </div>
 
           <div className="dc-panel-section">
             <div className="dc-panel-section__title">分析结果</div>
@@ -274,14 +291,14 @@ export function DetailPanel({
       {panelMode === 'history' ? (
         <section className="dc-card">
           <div className="dc-card__header">
-            <div>
-              <div className="dc-card__eyebrow">历史</div>
-              <h3>执行过程</h3>
+              <div>
+                <div className="dc-card__eyebrow">历史</div>
+                <h3>执行过程</h3>
+              </div>
+              <div className="dc-card__icon">
+                <AppIcon name="history" size={18} />
+              </div>
             </div>
-            <div className="dc-card__icon">
-              <span className="material-symbols-outlined">history</span>
-            </div>
-          </div>
 
           <div className="dc-timeline">
             {progressItems.map((item) => (
@@ -399,14 +416,14 @@ export function DetailPanel({
       {panelMode === 'sources' ? (
         <section className="dc-card">
           <div className="dc-card__header">
-            <div>
-              <div className="dc-card__eyebrow">数据源</div>
-              <h3>当前数据概览</h3>
+              <div>
+                <div className="dc-card__eyebrow">数据源</div>
+                <h3>当前数据概览</h3>
+              </div>
+              <div className="dc-card__icon">
+                <AppIcon name="database" size={18} />
+              </div>
             </div>
-            <div className="dc-card__icon">
-              <span className="material-symbols-outlined">database</span>
-            </div>
-          </div>
 
           <div className="dc-keyvalue-list">
             <div className="dc-keyvalue-row">
@@ -457,7 +474,7 @@ export function DetailPanel({
                 <h3>下载与发布</h3>
               </div>
               <div className="dc-card__icon">
-                <span className="material-symbols-outlined">ios_share</span>
+                <AppIcon name="ios_share" size={18} />
               </div>
             </div>
 
@@ -515,7 +532,7 @@ export function DetailPanel({
                 <h3>当前分析引擎</h3>
               </div>
               <div className="dc-card__icon">
-                <span className="material-symbols-outlined">tune</span>
+                <AppIcon name="tune" size={18} />
               </div>
             </div>
 
@@ -546,7 +563,7 @@ export function DetailPanel({
                 <h3>系统状态</h3>
               </div>
               <div className="dc-card__icon">
-                <span className="material-symbols-outlined">deployed_code</span>
+                <AppIcon name="deployed_code" size={18} />
               </div>
             </div>
 

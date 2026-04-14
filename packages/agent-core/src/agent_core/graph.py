@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - Agent 工作流运行时
+#
+#   文件:       graph.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -6,7 +16,7 @@ from langgraph.graph import END, StateGraph
 
 from gis_common.ids import make_id, now_utc
 from shared_types.schemas import AgentFinalResponse, AgentStateModel, EventType, ExecutionPlan, RunEvent, ToolCall, UserIntent
-from tool_registry import ExecutionContext, ToolRegistry
+from tool_registry import ToolRegistry, ToolRuntime
 
 from .parser import (
     build_execution_plan,
@@ -17,6 +27,7 @@ from .parser import (
 )
 
 
+# Agent 图执行错误格式化。
 def _format_agent_error(exc: Exception, *, tool: str | None = None, step_id: str | None = None) -> str:
     prefix = "分析执行失败"
     if step_id or tool:
@@ -42,6 +53,9 @@ class AgentState(TypedDict, total=False):
 
 
 class GeoAgentRuntime:
+    # GeoAgentRuntime
+    #
+    # 将意图解析、计划生成、计划校验、工具执行与结果发布组织成一条 langgraph 工作流。
     def __init__(self, *, store: Any, tool_registry: ToolRegistry, model_registry: Any):
         self.store = store
         self.tool_registry = tool_registry
@@ -62,7 +76,7 @@ class GeoAgentRuntime:
         graph = self._build_graph(
             run_id=run_id,
             latest_uploaded_layer_key=latest_uploaded_layer_key,
-            context=context,
+            runtime=context,
             provider=provider,
             model_name=model_name,
         )
@@ -121,15 +135,26 @@ class GeoAgentRuntime:
         *,
         run_id: str,
         latest_uploaded_layer_key: str | None,
-        context: ExecutionContext,
+        runtime: ToolRuntime,
         provider: str,
         model_name: str | None,
     ):
+        # 工作流图构建器。
+        #
+        # 整条图固定分成五段：
+        # 1. intent_parser 只回答“用户想做什么”。
+        # 2. plan_builder 生成可执行步骤。
+        # 3. plan_verifier 校验工具、图层和前提条件。
+        # 4. executor 真正执行带副作用的步骤。
+        # 5. result_interpreter / publisher 负责收尾总结与可选发布。
         workflow = StateGraph(AgentState)
         adapter = self.model_registry.resolve_provider(provider)
 
         async def intent_parser_node(state: AgentState) -> AgentState:
-            available_layers = [item.layer_key for item in context.catalog.list_layers()]
+            # 意图解析节点
+            #
+            # 这里只做语义理解，不做任何真正的 GIS 计算或数据修改。
+            available_layers = [item.layer_key for item in runtime.store.catalog.list_layers()]
             intent = await parse_user_intent_with_model(
                 state["user_query"],
                 adapter=adapter,
@@ -153,6 +178,9 @@ class GeoAgentRuntime:
             return {"parsed_intent": payload, "model_provider": provider, "model_name": model_name}
 
         async def plan_builder_node(state: AgentState) -> AgentState:
+            # 执行计划生成节点
+            #
+            # 基于已解析意图和可用工具，为后续 verifier / executor 提供结构化步骤表。
             intent = parse_user_intent(state["user_query"], latest_uploaded_layer_key=latest_uploaded_layer_key)
             if state.get("parsed_intent") is not None:
                 intent = UserIntent.model_validate(state["parsed_intent"])
@@ -179,6 +207,9 @@ class GeoAgentRuntime:
             return {"execution_plan": plan.model_dump(), "parsed_intent": intent.model_dump()}
 
         async def plan_verifier_node(state: AgentState) -> AgentState:
+            # 执行计划校验节点
+            #
+            # 在真正执行前尽量提前发现：工具缺失、图层不可用、区域语义不完整等问题。
             intent_state = parse_user_intent(state["user_query"], latest_uploaded_layer_key=latest_uploaded_layer_key)
             if state.get("parsed_intent") is not None:
                 intent_state = UserIntent.model_validate(state["parsed_intent"])
@@ -189,7 +220,7 @@ class GeoAgentRuntime:
                 plan,
                 self.tool_registry.list_tools(),
                 intent_state.area,
-                available_layers=[item.layer_key for item in context.catalog.list_layers()],
+                available_layers=[item.layer_key for item in runtime.store.catalog.list_layers()],
                 latest_uploaded_layer_key=latest_uploaded_layer_key,
             )
             for warning in warnings:
@@ -207,6 +238,10 @@ class GeoAgentRuntime:
             return {"warnings": warnings, "errors": errors}
 
         async def executor_node(state: AgentState) -> AgentState:
+            # 执行节点
+            #
+            # 这是整条图里副作用最重的节点：
+            # 工具调用、artifact 创建、事件落盘和 run.state 更新都发生在这里。
             intent = parse_user_intent(state["user_query"], latest_uploaded_layer_key=latest_uploaded_layer_key)
             if state.get("parsed_intent") is not None:
                 intent = UserIntent.model_validate(state["parsed_intent"])
@@ -244,6 +279,8 @@ class GeoAgentRuntime:
             warnings = list(state.get("warnings", []))
 
             for index, step in enumerate(plan.steps, start=1):
+                # 每个 step 都先发 started 事件，再执行工具，再回写 completed/failed，
+                # 这样前端事件流可以稳定还原出完整的执行轨迹。
                 self.store.append_event(
                     run_id,
                     RunEvent(
@@ -266,7 +303,7 @@ class GeoAgentRuntime:
                     )
                 )
                 try:
-                    result = await self.tool_registry.execute(step.tool, step.args, context)
+                    result = await self.tool_registry.execute(step.tool, step.args, runtime)
                     tool_results[-1].status = "completed"
                     tool_results[-1].completed_at = now_utc()
                     tool_results[-1].message = result.message
@@ -336,6 +373,9 @@ class GeoAgentRuntime:
             }
 
         async def result_interpreter_node(state: AgentState) -> AgentState:
+            # 结果解释节点
+            #
+            # 这一层不再做 GIS 运算，而是把运行结果压缩成前端摘要、限制说明和下一步建议。
             intent = parse_user_intent(state["user_query"], latest_uploaded_layer_key=latest_uploaded_layer_key)
             if state.get("parsed_intent") is not None:
                 intent = UserIntent.model_validate(state["parsed_intent"])
@@ -375,6 +415,10 @@ class GeoAgentRuntime:
             return {"final_response": final_response.model_dump()}
 
         async def publisher_node(state: AgentState) -> AgentState:
+            # 结果发布节点
+            #
+            # 只有当意图明确要求发布，且前面没有失败时，才会尝试把最新 artifact
+            # 推到 QGIS Server。否则这里只负责发出最终 run.completed / run.failed 事件。
             publish_payload: dict[str, Any] | None = None
             errors = list(state.get("errors", []))
             intent = UserIntent.model_validate(state["parsed_intent"]) if state.get("parsed_intent") else None
@@ -384,7 +428,7 @@ class GeoAgentRuntime:
                 latest_artifact_name = latest_artifact.get("name")
                 latest_collection = self.store.get_artifact_collection(latest_artifact_id)
                 try:
-                    publish_payload = await context.publisher.publish_artifact(
+                    publish_payload = await runtime.store.publisher.publish_artifact(
                         latest_artifact_id,
                         latest_artifact_name,
                         "demo-workspace",

@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - API 配置
+#
+#   文件:       config.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,6 +15,9 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Settings
+#
+# API 侧环境配置，统一管理服务地址、模型 provider 配置以及工作区路径解析。
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -19,6 +32,7 @@ class Settings(BaseSettings):
     qgis_publish_dir: str = "./qgis/published"
     qgis_process_bin: str = "qgis_process"
     qgis_runtime_base_url: str | None = "http://localhost:8090"
+    qgis_runtime_workspace_root: str | None = None
     database_url: str | None = None
     tianditu_api_key: str | None = None
     default_model_provider: str = "demo"
@@ -37,6 +51,7 @@ class Settings(BaseSettings):
     ollama_model: str | None = None
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
     data_dir: str = "./data"
+    upload_max_bytes: int = 10 * 1024 * 1024
 
     @property
     def resolved_workspace_root(self) -> Path:
@@ -59,6 +74,12 @@ class Settings(BaseSettings):
     @property
     def resolved_qgis_publish_dir(self) -> Path:
         return self.resolve_path(self.qgis_publish_dir)
+
+    @property
+    def resolved_qgis_runtime_workspace_root(self) -> Path | None:
+        if not self.qgis_runtime_workspace_root:
+            return None
+        return Path(self.qgis_runtime_workspace_root).expanduser().resolve()
 
 
 settings = Settings()

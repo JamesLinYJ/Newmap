@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 空间分析服务实现
+#
+#   文件:       service.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -20,6 +30,11 @@ from .layer_catalog import LayerCatalog
 
 logger = logging.getLogger(__name__)
 
+
+# SpatialAnalysisService
+#
+# 空间分析服务门面。
+# 优先下推到 PostGIS；若数据库侧不可用，则回退到本地几何实现。
 class SpatialAnalysisService:
     def __init__(self, catalog: LayerCatalog, *, nominatim_base_url: str = "https://nominatim.openstreetmap.org"):
         self.catalog = catalog
@@ -217,6 +232,7 @@ class SpatialAnalysisService:
         return "当前分析采用局部投影近似米制计算，跨大范围场景建议复核 CRS。"
 
     def _search_nominatim(self, query: str, polygon_geojson: bool = False) -> list[dict[str, Any]]:
+        # 远程 Nominatim 查询。
         if not self._allow_remote_lookup:
             return []
         try:

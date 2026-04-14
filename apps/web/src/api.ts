@@ -1,3 +1,13 @@
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - Web API 客户端
+//
+//   文件:       api.ts
+//
+//   日期:       2026年04月14日
+//   作者:       JamesLinYJ
+// --------------------------------------------------------------------------
+
 import type {
   AnalysisRun,
   ArtifactRef,
@@ -9,11 +19,15 @@ import type {
   RunEvent,
   SessionRecord,
   SystemComponentsStatus,
+  ToolDescriptor,
 } from '@geo-agent-platform/shared-types'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
 export const apiBaseUrl = API_BASE_URL
 
+// 错误消息格式化
+//
+// 把网络层异常和后端 detail 统一整理成前端可直接展示的中文提示。
 function formatApiErrorMessage(prefix: string, detail?: string) {
   return detail?.trim() ? `${prefix}：${detail.trim()}` : prefix
 }
@@ -41,6 +55,7 @@ async function extractErrorDetail(response: Response): Promise<string> {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  // 通用 JSON 请求入口。
   let response: Response
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
@@ -96,6 +111,32 @@ export function listQgisModels() {
   return requestJson<QgisModelsResponse>('/api/v1/qgis/models')
 }
 
+export function listQgisAlgorithms() {
+  // QGIS algorithm 列表。
+  return requestJson<{ available: boolean; algorithms: ToolDescriptor[]; error?: string }>('/api/v1/qgis/algorithms')
+}
+
+export function listTools() {
+  return requestJson<ToolDescriptor[]>('/api/v1/tools')
+}
+
+export function listToolCatalogEntries() {
+  return requestJson<Array<Record<string, unknown>>>('/api/v1/tools/catalog')
+}
+
+export function upsertToolCatalogEntry(toolKind: string, toolName: string, payload: Record<string, unknown>, sortOrder?: number) {
+  return requestJson<Record<string, unknown>>(`/api/v1/tools/catalog/${encodeURIComponent(toolKind)}/${encodeURIComponent(toolName)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ payload, sortOrder }),
+  })
+}
+
+export function deleteToolCatalogEntry(toolKind: string, toolName: string) {
+  return requestJson<Record<string, unknown>>(`/api/v1/tools/catalog/${encodeURIComponent(toolKind)}/${encodeURIComponent(toolName)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string) {
   return requestJson<AnalysisRun>('/api/v1/chat', {
     method: 'POST',
@@ -140,7 +181,15 @@ export function runQgisModel(payload: Record<string, unknown>) {
   })
 }
 
+export function runTool(payload: Record<string, unknown>) {
+  return requestJson<Record<string, unknown>>('/api/v1/tools/run', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function uploadLayer(sessionId: string, file: File) {
+  // 图层上传走 FormData，避免手动处理二进制序列化。
   const formData = new FormData()
   formData.append('session_id', sessionId)
   formData.append('file', file)
@@ -168,6 +217,7 @@ export function openRunEventStream(
   onEvent: (event: RunEvent) => void,
   onError: (error: Event) => void,
 ) {
+  // SSE 事件流订阅。
   const source = new EventSource(`${API_BASE_URL}/api/v1/analysis/${runId}/events`)
   source.onmessage = (message) => {
     onEvent(JSON.parse(message.data) as RunEvent)

@@ -1,11 +1,22 @@
-import { type PropsWithChildren, useCallback, useEffect, useRef, useState } from 'react'
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - 地图画布组件
+//
+//   文件:       MapCanvas.tsx
+//
+//   日期:       2026年04月14日
+//   作者:       JamesLinYJ
+// --------------------------------------------------------------------------
+
+import { useCallback, useEffect, useRef, useState } from 'react'
 import maplibregl, { LngLatBounds, Map, type StyleSpecification } from 'maplibre-gl'
 
 import type { ArtifactRef, BasemapDescriptor } from '@geo-agent-platform/shared-types'
+import { AppIcon } from './AppIcon'
 
 type GeoJsonPayload = GeoJSON.FeatureCollection
 
-interface MapCanvasProps extends PropsWithChildren {
+interface MapCanvasProps {
   basemaps: BasemapDescriptor[]
   selectedBasemapKey: string
   onSelectBasemap: (basemapKey: string) => void
@@ -21,8 +32,11 @@ export function MapCanvas({
   layers,
   selectedArtifactId,
   selectedArtifactName,
-  children,
 }: MapCanvasProps) {
+  // 地图主画布
+  //
+  // 负责承载 MapLibre 地图实例、底图切换、结果图层渲染、自动视野定位，
+  // 以及与主工作台之间的选中状态同步。
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<Map | null>(null)
   const boundsRef = useRef<LngLatBounds | null>(null)
@@ -35,6 +49,9 @@ export function MapCanvas({
     FALLBACK_BASEMAP
 
   const cycleBasemap = useCallback(() => {
+    // 底图轮转
+    //
+    // 维持一个极简但高频可用的交互：不弹复杂菜单，直接在可用底图间循环切换。
     if (!basemaps.length) {
       return
     }
@@ -44,6 +61,10 @@ export function MapCanvas({
   }, [basemaps, onSelectBasemap, selectedBasemapKey])
 
   const focusSelection = useCallback(() => {
+    // 定位到当前结果
+    //
+    // 有选中 artifact 时优先聚焦该结果；否则回退到当前所有结果的总 bounds，
+    // 再不行才飞回默认城市视图。
     const map = mapRef.current
     if (!map) {
       return
@@ -65,6 +86,9 @@ export function MapCanvas({
   }, [])
 
   useEffect(() => {
+    // 地图实例初始化
+    //
+    // 只在组件首次挂载时创建 MapLibre 实例，并在这里接上 resize 和鼠标坐标监听。
     if (!containerRef.current || mapRef.current) {
       return
     }
@@ -96,6 +120,9 @@ export function MapCanvas({
   }, [activeBasemap, handlePointerMove])
 
   useEffect(() => {
+    // 底图样式同步
+    //
+    // 通过 ref 记住已应用的 basemap，避免重复 setStyle 导致整张地图重建。
     const map = mapRef.current
     if (!map) {
       return
@@ -110,6 +137,10 @@ export function MapCanvas({
   }, [activeBasemap])
 
   useEffect(() => {
+    // 结果图层同步
+    //
+    // 每次 artifacts 或选中态变化时，先清理旧 source/layer，再按当前结果重建，
+    // 并同步刷新总 bounds，保证地图展示与右侧结果列表一致。
     const map = mapRef.current
     if (!map) {
       return
@@ -215,8 +246,6 @@ export function MapCanvas({
       <div ref={containerRef} className="dc-map-stage__canvas" />
       <div className="dc-map-stage__wash" />
 
-      <div className="dc-map-stage__overlay">{children}</div>
-
       <div className="dc-map-stage__status">
         <span>{selectedArtifactName ?? '等待结果'}</span>
         <strong>{cursor}</strong>
@@ -225,18 +254,18 @@ export function MapCanvas({
       <div className="dc-map-stage__controls">
         <div className="dc-map-stage__zoom">
           <button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="放大地图">
-            <span className="material-symbols-outlined">add</span>
+            <AppIcon name="add" size={18} />
           </button>
           <div className="dc-map-stage__zoom-divider" />
           <button type="button" onClick={() => mapRef.current?.zoomOut()} aria-label="缩小地图">
-            <span className="material-symbols-outlined">remove</span>
+            <AppIcon name="remove" size={18} />
           </button>
         </div>
         <button type="button" className="dc-map-stage__icon" onClick={cycleBasemap} aria-label="切换底图">
-          <span className="material-symbols-outlined">layers</span>
+          <AppIcon name="layers" size={18} />
         </button>
         <button type="button" className="dc-map-stage__icon" onClick={focusSelection} aria-label="定位到当前结果">
-          <span className="material-symbols-outlined">my_location</span>
+          <AppIcon name="my_location" size={18} />
         </button>
       </div>
 

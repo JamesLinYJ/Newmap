@@ -1,26 +1,27 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - QGIS 项目构建器
+#
+#   文件:       project_builder.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
 from typing import Any
 
-from qgis.core import Qgis, QgsApplication, QgsProject, QgsVectorLayer
+from qgis.core import Qgis, QgsProject, QgsVectorLayer
 
-_QGIS_APP: QgsApplication | None = None
-
-
-def _ensure_qgis_app() -> QgsApplication:
-    global _QGIS_APP
-    if _QGIS_APP is None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("LANG", "C.UTF-8")
-        os.environ.setdefault("LC_ALL", "C.UTF-8")
-        QgsApplication.setPrefixPath("/usr", True)
-        _QGIS_APP = QgsApplication([], False)
-        QgsApplication.initQgis()
-    return _QGIS_APP
+from .qgis_app import ensure_qgis_app
 
 
+# QgisProjectBuilder
+#
+# 根据发布目录中的数据和图层清单重建 QGIS Server 可直接加载的项目文件。
 class QgisProjectBuilder:
     def __init__(self, publish_root: Path):
         self.publish_root = publish_root.resolve()
@@ -33,7 +34,8 @@ class QgisProjectBuilder:
         project_relative_path: Path,
         layers: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        _ensure_qgis_app()
+        # 项目重建入口。
+        ensure_qgis_app()
         project_path = self._resolve_publish_path(project_relative_path)
         project_path.parent.mkdir(parents=True, exist_ok=True)
 

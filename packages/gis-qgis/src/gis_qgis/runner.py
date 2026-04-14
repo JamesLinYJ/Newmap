@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - QGIS 执行器
+#
+#   文件:       runner.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -9,17 +19,73 @@ from typing import Any
 
 from gis_common.ids import make_id
 
+from .qgis_app import ensure_processing_registry
 
+
+# QgisRunner
+#
+# 负责发现模型、发现 Processing algorithms，以及通过 qgis_process 执行任务。
 class QgisRunner:
     def __init__(self, model_dir: Path, *, qgis_process_bin: str = "qgis_process"):
         self.model_dir = model_dir
         self.qgis_process_bin = qgis_process_bin
+        self._algorithm_cache: list[dict[str, Any]] | None = None
 
     def available(self) -> bool:
         return shutil.which(self.qgis_process_bin) is not None
 
     def list_models(self) -> list[str]:
         return sorted(path.stem for path in self.model_dir.glob("*.model3") if path.is_file())
+
+    def list_algorithms(self) -> list[dict[str, Any]]:
+        # Processing 算法发现
+        #
+        # 直接读取 QGIS Python registry，并将结果缓存在进程内。
+        # registry 枚举成本不低，因此这里在进程生命周期内只做一次发现，
+        # 除非未来明确需要热刷新。
+        if self._algorithm_cache is not None:
+            return self._algorithm_cache
+
+        registry = ensure_processing_registry()
+        algorithms: list[dict[str, Any]] = []
+        for algorithm in sorted(registry.algorithms(), key=lambda item: item.id()):
+            provider = algorithm.provider()
+            parameters = [
+                self._serialize_parameter_definition(parameter)
+                for parameter in algorithm.parameterDefinitions()
+            ]
+            outputs = [
+                {
+                    "name": output.name(),
+                    "description": output.description(),
+                    "type": output.type(),
+                }
+                for output in algorithm.outputDefinitions()
+            ]
+            output_parameter_name = next(
+                (
+                    parameter["name"]
+                    for parameter in parameters
+                    if parameter.get("is_destination")
+                ),
+                outputs[0]["name"] if outputs else None,
+            )
+            algorithms.append(
+                {
+                    "id": algorithm.id(),
+                    "display_name": algorithm.displayName(),
+                    "group": algorithm.group(),
+                    "description": algorithm.shortDescription() or "",
+                    "tags": list(algorithm.tags()),
+                    "provider_id": provider.id() if provider is not None else "",
+                    "provider_name": provider.name() if provider is not None else "",
+                    "parameters": parameters,
+                    "outputs": outputs,
+                    "output_parameter_name": output_parameter_name,
+                }
+            )
+        self._algorithm_cache = algorithms
+        return algorithms
 
     async def run_model(self, model_name: str, inputs: dict[str, Any], output_dir: Path) -> dict[str, Any]:
         model_path = self.model_dir / f"{model_name}.model3"
@@ -57,6 +123,10 @@ class QgisRunner:
         *,
         execution_type: str,
     ) -> dict[str, Any]:
+        # qgis_process 统一执行核心。
+        #
+        # 无论执行的是 algorithm 还是 model，最终都收敛到这一个 subprocess 调用。
+        # 这样 stdout / stderr / 输出文件校验可以共享同一套失败语义。
         output_dir.mkdir(parents=True, exist_ok=True)
         command = [self.qgis_process_bin, "--json", "run", algorithm_ref, "-"]
         process_payload = {"inputs": inputs}
@@ -135,3 +205,40 @@ class QgisRunner:
             }:
                 paths[key] = str(candidate)
         return paths
+
+    def _serialize_parameter_definition(self, parameter: Any) -> dict[str, Any]:
+        # QGIS 参数定义序列化。
+        #
+        # 这里只提取“自动生成调试表单”真正需要的信息，
+        # 例如类型、默认值、是否可选、枚举项和父参数关系。
+        optional_flag = int(parameter.FlagOptional)
+        advanced_flag = int(parameter.FlagAdvanced)
+        metadata: dict[str, Any] = {
+            "name": parameter.name(),
+            "description": parameter.description(),
+            "help": parameter.help() or "",
+            "type": parameter.type(),
+            "class_name": parameter.__class__.__name__,
+            "default_value": parameter.defaultValue(),
+            "is_destination": parameter.isDestination(),
+            "optional": bool(int(parameter.flags()) & optional_flag),
+            "is_advanced": bool(int(parameter.flags()) & advanced_flag),
+            "metadata": parameter.metadata(),
+        }
+        if hasattr(parameter, "options"):
+            options = parameter.options()
+            if isinstance(options, list):
+                metadata["options"] = options
+        if hasattr(parameter, "allowMultiple"):
+            metadata["allow_multiple"] = bool(parameter.allowMultiple())
+        if hasattr(parameter, "dataType"):
+            try:
+                metadata["data_type"] = parameter.dataType()
+            except Exception:
+                pass
+        if hasattr(parameter, "parentParameterName"):
+            try:
+                metadata["parent_parameter_name"] = parameter.parentParameterName()
+            except Exception:
+                pass
+        return metadata

@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 模型适配器注册表实现
+#
+#   文件:       registry.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +20,9 @@ from shared_types.schemas import ModelProviderDescriptor
 from .base import BaseModelAdapter
 
 
+# Provider 适配器实现
+#
+# 这里集中封装 Demo、OpenAI Compatible、Anthropic、Gemini 和 Ollama 的调用差异。
 class DemoModelAdapter(BaseModelAdapter):
     def __init__(self, provider: str = "demo"):
         super().__init__(provider)
@@ -201,6 +214,9 @@ class RegistrySettings:
 
 
 class ModelAdapterRegistry:
+    # ModelAdapterRegistry
+    #
+    # 根据配置装配 provider，并为运行时暴露统一的 provider 解析入口。
     def __init__(self, settings: RegistrySettings | Any):
         self._adapters: dict[str, BaseModelAdapter] = {}
         self.default_provider = settings.default_model_provider

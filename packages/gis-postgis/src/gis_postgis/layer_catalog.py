@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 文件图层目录实现
+#
+#   文件:       layer_catalog.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -27,6 +37,12 @@ SEMANTIC_LAYER_ALIASES = {
 }
 
 
+# LayerCatalog
+#
+# 文件目录版图层存储，负责：
+# 1. 读取内置 catalog 图层
+# 2. 读取用户上传图层
+# 3. 提供边界搜索与基础 geocode 支持
 class LayerCatalog:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
@@ -99,6 +115,7 @@ class LayerCatalog:
         return results
 
     def register_upload(self, session_id: str, filename: str, payload: bytes) -> LayerDescriptor:
+        # 上传图层注册。
         suffix = Path(filename).suffix.lower()
         if suffix == ".geojson" or suffix == ".json":
             collection = ensure_feature_collection(json.loads(payload.decode("utf-8")))
@@ -131,6 +148,7 @@ class LayerCatalog:
         return collection["features"][0]["geometry"]["type"]
 
     def _read_gpkg_features(self, payload: bytes) -> dict[str, Any]:
+        # GeoPackage 导入。
         temp_path = self.upload_dir / f"{make_id('gpkg')}.gpkg"
         temp_path.write_bytes(payload)
         conn = sqlite3.connect(temp_path)
@@ -174,4 +192,3 @@ class LayerCatalog:
         envelope_length = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}.get(envelope_indicator, 0)
         header_length = 8 + envelope_length
         return blob[header_length:]
-

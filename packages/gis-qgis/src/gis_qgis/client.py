@@ -1,3 +1,13 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - QGIS 运行时客户端
+#
+#   文件:       client.py
+#
+#   日期:       2026年04月14日
+#   作者:       JamesLinYJ
+# --------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,6 +20,9 @@ class QgisRuntimeError(RuntimeError):
     pass
 
 
+# QgisRuntimeClient
+#
+# API 服务访问 qgis-runtime 的统一边界层，负责把网络失败整理成具体异常。
 class QgisRuntimeClient:
     def __init__(self, base_url: str | None):
         self.base_url = (base_url or "").rstrip("/")
@@ -39,7 +52,18 @@ class QgisRuntimeClient:
         except Exception as exc:
             raise QgisRuntimeError(_format_qgis_exception("list models", self.base_url, exc)) from exc
 
-    async def run_processing_algorithm(self, algorithm_id: str, inputs: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    async def list_algorithms(self) -> dict[str, Any]:
+        # 算法发现通常比模型列表更重，因此给更长超时。
+        self._ensure_configured()
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get(f"{self.base_url}/internal/algorithms")
+                response.raise_for_status()
+                return response.json()
+        except Exception as exc:
+            raise QgisRuntimeError(_format_qgis_exception("list algorithms", self.base_url, exc)) from exc
+
+    async def run_processing_algorithm(self, algorithm_id: str, inputs: dict[str, Any], output_dir: Path | str) -> dict[str, Any]:
         self._ensure_configured()
         payload = {
             "algorithmId": algorithm_id,
@@ -56,7 +80,7 @@ class QgisRuntimeClient:
                 _format_qgis_exception(f"run processing algorithm '{algorithm_id}'", self.base_url, exc)
             ) from exc
 
-    async def run_model(self, model_name: str, inputs: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    async def run_model(self, model_name: str, inputs: dict[str, Any], output_dir: Path | str) -> dict[str, Any]:
         self._ensure_configured()
         payload = {
             "modelName": model_name,
