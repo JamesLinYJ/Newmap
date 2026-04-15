@@ -2,6 +2,12 @@
 
 中文优先的 GIS Agent 平台。它把自然语言空间问题转成受约束的 GIS 工作流，并通过 `FastAPI + LangGraph + MapLibre + PostGIS + QGIS` 提供真实空间分析、结果导出与地图服务发布。
 
+当前后端存储主线已经收敛为：
+
+- `Postgres/PostGIS`：唯一持久化事实来源，负责 session、run、event、artifact metadata、tool catalog override 与所有图层注册
+- `infra/seeds/layers/`：受版本控制的内置图层 seed
+- `runtime/`：唯一运行时目录，承载 artifact 导出、QGIS 输入输出和发布产物
+
 ## 当前能力
 
 - 中文地图问答式前端
@@ -54,10 +60,11 @@ cp .env.example .env
 生产环境至少需要设置：
 
 ```bash
-PUBLIC_BASE_URL=http://你的服务器IP或域名
 APP_BASE_URL=http://你的服务器IP或域名
 WEB_BASE_URL=http://你的服务器IP或域名
 QGIS_SERVER_BASE_URL=http://你的服务器IP或域名/qgis
+RUNTIME_ROOT=./runtime
+SEED_LAYERS_DIR=./infra/seeds/layers
 GEMINI_API_KEY=你的密钥
 TIANDITU_API_KEY=你的密钥
 DEFAULT_MODEL_PROVIDER=gemini
@@ -100,7 +107,10 @@ bash scripts/deploy/push-and-remote-deploy.sh
 REPO_URL=...
 SERVER_HOST=...
 REMOTE_ROOT=...
-PUBLIC_BASE_URL=...
+PUBLIC_BASE_URL=...   # 快捷写法，会作为 APP/WEB/QGIS 的默认值
+APP_BASE_URL=...      # 可选，单独覆盖 API 对外基址
+WEB_BASE_URL=...      # 可选，单独覆盖前端对外基址
+QGIS_SERVER_BASE_URL=... # 可选，单独覆盖 QGIS 对外基址
 COMMIT_MESSAGE=...
 ```
 
@@ -111,6 +121,8 @@ COMMIT_MESSAGE=...
 - `apps/qgis-runtime` QGIS Runtime 服务
 - `apps/worker` 后台任务进程
 - `packages/*` agent、GIS、模型、发布与共享类型模块
+- `infra/seeds/layers` 内置图层 seed
 - `infra/docker` 各服务镜像定义
 - `infra/compose` 开发与生产编排
+- `runtime` 统一运行时目录
 - `scripts/deploy` 本机与服务器部署脚本

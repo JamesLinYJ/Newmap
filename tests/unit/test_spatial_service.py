@@ -1,11 +1,12 @@
-from pathlib import Path
-
-from gis_postgis import LayerCatalog, SpatialAnalysisService
+from api_app.config import settings
+from gis_postgis import PostGISLayerRepository, SpatialAnalysisService
 
 
 def build_service():
-    catalog = LayerCatalog(Path("data"))
-    return SpatialAnalysisService(catalog)
+    repository = PostGISLayerRepository(database_url=settings.database_url, seed_dir=settings.resolved_seed_layers_dir)
+    repository.ensure_schema()
+    repository.bootstrap_seed_layers()
+    return SpatialAnalysisService(repository)
 
 
 def test_intersection_returns_nearby_paris_hospitals():
@@ -39,4 +40,3 @@ def test_point_in_polygon_filters_inside_points():
     result = service.point_in_polygon(uploaded, boundary)
     assert len(result["features"]) == 1
     assert result["features"][0]["properties"]["name"] == "inside"
-

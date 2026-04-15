@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from agent_core import GeoAgentRuntime
-from gis_postgis import LayerCatalog, PostGISLayerCatalog, SpatialAnalysisService
+from gis_postgis import PostGISLayerRepository, SpatialAnalysisService
 from gis_common.geojson import load_geojson, save_geojson
 from gis_common.ids import make_id, now_utc
 from gis_qgis import QgisRuntimeClient
@@ -36,9 +36,10 @@ from shared_types.schemas import ArtifactRef, EventType, PublishRequest, RunEven
 from tool_registry import ToolExecutionResult, ToolRuntime, ToolRuntimeContext, ToolRuntimeState, ToolRuntimeStore
 from tool_registry.registry import build_default_registry
 
+from .artifact_store import ArtifactExportStore
 from .basemap_catalog import BasemapCatalog
 from .config import settings
-from .store import FileStore
+from .platform_store import PostgresPlatformStore
 from .tool_catalog import ToolCatalogStore, build_qgis_algorithm_descriptors, build_qgis_model_descriptors, build_registry_tool_descriptors
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,18 @@ logger = logging.getLogger(__name__)
 # 将底层异常统一整理为稳定的字符串，便于日志、接口 detail 和调试页同时复用。
 def _format_component_error(component: str, action: str, exc: Exception) -> str:
     return f"{component} {action} failed: {exc.__class__.__name__}: {exc}"
+
+
+def _build_allowed_origins(*origins: str) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for origin in origins:
+        candidate = origin.strip().rstrip("/")
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        normalized.append(candidate)
+    return normalized
 
 
 # AnalysisRequest
@@ -99,12 +112,12 @@ class ToolCatalogEntryUpsertRequest(BaseModel):
 # 依赖注入访问器
 #
 # 这些函数从 FastAPI 应用状态中提取共享服务实例。
-def get_store() -> FileStore:
+def get_store() -> PostgresPlatformStore:
     return app.state.store
 
 
-def get_catalog() -> LayerCatalog:
-    return app.state.catalog
+def get_layer_repository() -> PostGISLayerRepository:
+    return app.state.layer_repository
 
 
 def get_runtime() -> GeoAgentRuntime:
@@ -116,25 +129,24 @@ async def lifespan(app: FastAPI):
     # 应用装配入口
     #
     # 这里是整个 API 进程的组装根：
-    # 1. 决定 catalog 走文件实现还是 PostGIS 实现。
+    # 1. 强制以 Postgres/PostGIS 作为唯一持久化主线。
     # 2. 初始化 basemap、tool catalog、publisher、qgis runtime client。
     # 3. 装配 Agent runtime 与后台任务容器。
     # 这样其余路由只依赖 app.state，不必重复知道底层组件如何连接。
-    data_dir = settings.resolved_data_dir
-    store = FileStore(data_dir)
-    basemap_catalog = BasemapCatalog(data_dir, tianditu_api_key=settings.tianditu_api_key)
+    if not settings.database_url:
+        raise RuntimeError("DATABASE_URL is required. Postgres/PostGIS is now the only supported persistence backend.")
+
+    runtime_root = settings.resolved_runtime_root
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    basemap_catalog = BasemapCatalog(tianditu_api_key=settings.tianditu_api_key)
     basemap_catalog.ensure_schema()
-    catalog: LayerCatalog = LayerCatalog(data_dir)
-    if settings.database_url:
-        try:
-            postgis_catalog = PostGISLayerCatalog(data_dir, settings.database_url)
-            postgis_catalog.ensure_schema()
-            postgis_catalog.bootstrap_builtin_layers()
-            catalog = postgis_catalog
-            logger.info("PostGIS backend enabled.")
-        except Exception as exc:
-            logger.warning("PostGIS backend unavailable, fallback to file catalog: %s", _format_component_error("PostGIS", "startup", exc))
-    spatial_service = SpatialAnalysisService(catalog, nominatim_base_url=settings.nominatim_base_url)
+    layer_repository = PostGISLayerRepository(database_url=settings.database_url, seed_dir=settings.resolved_seed_layers_dir)
+    layer_repository.ensure_schema()
+    layer_repository.bootstrap_seed_layers()
+    artifact_export_store = ArtifactExportStore(runtime_root)
+    store = PostgresPlatformStore(settings.database_url, artifact_store=artifact_export_store)
+    store.ensure_schema()
+    spatial_service = SpatialAnalysisService(layer_repository, nominatim_base_url=settings.nominatim_base_url)
     qgis_runner = QgisRuntimeClient(settings.qgis_runtime_base_url)
     publisher = MapPublisher(
         settings.resolved_qgis_publish_dir,
@@ -143,12 +155,15 @@ async def lifespan(app: FastAPI):
         qgis_runtime=qgis_runner,
     )
     tool_registry = build_default_registry()
-    tool_catalog_store = ToolCatalogStore(data_dir)
+    tool_catalog_store = ToolCatalogStore(settings.database_url)
     tool_catalog_store.ensure_schema(registry=tool_registry)
     runtime = GeoAgentRuntime(store=store, tool_registry=tool_registry, model_registry=ModelAdapterRegistry(settings))
     app.state.store = store
+    app.state.platform_store = store
     app.state.basemap_catalog = basemap_catalog
-    app.state.catalog = catalog
+    app.state.layer_repository = layer_repository
+    app.state.catalog = layer_repository
+    app.state.artifact_export_store = artifact_export_store
     app.state.spatial_service = spatial_service
     app.state.qgis_runner = qgis_runner
     app.state.publisher = publisher
@@ -168,7 +183,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="geo-agent-platform", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.web_base_url, "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_build_allowed_origins(settings.web_base_url, "http://localhost:5173", "http://127.0.0.1:5173"),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -190,8 +205,8 @@ async def system_components():
     if ogc_api_available:
         capabilities.append("ogc_api_features")
     return SystemComponentsStatus(
-        catalog_backend=app.state.catalog.__class__.__name__,
-        postgis_enabled=isinstance(app.state.catalog, PostGISLayerCatalog),
+        catalog_backend=app.state.layer_repository.__class__.__name__,
+        postgis_enabled=True,
         qgis_runtime_available=bool(qgis_runtime.get("available")),
         qgis_server_available=qgis_server_available,
         ogc_api_available=ogc_api_available,
@@ -228,7 +243,7 @@ async def list_qgis_models():
 async def list_qgis_algorithms():
     # QGIS 算法发现
     #
-    # 返回值已经被转换成前端直接消费的 ToolDescriptor，并叠加 SQLite override。
+    # 返回值已经被转换成前端直接消费的 ToolDescriptor，并叠加 Postgres override。
     # 这里故意不把 QGIS 原生 registry 结构直接透给前端，避免 UI 层绑死在
     # qgis_process 细节上，也方便继续在目录层做中文化和参数修饰。
     catalog = app.state.tool_catalog_store.load_catalog()
@@ -262,7 +277,7 @@ async def list_tools() -> list[ToolDescriptor]:
     #
     # 最终工具全集由三部分组成：
     # registry tools + discovered qgis algorithms + discovered qgis models。
-    # SQLite catalog 在这里是展示 override 层，而不是唯一真相源。
+    # Postgres catalog 在这里是展示 override 层，而不是唯一真相源。
     # 这样既保留动态发现能力，也允许在不改代码的情况下微调分组和参数体验。
     catalog = app.state.tool_catalog_store.load_catalog()
     qgis_algorithms = await list_qgis_algorithms()
@@ -302,7 +317,7 @@ async def delete_tool_catalog_entry(tool_kind: str, tool_name: str):
 
 
 @app.post("/api/v1/tools/run")
-async def run_tool(payload: ToolRunRequest, store: FileStore = Depends(get_store)):
+async def run_tool(payload: ToolRunRequest, store: PostgresPlatformStore = Depends(get_store)):
     # 通用工具执行入口
     #
     # 为调试页和内部自动化统一提供单一的工具调用接口。
@@ -346,8 +361,15 @@ async def run_tool(payload: ToolRunRequest, store: FileStore = Depends(get_store
 @app.post("/api/v1/qgis/process")
 async def run_qgis_process(
     payload: QgisProcessRequest,
-    store: FileStore = Depends(get_store),
+    store: PostgresPlatformStore = Depends(get_store),
+):
+    return await _execute_qgis_process(payload, store=store)
+
+
+async def _execute_qgis_process(
+    payload: QgisProcessRequest,
     *,
+    store: PostgresPlatformStore,
     source_parameter_names: set[str] | None = None,
 ):
     # 直接执行 QGIS Processing algorithm。
@@ -358,7 +380,7 @@ async def run_qgis_process(
     health = await app.state.qgis_runner.health()
     if not health.get("available"):
         raise HTTPException(status_code=503, detail=health.get("error") or "QGIS runtime process run failed: runtime unavailable")
-    output_dir = settings.resolved_data_dir / "artifacts" / "qgis-process"
+    output_dir = settings.resolved_runtime_root / "artifacts" / "qgis-process"
     inputs = _resolve_qgis_inputs(dict(payload.inputs), store, source_parameter_names=source_parameter_names)
     if payload.artifact_id and payload.input_parameter_name:
         inputs[payload.input_parameter_name] = _to_qgis_runtime_path(store.get_artifact_geojson_path(payload.artifact_id))
@@ -383,7 +405,7 @@ async def run_qgis_process(
 
 
 @app.post("/api/v1/qgis/models/run")
-async def run_qgis_model(payload: QgisModelRequest, store: FileStore = Depends(get_store)):
+async def run_qgis_model(payload: QgisModelRequest, store: PostgresPlatformStore = Depends(get_store)):
     # 直接执行 QGIS model3。
     #
     # 与 Processing algorithm 分开保留接口，是因为 model3 往往承载团队自己的
@@ -391,7 +413,7 @@ async def run_qgis_model(payload: QgisModelRequest, store: FileStore = Depends(g
     health = await app.state.qgis_runner.health()
     if not health.get("available"):
         raise HTTPException(status_code=503, detail=health.get("error") or "QGIS runtime model run failed: runtime unavailable")
-    output_dir = settings.resolved_data_dir / "artifacts" / "qgis-models"
+    output_dir = settings.resolved_runtime_root / "artifacts" / "qgis-models"
     inputs = _resolve_qgis_inputs(dict(payload.inputs), store, source_parameter_names=None)
     if payload.artifact_id and payload.input_parameter_name:
         inputs[payload.input_parameter_name] = _to_qgis_runtime_path(store.get_artifact_geojson_path(payload.artifact_id))
@@ -416,23 +438,23 @@ async def run_qgis_model(payload: QgisModelRequest, store: FileStore = Depends(g
 
 
 @app.post("/api/v1/sessions")
-async def create_session(store: FileStore = Depends(get_store)):
+async def create_session(store: PostgresPlatformStore = Depends(get_store)):
     return store.create_session()
 
 
 @app.get("/api/v1/sessions/{session_id}")
-async def get_session(session_id: str, store: FileStore = Depends(get_store)):
+async def get_session(session_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return store.get_session(session_id)
 
 
 @app.get("/api/v1/sessions/{session_id}/runs")
-async def list_session_runs(session_id: str, store: FileStore = Depends(get_store)):
+async def list_session_runs(session_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return store.list_runs_for_session(session_id)
 
 
 @app.get("/api/v1/layers")
-async def list_layers(catalog: LayerCatalog = Depends(get_catalog)):
-    return catalog.list_layers()
+async def list_layers(layer_repository: PostGISLayerRepository = Depends(get_layer_repository)):
+    return layer_repository.list_layers()
 
 
 @app.get("/api/v1/map/basemaps")
@@ -465,8 +487,8 @@ async def reverse_geocode(lat: float, lng: float):
 async def register_layer(
     session_id: Annotated[str, Form(...)],
     file: UploadFile = File(...),
-    store: FileStore = Depends(get_store),
-    catalog: LayerCatalog = Depends(get_catalog),
+    store: PostgresPlatformStore = Depends(get_store),
+    catalog: PostGISLayerRepository = Depends(get_layer_repository),
 ):
     payload = await _read_upload_payload(file, max_bytes=settings.upload_max_bytes)
     try:
@@ -478,27 +500,27 @@ async def register_layer(
 
 
 @app.post("/api/v1/chat")
-async def chat(request: AnalysisRequest, store: FileStore = Depends(get_store), runtime: GeoAgentRuntime = Depends(get_runtime)):
+async def chat(request: AnalysisRequest, store: PostgresPlatformStore = Depends(get_store), runtime: GeoAgentRuntime = Depends(get_runtime)):
     return await _start_run(request, store, runtime)
 
 
 @app.post("/api/v1/analysis/run")
-async def run_analysis(request: AnalysisRequest, store: FileStore = Depends(get_store), runtime: GeoAgentRuntime = Depends(get_runtime)):
+async def run_analysis(request: AnalysisRequest, store: PostgresPlatformStore = Depends(get_store), runtime: GeoAgentRuntime = Depends(get_runtime)):
     return await _start_run(request, store, runtime)
 
 
 @app.get("/api/v1/analysis/{run_id}")
-async def get_analysis_run(run_id: str, store: FileStore = Depends(get_store)):
+async def get_analysis_run(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return store.get_run(run_id)
 
 
 @app.get("/api/v1/analysis/{run_id}/artifacts")
-async def get_analysis_artifacts(run_id: str, store: FileStore = Depends(get_store)):
+async def get_analysis_artifacts(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return store.list_artifacts(run_id)
 
 
 @app.get("/api/v1/analysis/{run_id}/events")
-async def stream_analysis_events(run_id: str, store: FileStore = Depends(get_store)):
+async def stream_analysis_events(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
     async def event_stream():
         seen_ids = set()
         for event in store.list_events(run_id):
@@ -524,12 +546,12 @@ async def stream_analysis_events(run_id: str, store: FileStore = Depends(get_sto
 
 
 @app.get("/api/v1/results/{artifact_id}/geojson")
-async def get_result_geojson(artifact_id: str, store: FileStore = Depends(get_store)):
+async def get_result_geojson(artifact_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return JSONResponse(store.get_artifact_collection(artifact_id))
 
 
 @app.get("/api/v1/results/{artifact_id}/metadata")
-async def get_result_metadata(artifact_id: str, store: FileStore = Depends(get_store)):
+async def get_result_metadata(artifact_id: str, store: PostgresPlatformStore = Depends(get_store)):
     artifact = store.get_artifact(artifact_id)
     metadata = store.get_artifact_metadata(artifact_id)
     return {"artifact": artifact, "metadata": metadata}
@@ -539,7 +561,7 @@ async def get_result_metadata(artifact_id: str, store: FileStore = Depends(get_s
 async def publish_result(
     artifact_id: str,
     payload: PublishRequest,
-    store: FileStore = Depends(get_store),
+    store: PostgresPlatformStore = Depends(get_store),
 ):
     artifact = store.get_artifact(artifact_id)
     collection = store.get_artifact_collection(artifact_id)
@@ -554,10 +576,12 @@ async def publish_result(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=_format_component_error("Map publisher", f"publish artifact '{artifact_id}'", exc)) from exc
-    return result
+    persisted_result = {"artifactId": artifact_id, **result}
+    store.update_artifact_metadata(artifact_id, publishResult=persisted_result)
+    return persisted_result
 
 
-async def _start_run(request: AnalysisRequest, store: FileStore, runtime: GeoAgentRuntime):
+async def _start_run(request: AnalysisRequest, store: PostgresPlatformStore, runtime: GeoAgentRuntime):
     # 分析任务启动器
     #
     # 统一负责：
@@ -604,16 +628,18 @@ def _build_tool_runtime(*, run_id: str, session_id: str, latest_uploaded_layer_k
         ),
         state=ToolRuntimeState(alias_map=_load_run_alias_map(app.state.store, run_id)),
         store=ToolRuntimeStore(
-            store=app.state.store,
-            catalog=app.state.catalog,
+            platform_store=app.state.platform_store,
+            layer_repository=app.state.layer_repository,
+            artifact_export_store=app.state.artifact_export_store,
             spatial_service=app.state.spatial_service,
             qgis_runner=app.state.qgis_runner,
             publisher=app.state.publisher,
+            runtime_root=settings.resolved_runtime_root,
         ),
     )
 
 
-def _load_run_alias_map(store: FileStore, run_id: str) -> dict[str, dict[str, object]]:
+def _load_run_alias_map(store: PostgresPlatformStore, run_id: str) -> dict[str, dict[str, object]]:
     # 运行状态恢复
     #
     # 根据既有 run 与 artifact metadata 恢复 alias、artifact 名称和集合引用，
@@ -686,7 +712,7 @@ async def _run_qgis_algorithm_tool(payload: ToolRunRequest, *, run_id: str) -> T
             except json.JSONDecodeError:
                 pass
         inputs[str(key)] = value
-    result = await run_qgis_process(
+    result = await _execute_qgis_process(
         QgisProcessRequest(
             algorithmId=payload.tool_name,
             runId=run_id,
@@ -695,7 +721,7 @@ async def _run_qgis_algorithm_tool(payload: ToolRunRequest, *, run_id: str) -> T
             outputParameterName=str(algorithm.get("output_parameter_name") or "OUTPUT"),
             inputs=inputs,
         ),
-        app.state.store,
+        store=app.state.store,
         source_parameter_names=source_parameter_names,
     )
     if result.get("status") == "failed":
@@ -761,7 +787,7 @@ def _coerce_artifact_ref(value: object) -> ArtifactRef | None:
 
 
 def _apply_tool_result_to_run(
-    store: FileStore,
+    store: PostgresPlatformStore,
     *,
     run_id: str,
     tool_name: str,
@@ -812,7 +838,7 @@ def _apply_tool_result_to_run(
 
 
 def _record_tool_failure(
-    store: FileStore,
+    store: PostgresPlatformStore,
     *,
     run_id: str,
     tool_name: str,
@@ -884,7 +910,7 @@ async def _maybe_attach_qgis_artifact(
     run_id: str | None,
     save_as_artifact: bool,
     result_name: str,
-    store: FileStore,
+    store: PostgresPlatformStore,
 ) -> dict[str, object]:
     # QGIS 结果转 artifact
     #
@@ -905,12 +931,18 @@ async def _maybe_attach_qgis_artifact(
         return result
 
     collection = load_geojson(_from_qgis_runtime_path(Path(output_path)))
+    result_descriptor = app.state.layer_repository.save_result_layer(run_id, result_name, result_name, collection)
     artifact = store.save_geojson_artifact(
         run_id=run_id,
         artifact_id=make_id("artifact"),
         name=result_name,
         collection=collection,
-        metadata={"source": "qgis_process", "output_path": output_path, "feature_count": len(collection.get("features", []))},
+        metadata={
+            "source": "qgis_process",
+            "output_path": output_path,
+            "feature_count": len(collection.get("features", [])),
+            "result_layer_key": result_descriptor.layer_key,
+        },
     )
     store.add_artifact_to_run(run_id, artifact)
     store.append_event(
@@ -952,7 +984,7 @@ async def _qgis_server_capabilities() -> tuple[bool, bool]:
 
 def _resolve_qgis_inputs(
     inputs: dict[str, object],
-    store: FileStore,
+    store: PostgresPlatformStore,
     *,
     source_parameter_names: set[str] | None,
 ) -> dict[str, object]:
@@ -982,7 +1014,7 @@ def _resolve_qgis_inputs(
             resolved[key] = value
             continue
         try:
-            app.state.catalog.get_layer_descriptor(value)
+            app.state.layer_repository.get_layer_descriptor(value)
         except Exception:
             resolved[key] = value
             continue
@@ -996,7 +1028,7 @@ def _materialize_catalog_layer_for_qgis(layer_key: str) -> Path:
     # 对非本地文件图层先导出 GeoJSON，再交给 qgis-runtime 使用。
     # 这是 API 层与 catalog 抽象的桥接点，避免把“如何导出给 QGIS”这件事泄漏到上层。
     collection = app.state.spatial_service.load_layer(layer_key)
-    output_dir = settings.resolved_data_dir / "artifacts" / "qgis-inputs"
+    output_dir = settings.resolved_runtime_root / "artifacts" / "qgis-inputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{layer_key}_{make_id('layer')}.geojson"
     save_geojson(output_path, collection)
@@ -1009,24 +1041,8 @@ def _looks_like_local_path(value: str) -> bool:
 
 
 def _to_qgis_runtime_path(path: Path) -> str:
-    runtime_root = settings.resolved_qgis_runtime_workspace_root
-    if runtime_root is None:
-        return str(path)
-
-    try:
-        relative = path.resolve().relative_to(settings.resolved_workspace_root)
-    except ValueError:
-        return str(path)
-    return str((runtime_root / relative).resolve())
+    return str(path.resolve())
 
 
 def _from_qgis_runtime_path(path: Path) -> Path:
-    runtime_root = settings.resolved_qgis_runtime_workspace_root
-    if runtime_root is None:
-        return path
-
-    try:
-        relative = path.resolve().relative_to(runtime_root)
-    except ValueError:
-        return path
-    return (settings.resolved_workspace_root / relative).resolve()
+    return path.resolve()

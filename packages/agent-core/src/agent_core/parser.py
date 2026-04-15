@@ -25,6 +25,21 @@ LAYER_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 KNOWN_AREAS = ("巴黎", "Paris", "柏林", "Berlin", "上海", "上海市", "Springfield")
+MAP_DISPLAY_TOKENS = (
+    "地图上",
+    "地图里",
+    "地图结果",
+    "地图展示",
+    "显示在地图",
+    "放地图",
+    "放到地图",
+    "上图",
+    "展示出来",
+    "显示出来",
+)
+NEARBY_TOKENS = ("附近", "周边", "近一点", "近一些", "靠近")
+INSIDE_TOKENS = ("落在", "在里面", "里面", "内部", "区内", "范围内")
+DEFAULT_NEARBY_DISTANCE_M = 1000.0
 
 
 # 意图解析与执行计划构建
@@ -34,18 +49,31 @@ def parse_user_intent(query: str, latest_uploaded_layer_key: str | None = None) 
     text = query.strip()
     normalized = text.lower()
     area = _extract_area(text, normalized)
-    distance_m = _extract_distance_m(text, normalized)
-    publish_requested = any(token in text for token in ("发布", "分享", "公开")) or "publish" in normalized
-
     target_layers = _extract_target_layers(text, normalized, latest_uploaded_layer_key)
+    uncertainty_flags: list[str] = []
+    distance_m = _extract_distance_m(text, normalized)
+    if distance_m is None and _looks_like_nearby_query(text, target_layers):
+        distance_m = DEFAULT_NEARBY_DISTANCE_M
+        uncertainty_flags.append("implicit_distance")
+    publish_requested = (
+        any(token in text for token in ("发布", "分享", "公开"))
+        or any(token in text for token in MAP_DISPLAY_TOKENS)
+        or "publish" in normalized
+        or "map" in normalized
+    )
+
     spatial_constraints: list[str] = []
     task_type = None
 
     if distance_m is not None:
         spatial_constraints.append(f"distance:{int(distance_m)}m")
-    if "落在" in text or "点落区" in text or "within" in normalized:
+    if "落在" in text or "点落区" in text or "within" in normalized or _looks_like_uploaded_point_in_polygon_query(text, area, latest_uploaded_layer_key):
         spatial_constraints.append("point_in_polygon")
         task_type = "point_in_polygon_analysis"
+        if latest_uploaded_layer_key and latest_uploaded_layer_key not in target_layers:
+            target_layers.append(latest_uploaded_layer_key)
+        if area and "admin_boundaries" not in target_layers:
+            target_layers.append("admin_boundaries")
     if "裁剪" in text or "clip" in normalized:
         spatial_constraints.append("clip")
         task_type = "clip_analysis"
@@ -55,6 +83,8 @@ def parse_user_intent(query: str, latest_uploaded_layer_key: str | None = None) 
     if "距离" in text and distance_m is not None:
         task_type = "distance_query"
     if task_type is None and distance_m is not None and {"metro_stations", "hospitals"} <= set(target_layers):
+        task_type = "buffer_intersection_analysis"
+    if task_type is None and _looks_like_nearby_query(text, target_layers) and {"metro_stations", "hospitals"} <= set(target_layers):
         task_type = "buffer_intersection_analysis"
     if task_type is None and any(word in text for word in ("边界", "行政区")):
         task_type = "boundary_lookup"
@@ -66,7 +96,6 @@ def parse_user_intent(query: str, latest_uploaded_layer_key: str | None = None) 
         task_type = "orientation"
 
     desired_outputs = ["中文解释", "GeoJSON", "地图图层"]
-    uncertainty_flags: list[str] = []
     clarification_required = False
     clarification_question = None
     clarification_options: list[ClarificationOption] = []
@@ -459,3 +488,22 @@ def _pick_primary_layer(layers: list[str], *, default: str) -> str:
         if layer != "admin_boundaries":
             return layer
     return default
+
+
+def _looks_like_nearby_query(text: str, target_layers: list[str]) -> bool:
+    if not {"metro_stations", "hospitals"} <= set(target_layers):
+        return False
+    return any(token in text for token in NEARBY_TOKENS) or ("离地铁" in text and "医院" in text)
+
+
+def _looks_like_uploaded_point_in_polygon_query(
+    text: str,
+    area: str | None,
+    latest_uploaded_layer_key: str | None,
+) -> bool:
+    if not latest_uploaded_layer_key or not area:
+        return False
+    mentions_upload = any(token in text for token in ("上传", "我传", "我上传"))
+    mentions_points = "点" in text or "位置" in text
+    mentions_inside = any(token in text for token in INSIDE_TOKENS) or bool(re.search(r"哪些.*在.*(里面|区内|范围内|内)", text))
+    return mentions_upload and mentions_points and mentions_inside

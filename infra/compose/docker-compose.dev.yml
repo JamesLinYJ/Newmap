@@ -6,20 +6,21 @@ services:
     env_file:
       - ../../.env
     environment:
-      WORKSPACE_ROOT: /app
       APP_BASE_URL: http://localhost:8000
       WEB_BASE_URL: http://localhost:5173
-      DATA_DIR: ./data
+      RUNTIME_ROOT: ./runtime
+      SEED_LAYERS_DIR: ./infra/seeds/layers
       QGIS_SERVER_BASE_URL: http://localhost:8080
       QGIS_SERVER_INTERNAL_BASE_URL: http://qgis-server
       QGIS_MODELS_DIR: ./qgis/models
-      QGIS_PUBLISH_DIR: ./qgis/published
+      QGIS_PUBLISH_DIR: ./runtime/published
       QGIS_RUNTIME_BASE_URL: http://qgis-runtime:8090
       DATABASE_URL: postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
     ports:
       - "8000:8000"
     volumes:
-      - ../../data:/app/data
+      - ../../runtime:/app/runtime
+      - ../../infra/seeds:/app/infra/seeds
       - ../../qgis:/app/qgis
     depends_on:
       - postgis
@@ -33,15 +34,14 @@ services:
     env_file:
       - ../../.env
     environment:
-      WORKSPACE_ROOT: /app
-      DATA_DIR: ./data
+      RUNTIME_ROOT: ./runtime
       QGIS_MODELS_DIR: ./qgis/models
-      QGIS_PUBLISH_DIR: ./qgis/published
+      QGIS_PUBLISH_DIR: ./runtime/published
       QGIS_PROCESS_BIN: qgis_process
     ports:
       - "8090:8090"
     volumes:
-      - ../../data:/app/data
+      - ../../runtime:/app/runtime
       - ../../qgis:/app/qgis
 
   worker:
@@ -51,7 +51,7 @@ services:
     env_file:
       - ../../.env
     volumes:
-      - ../../data:/app/data
+      - ../../runtime:/app/runtime
       - ../../qgis:/app/qgis
     environment:
       DATABASE_URL: postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
@@ -74,5 +74,5 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ../../qgis:/io/data
+      - ../../runtime:/io/data
       - ../docker/qgis-server/nginx.conf:/etc/nginx/nginx.conf:ro

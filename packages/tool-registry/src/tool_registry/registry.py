@@ -181,7 +181,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
     # 都应该从这里装配，避免两边工具集慢慢漂移。
 
     async def list_available_layers(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
-        layers = [descriptor.model_dump() for descriptor in runtime.store.catalog.list_layers()]
+        layers = [descriptor.model_dump() for descriptor in runtime.store.layer_repository.list_layers()]
         return ToolExecutionResult(message="已获取可用图层列表。", payload={"layers": layers})
 
     async def geocode_place(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
@@ -211,7 +211,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
                 raise ValueError("当前会话还没有上传图层。")
             layer_key = runtime.context.latest_uploaded_layer_key
         collection = runtime.store.spatial_service.load_layer(layer_key, area_name=area_name, boundary=boundary)
-        descriptor = runtime.store.catalog.get_layer_descriptor(layer_key)
+        descriptor = runtime.store.layer_repository.get_layer_descriptor(layer_key)
         artifact = await _persist_collection(runtime, alias=args.get("alias", layer_key), name=descriptor.name, collection=collection)
         return ToolExecutionResult(
             message=f"已加载图层 “{descriptor.name}”。",
@@ -267,7 +267,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         payload = await runtime.store.qgis_runner.run_model(
             model_name,
             args.get("inputs", {}),
-            Path("data/artifacts") / runtime.context.run_id / "qgis",
+            runtime.store.runtime_root / "artifacts" / runtime.context.run_id / "qgis",
         )
         if payload.get("status") != "completed":
             raise RuntimeError(str(payload.get("error") or f"QGIS 模型 {model_name} 执行失败。"))
@@ -278,7 +278,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         payload = await runtime.store.qgis_runner.run_processing_algorithm(
             algorithm_id,
             args.get("inputs", {}),
-            Path("data/artifacts") / runtime.context.run_id / "qgis",
+            runtime.store.runtime_root / "artifacts" / runtime.context.run_id / "qgis",
         )
         if payload.get("status") != "completed":
             raise RuntimeError(str(payload.get("error") or f"QGIS 算法 {algorithm_id} 执行失败。"))
@@ -290,14 +290,16 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         return ToolExecutionResult(message="已导出 GeoJSON。", artifact=artifact)
 
     async def publish_to_qgis_project(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
-        artifact_ref = runtime.store.store.get_artifact(str(args["artifact_id"]))
-        collection = runtime.store.store.get_artifact_collection(artifact_ref.artifact_id)
-        payload = await runtime.store.publisher.publish_artifact(
+        artifact_ref = runtime.store.platform_store.get_artifact(str(args["artifact_id"]))
+        collection = runtime.store.platform_store.get_artifact_collection(artifact_ref.artifact_id)
+        publish_result = await runtime.store.publisher.publish_artifact(
             artifact_ref.artifact_id,
             artifact_ref.name,
             args.get("project_key", "demo-workspace"),
             collection=collection,
         )
+        payload = {"artifactId": artifact_ref.artifact_id, **publish_result}
+        runtime.store.platform_store.update_artifact_metadata(artifact_ref.artifact_id, publishResult=payload)
         return ToolExecutionResult(message="已生成 QGIS Server 发布链接。", payload=payload)
 
     return [
@@ -332,7 +334,7 @@ def _resolve_collection_ref(runtime: ToolRuntime, ref: str) -> dict[str, Any]:
     # 集合引用解析。
     if ref in runtime.state.alias_map:
         return runtime.state.alias_map[ref]
-    return runtime.store.catalog.get_layer_collection(ref)
+    return runtime.store.layer_repository.get_layer_collection(ref)
 
 
 async def _persist_collection(
@@ -346,14 +348,9 @@ async def _persist_collection(
     #
     # 把分析结果统一沉淀为 artifact，并同步更新 runtime.state.alias_map。
     # 这样后续工具既能通过 artifact_id 引用，也能通过 alias 或结果名称继续串联。
-    result_descriptor = None
-    if hasattr(runtime.store.catalog, "save_result_layer"):
-        try:
-            result_descriptor = runtime.store.catalog.save_result_layer(runtime.context.run_id, alias, name, collection)
-        except Exception:
-            result_descriptor = None
+    result_descriptor = runtime.store.layer_repository.save_result_layer(runtime.context.run_id, alias, name, collection)
     artifact_id = make_id("artifact")
-    artifact = runtime.store.store.save_geojson_artifact(
+    artifact = runtime.store.platform_store.save_geojson_artifact(
         run_id=runtime.context.run_id,
         artifact_id=artifact_id,
         name=name,

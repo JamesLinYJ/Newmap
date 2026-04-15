@@ -10,6 +10,7 @@
 
 from .layer_catalog import LayerCatalog
 from .postgis_catalog import PostGISLayerCatalog
+from .repository import PostGISLayerRepository
 from .service import SpatialAnalysisService
 
-__all__ = ["LayerCatalog", "PostGISLayerCatalog", "SpatialAnalysisService"]
+__all__ = ["LayerCatalog", "PostGISLayerCatalog", "PostGISLayerRepository", "SpatialAnalysisService"]

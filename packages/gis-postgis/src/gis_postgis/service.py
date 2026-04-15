@@ -26,18 +26,16 @@ from gis_common.crs import (
 )
 from gis_common.geojson import ensure_feature_collection
 
-from .layer_catalog import LayerCatalog
-
 logger = logging.getLogger(__name__)
 
 
 # SpatialAnalysisService
 #
 # 空间分析服务门面。
-# 优先下推到 PostGIS；若数据库侧不可用，则回退到本地几何实现。
+# 所有分析能力都直接依赖 PostGIS repository。
 class SpatialAnalysisService:
-    def __init__(self, catalog: LayerCatalog, *, nominatim_base_url: str = "https://nominatim.openstreetmap.org"):
-        self.catalog = catalog
+    def __init__(self, layer_repository: Any, *, nominatim_base_url: str = "https://nominatim.openstreetmap.org"):
+        self.layer_repository = layer_repository
         self.nominatim_base_url = nominatim_base_url.rstrip("/")
         self._headers = {"User-Agent": "geo-agent-platform/0.1 (codex local demo)"}
         self._allow_remote_lookup = os.getenv("GEO_AGENT_ENABLE_REMOTE_LOOKUP", "").lower() in {"1", "true", "yes"}
@@ -45,7 +43,7 @@ class SpatialAnalysisService:
             self._allow_remote_lookup = False
 
     def geocode_place(self, query: str) -> dict[str, Any]:
-        local_matches = self.catalog.geocode(query)
+        local_matches = self.layer_repository.geocode(query)
         remote_matches = [_format_nominatim_match(item) for item in self._search_nominatim(query)]
         deduped = _dedupe_geocode_matches(local_matches + remote_matches)
         return {"type": "FeatureCollection", "features": [], "matches": deduped}
@@ -71,7 +69,7 @@ class SpatialAnalysisService:
         }
 
     def load_boundary(self, name: str) -> dict[str, Any]:
-        matches = self.catalog.search_boundaries(name)
+        matches = self.layer_repository.search_boundaries(name)
         if matches:
             return {"type": "FeatureCollection", "features": matches}
         remote_matches = self._search_nominatim(name, polygon_geojson=True)
@@ -83,139 +81,25 @@ class SpatialAnalysisService:
         return {"type": "FeatureCollection", "features": features}
 
     def load_layer(self, layer_key: str, area_name: str | None = None, boundary: dict[str, Any] | None = None) -> dict[str, Any]:
-        if hasattr(self.catalog, "load_layer_collection"):
-            try:
-                return self.catalog.load_layer_collection(layer_key, area_name=area_name, boundary=boundary)
-            except Exception as exc:
-                logger.warning("PostGIS load_layer_collection failed for '%s': %s: %s", layer_key, exc.__class__.__name__, exc)
-        collection = self.catalog.get_layer_collection(layer_key)
-        if area_name:
-            filtered = [
-                feature
-                for feature in collection["features"]
-                if feature.get("properties", {}).get("city") == area_name
-            ]
-            collection = {"type": "FeatureCollection", "features": filtered}
-        if boundary and boundary.get("features"):
-            polygons = [shape_from_feature(feature) for feature in boundary["features"]]
-            union_polygon = unary_union(polygons)
-            filtered = []
-            for feature in collection["features"]:
-                if shape_from_feature(feature).intersects(union_polygon):
-                    filtered.append(feature)
-            collection = {"type": "FeatureCollection", "features": filtered}
-        return collection
+        return self.layer_repository.load_layer_collection(layer_key, area_name=area_name, boundary=boundary)
 
     def buffer(self, collection: dict[str, Any], distance_m: float) -> dict[str, Any]:
-        if hasattr(self.catalog, "buffer_collection"):
-            try:
-                return self.catalog.buffer_collection(collection, distance_m)
-            except Exception as exc:
-                logger.warning("PostGIS buffer_collection failed: %s: %s", exc.__class__.__name__, exc)
-        if not collection["features"]:
-            return {"type": "FeatureCollection", "features": []}
-        centroid = unary_union([shape_from_feature(feature) for feature in collection["features"]]).centroid
-        metric_epsg = choose_local_metric_epsg(centroid.x, centroid.y)
-        projected = transform_feature_collection(collection, 4326, metric_epsg)
-        buffered_features = []
-        for feature in projected["features"]:
-            buffered_features.append(feature_from_shape(shape_from_feature(feature).buffer(distance_m), feature["properties"]))
-        return transform_feature_collection({"type": "FeatureCollection", "features": buffered_features}, metric_epsg, 4326)
+        return self.layer_repository.buffer_collection(collection, distance_m)
 
     def intersect(self, left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-        if hasattr(self.catalog, "intersect_collections"):
-            try:
-                return self.catalog.intersect_collections(left, right)
-            except Exception as exc:
-                logger.warning("PostGIS intersect_collections failed: %s: %s", exc.__class__.__name__, exc)
-        if not left["features"] or not right["features"]:
-            return {"type": "FeatureCollection", "features": []}
-        right_union = unary_union([shape_from_feature(feature) for feature in right["features"]])
-        features = []
-        for feature in left["features"]:
-            geom = shape_from_feature(feature)
-            if not geom.intersects(right_union):
-                continue
-            intersection = geom.intersection(right_union)
-            if intersection.is_empty:
-                continue
-            if geom.geom_type == "Point":
-                features.append(feature)
-            else:
-                features.append(feature_from_shape(intersection, feature["properties"]))
-        return {"type": "FeatureCollection", "features": features}
+        return self.layer_repository.intersect_collections(left, right)
 
     def clip(self, left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-        if hasattr(self.catalog, "intersect_collections"):
-            try:
-                return self.catalog.intersect_collections(left, right, clip=True)
-            except Exception as exc:
-                logger.warning("PostGIS clip/intersect_collections failed: %s: %s", exc.__class__.__name__, exc)
-        return self.intersect(left, right)
+        return self.layer_repository.intersect_collections(left, right, clip=True)
 
     def point_in_polygon(self, points: dict[str, Any], polygons: dict[str, Any]) -> dict[str, Any]:
-        if hasattr(self.catalog, "point_in_polygon_collection"):
-            try:
-                return self.catalog.point_in_polygon_collection(points, polygons)
-            except Exception as exc:
-                logger.warning("PostGIS point_in_polygon_collection failed: %s: %s", exc.__class__.__name__, exc)
-        if not points["features"] or not polygons["features"]:
-            return {"type": "FeatureCollection", "features": []}
-        polygon_union = unary_union([shape_from_feature(feature) for feature in polygons["features"]])
-        features = []
-        for feature in points["features"]:
-            inside = shape_from_feature(feature).within(polygon_union)
-            if inside:
-                enriched = dict(feature)
-                enriched["properties"] = {**feature.get("properties", {}), "inside": True}
-                features.append(enriched)
-        return {"type": "FeatureCollection", "features": features}
+        return self.layer_repository.point_in_polygon_collection(points, polygons)
 
     def spatial_join(self, points: dict[str, Any], polygons: dict[str, Any]) -> dict[str, Any]:
-        if hasattr(self.catalog, "spatial_join_collection"):
-            try:
-                return self.catalog.spatial_join_collection(points, polygons)
-            except Exception as exc:
-                logger.warning("PostGIS spatial_join_collection failed: %s: %s", exc.__class__.__name__, exc)
-        joined_features = []
-        for point_feature in points["features"]:
-            point_shape = shape_from_feature(point_feature)
-            for polygon_feature in polygons["features"]:
-                polygon_shape = shape_from_feature(polygon_feature)
-                if point_shape.within(polygon_shape):
-                    joined_features.append(
-                        {
-                            "type": "Feature",
-                            "properties": {
-                                **point_feature.get("properties", {}),
-                                "join_name": polygon_feature.get("properties", {}).get("name"),
-                            },
-                            "geometry": point_feature["geometry"],
-                        }
-                    )
-                    break
-        return {"type": "FeatureCollection", "features": joined_features}
+        return self.layer_repository.spatial_join_collection(points, polygons)
 
     def distance_query(self, source: dict[str, Any], target: dict[str, Any], distance_m: float) -> dict[str, Any]:
-        if hasattr(self.catalog, "distance_query_collection"):
-            try:
-                return self.catalog.distance_query_collection(source, target, distance_m)
-            except Exception as exc:
-                logger.warning("PostGIS distance_query_collection failed: %s: %s", exc.__class__.__name__, exc)
-        if not source["features"] or not target["features"]:
-            return {"type": "FeatureCollection", "features": []}
-        centroid = unary_union([shape_from_feature(feature) for feature in source["features"]]).centroid
-        metric_epsg = choose_local_metric_epsg(centroid.x, centroid.y)
-        source_projected = transform_feature_collection(source, 4326, metric_epsg)
-        target_projected = transform_feature_collection(target, 4326, metric_epsg)
-        source_union = unary_union([shape_from_feature(feature) for feature in source_projected["features"]]).buffer(distance_m)
-        features = []
-        for index, feature in enumerate(target_projected["features"]):
-            geom = shape_from_feature(feature)
-            if geom.intersects(source_union):
-                original_geom = shape_from_feature(target["features"][index])
-                features.append(feature_from_shape(original_geom, target["features"][index]["properties"]))
-        return {"type": "FeatureCollection", "features": features}
+        return self.layer_repository.distance_query_collection(source, target, distance_m)
 
     def geometry_bounds(self, collection: dict[str, Any]) -> list[float] | None:
         if not collection["features"]:

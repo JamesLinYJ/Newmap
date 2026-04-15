@@ -7,10 +7,12 @@ from fastapi import HTTPException
 
 from api_app.config import settings
 import api_app.main as main_module
+from api_app.platform_store import PostgresPlatformStore
 import tool_registry.registry as tool_registry_module
 from api_app.main import (
     AnalysisRequest,
     QgisModelRequest,
+    _build_allowed_origins,
     _start_run,
     app,
     geocode,
@@ -19,7 +21,6 @@ from api_app.main import (
     register_layer,
     run_qgis_model,
 )
-from api_app.store import FileStore
 from shared_types.schemas import PublishRequest
 
 
@@ -129,14 +130,14 @@ async def test_qgis_model_run_returns_specific_error_when_runtime_is_offline():
 
 @pytest.mark.asyncio
 async def test_analysis_failure_exposes_specific_error(monkeypatch: pytest.MonkeyPatch):
-    original_update_run_state = FileStore.update_run_state
+    original_update_run_state = PostgresPlatformStore.update_run_state
 
-    def fail_on_plan(self: FileStore, run_id: str, *, status: str | None = None, **fields):
+    def fail_on_plan(self: PostgresPlatformStore, run_id: str, *, status: str | None = None, **fields):
         if "execution_plan" in fields:
             raise RuntimeError("forced execution plan persistence failure")
         return original_update_run_state(self, run_id, status=status, **fields)
 
-    monkeypatch.setattr(FileStore, "update_run_state", fail_on_plan)
+    monkeypatch.setattr(PostgresPlatformStore, "update_run_state", fail_on_plan)
 
     async with app.router.lifespan_context(app):
         monkeypatch.setenv("PYTEST_CURRENT_TEST", "forced-sync-failure")
@@ -152,6 +153,39 @@ async def test_analysis_failure_exposes_specific_error(monkeypatch: pytest.Monke
         assert run["status"] == "failed"
         assert "RuntimeError" in run["state"]["errors"][0]
         assert "forced execution plan persistence failure" in run["state"]["errors"][0]
+
+
+@pytest.mark.asyncio
+async def test_analysis_auto_publish_persists_links_on_latest_artifact(monkeypatch: pytest.MonkeyPatch):
+    async with app.router.lifespan_context(app):
+        async def inline_to_thread(func, /, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        async def publish_artifact(artifact_id: str, artifact_name: str, project_key: str, *, collection: dict[str, object]):
+            assert artifact_id.startswith("artifact_")
+            assert artifact_name
+            assert project_key == "demo-workspace"
+            assert collection["type"] == "FeatureCollection"
+            return {
+                "geojsonUrl": f"http://example.test/data/{artifact_id}.geojson",
+                "ogcApiCollectionsUrl": f"http://example.test/ogc/{project_key}/collections",
+            }
+
+        monkeypatch.setattr(tool_registry_module.asyncio, "to_thread", inline_to_thread)
+        monkeypatch.setattr(app.state.publisher, "publish_artifact", publish_artifact)
+
+        session = app.state.store.create_session()
+        run = await _start_run(
+            AnalysisRequest(sessionId=session.id, query="查询巴黎地铁站 1 公里范围内的医院并发布结果", provider="demo"),
+            app.state.store,
+            app.state.runtime,
+        )
+
+        assert run.status == "completed"
+        assert run.state.artifacts
+        latest_artifact = run.state.artifacts[-1]
+        assert latest_artifact.metadata["publishResult"]["artifactId"] == latest_artifact.artifact_id
+        assert latest_artifact.metadata["publishResult"]["geojsonUrl"].endswith(f"{latest_artifact.artifact_id}.geojson")
 
 
 @pytest.mark.asyncio
@@ -171,6 +205,13 @@ def test_publish_rejects_path_like_project_keys():
     with pytest.raises(ValidationError) as exc_info:
         PublishRequest(projectKey="../../tmp/pwn")
     assert "projectKey" in str(exc_info.value)
+
+
+def test_allowed_origins_strip_trailing_slashes_and_dedupe():
+    assert _build_allowed_origins("https://example.com/", "https://example.com", " http://localhost:5173/ ") == [
+        "https://example.com",
+        "http://localhost:5173",
+    ]
 
 
 async def _async_value(value):

@@ -5,6 +5,9 @@ REPO_URL="${REPO_URL:-https://github.com/JamesLinYJ/Newmap.git}"
 SERVER_HOST="${SERVER_HOST:-root@8.140.248.249}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/newmap}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://8.140.248.249}"
+APP_BASE_URL="${APP_BASE_URL:-${PUBLIC_BASE_URL}}"
+WEB_BASE_URL="${WEB_BASE_URL:-${PUBLIC_BASE_URL}}"
+QGIS_SERVER_BASE_URL="${QGIS_SERVER_BASE_URL:-${PUBLIC_BASE_URL%/}/qgis}"
 COMMIT_MESSAGE="${COMMIT_MESSAGE:-chore: production deploy setup}"
 
 required_vars=(
@@ -35,10 +38,7 @@ fi
 echo "[step] 清理运行时产物追踪"
 while IFS= read -r -d '' tracked_file; do
   git rm --cached --ignore-unmatch -- "${tracked_file}"
-done < <(find qgis/published -type f ! -name '.gitkeep' -print0)
-while IFS= read -r -d '' tracked_file; do
-  git rm --cached --ignore-unmatch -- "${tracked_file}"
-done < <(find data/system -maxdepth 1 -type f -name '*.sqlite3' -print0 2>/dev/null || true)
+done < <(find runtime -type f ! -name '.gitkeep' -print0 2>/dev/null || true)
 
 echo "[step] 提交并推送代码"
 git add -A -- . ":(exclude)*.pdf"
@@ -68,13 +68,14 @@ echo "[step] 写入远程生产环境变量"
 ssh -o StrictHostKeyChecking=no "${SERVER_HOST}" "umask 077 && cat > '${REMOTE_ROOT}/.env' <<'EOF'
 APP_NAME=geo-agent-platform
 APP_ENV=production
-WORKSPACE_ROOT=.
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
-APP_BASE_URL=${PUBLIC_BASE_URL}
-WEB_BASE_URL=${PUBLIC_BASE_URL}
-QGIS_SERVER_BASE_URL=${PUBLIC_BASE_URL}/qgis
+APP_BASE_URL=${APP_BASE_URL}
+WEB_BASE_URL=${WEB_BASE_URL}
+QGIS_SERVER_BASE_URL=${QGIS_SERVER_BASE_URL}
+RUNTIME_ROOT=./runtime
+SEED_LAYERS_DIR=./infra/seeds/layers
 QGIS_MODELS_DIR=./qgis/models
-QGIS_PUBLISH_DIR=./qgis/published
+QGIS_PUBLISH_DIR=./runtime/published
 QGIS_PROCESS_BIN=qgis_process
 QGIS_RUNTIME_BASE_URL=http://qgis-runtime:8090
 DATABASE_URL=postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
@@ -90,4 +91,4 @@ EOF"
 echo "[step] 远程部署"
 ssh -o StrictHostKeyChecking=no "${SERVER_HOST}" "ROOT_DIR='${REMOTE_ROOT}' bash '${REMOTE_ROOT}/scripts/deploy/server-deploy.sh'"
 
-echo "[ok] 远程部署完成：${PUBLIC_BASE_URL}"
+echo "[ok] 远程部署完成：${WEB_BASE_URL}"

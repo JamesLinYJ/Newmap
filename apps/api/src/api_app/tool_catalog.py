@@ -1,69 +1,43 @@
-# +-------------------------------------------------------------------------
-#
-#   地理智能平台 - 工具目录构建与存储
-#
-#   文件:       tool_catalog.py
-#
-#   日期:       2026年04月14日
-#   作者:       JamesLinYJ
-# --------------------------------------------------------------------------
-
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
 from typing import Any
 
 from shared_types import ToolDescriptor, ToolParameterDescriptor, ToolParameterOption
 from tool_registry import ToolDefinition, ToolRegistry
 
+from .postgres import connect_postgres
 
-# ToolCatalogStore
-#
-# SQLite 目录存储层，只保存工具目录与展示 override，
-# 不承载真正的可执行逻辑。
+
 class ToolCatalogStore:
-    def __init__(self, data_dir: Path):
-        self.data_dir = data_dir
-        self.system_dir = data_dir / "system"
-        self.system_dir.mkdir(parents=True, exist_ok=True)
-        self.db_path = self.system_dir / "tool_catalog.sqlite3"
+    def __init__(self, database_url: str):
+        self.database_url = database_url
 
     def ensure_schema(self, *, registry: ToolRegistry) -> None:
-        # SQLite schema 初始化
-        #
-        # 只保证表存在，并在之后补默认目录项；
-        # 不在这里做破坏性迁移，避免本地调试配置被意外覆盖。
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tool_catalog_entries (
                     tool_name TEXT NOT NULL,
                     tool_kind TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
+                    payload_json JSONB NOT NULL,
                     sort_order INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (tool_name, tool_kind)
                 )
                 """
             )
-            conn.commit()
         self._seed_missing_defaults(registry)
 
     def load_catalog(self) -> dict[str, Any]:
-        # 目录载入
-        #
-        # 返回的是一份面向构建器的内存视图，而不是最终对外接口结果。
-        # registry descriptor、QGIS algorithm descriptor 和 model descriptor
-        # 都会在各自阶段把它当作 override 源。
-        with sqlite3.connect(self.db_path) as conn:
-            rows = conn.execute(
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 SELECT tool_name, tool_kind, payload_json
                 FROM tool_catalog_entries
                 ORDER BY sort_order, tool_kind, tool_name
                 """
-            ).fetchall()
+            )
+            rows = cur.fetchall()
 
         catalog: dict[str, Any] = {
             "tools": {},
@@ -71,7 +45,7 @@ class ToolCatalogStore:
             "qgisModels": {},
         }
         for tool_name, tool_kind, payload_json in rows:
-            payload = json.loads(payload_json)
+            payload = payload_json or {}
             if tool_kind == "registry":
                 catalog["tools"][tool_name] = payload
             elif tool_kind == "qgis_algorithm":
@@ -83,41 +57,43 @@ class ToolCatalogStore:
         return catalog
 
     def list_entries(self) -> list[dict[str, Any]]:
-        with sqlite3.connect(self.db_path) as conn:
-            rows = conn.execute(
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 SELECT tool_name, tool_kind, payload_json, sort_order
                 FROM tool_catalog_entries
                 ORDER BY sort_order, tool_kind, tool_name
                 """
-            ).fetchall()
+            )
+            rows = cur.fetchall()
         return [
             {
                 "toolName": tool_name,
                 "toolKind": tool_kind,
-                "payload": json.loads(payload_json),
+                "payload": payload_json or {},
                 "sortOrder": sort_order,
             }
             for tool_name, tool_kind, payload_json, sort_order in rows
         ]
 
     def get_entry(self, *, tool_name: str, tool_kind: str) -> dict[str, Any] | None:
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute(
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 SELECT payload_json, sort_order
                 FROM tool_catalog_entries
-                WHERE tool_name = ? AND tool_kind = ?
+                WHERE tool_name = %s AND tool_kind = %s
                 """,
                 (tool_name, tool_kind),
-            ).fetchone()
+            )
+            row = cur.fetchone()
         if row is None:
             return None
         payload_json, sort_order = row
         return {
             "toolName": tool_name,
             "toolKind": tool_kind,
-            "payload": json.loads(payload_json),
+            "payload": payload_json or {},
             "sortOrder": sort_order,
         }
 
@@ -131,23 +107,17 @@ class ToolCatalogStore:
     ) -> dict[str, Any]:
         current = self.get_entry(tool_name=tool_name, tool_kind=tool_kind)
         resolved_sort_order = sort_order if sort_order is not None else int(current["sortOrder"]) if current else 0
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
-                INSERT INTO tool_catalog_entries (
-                    tool_name,
-                    tool_kind,
-                    payload_json,
-                    sort_order
-                )
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(tool_name, tool_kind) DO UPDATE SET
-                    payload_json = excluded.payload_json,
-                    sort_order = excluded.sort_order
+                INSERT INTO tool_catalog_entries (tool_name, tool_kind, payload_json, sort_order)
+                VALUES (%s, %s, %s::jsonb, %s)
+                ON CONFLICT (tool_name, tool_kind) DO UPDATE SET
+                    payload_json = EXCLUDED.payload_json,
+                    sort_order = EXCLUDED.sort_order
                 """,
                 (tool_name, tool_kind, json.dumps(payload, ensure_ascii=False), resolved_sort_order),
             )
-            conn.commit()
         return self.get_entry(tool_name=tool_name, tool_kind=tool_kind) or {
             "toolName": tool_name,
             "toolKind": tool_kind,
@@ -156,22 +126,18 @@ class ToolCatalogStore:
         }
 
     def delete_entry(self, *, tool_name: str, tool_kind: str) -> bool:
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
                 """
                 DELETE FROM tool_catalog_entries
-                WHERE tool_name = ? AND tool_kind = ?
+                WHERE tool_name = %s AND tool_kind = %s
                 """,
                 (tool_name, tool_kind),
             )
-            conn.commit()
-        return bool(cursor.rowcount)
+            deleted = cur.rowcount
+        return bool(deleted)
 
     def _seed_missing_defaults(self, registry: ToolRegistry) -> None:
-        # 初始目录 seed
-        #
-        # 仅补齐缺失项，不覆盖已有 SQLite 记录，
-        # 让目录配置可以持续通过管理接口演进。
         rows = []
         for index, definition in enumerate(registry.list_definitions(), start=1):
             if definition.name in {"run_qgis_model", "run_qgis_processing_algorithm"}:
@@ -239,31 +205,22 @@ class ToolCatalogStore:
             ]
         )
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.executemany(
-                """
-                INSERT OR IGNORE INTO tool_catalog_entries (
-                    tool_name,
-                    tool_kind,
-                    payload_json,
-                    sort_order
+        with self._connect() as conn, conn.cursor() as cur:
+            for row in rows:
+                cur.execute(
+                    """
+                    INSERT INTO tool_catalog_entries (tool_name, tool_kind, payload_json, sort_order)
+                    VALUES (%s, %s, %s::jsonb, %s)
+                    ON CONFLICT (tool_name, tool_kind) DO NOTHING
+                    """,
+                    (row["tool_name"], row["tool_kind"], row["payload_json"], row["sort_order"]),
                 )
-                VALUES (
-                    :tool_name,
-                    :tool_kind,
-                    :payload_json,
-                    :sort_order
-                )
-                """,
-                rows,
-            )
-            conn.commit()
+
+    def _connect(self):
+        return connect_postgres(self.database_url)
 
 
 def build_registry_tool_descriptors(registry: ToolRegistry, catalog: dict[str, Any]) -> list[ToolDescriptor]:
-    # Registry ToolDescriptor 构建。
-    #
-    # registry 是可执行定义的真相源；SQLite 只在这里覆盖展示和参数细节。
     tool_overrides = catalog.get("tools", {})
     descriptors: list[ToolDescriptor] = []
     for definition in registry.list_definitions():
@@ -275,9 +232,6 @@ def build_registry_tool_descriptors(registry: ToolRegistry, catalog: dict[str, A
 
 
 def build_descriptor_from_definition(definition: ToolDefinition, *, override: dict[str, Any] | None = None) -> ToolDescriptor:
-    # ToolDefinition -> ToolDescriptor
-    #
-    # 统一把代码中的工具定义投影为前端调试页可以直接消费的结构化描述。
     override = override or {}
     metadata = definition.metadata
     parameter_overrides = override.get("parameters", {})
@@ -299,79 +253,83 @@ def build_parameter_descriptors(
     *,
     parameter_overrides: dict[str, Any] | None = None,
 ) -> list[ToolParameterDescriptor]:
-    # 参数描述派生
-    #
-    # 以 Pydantic JSON Schema 为真相源，避免再维护一份手写参数表。
-    args_model = definition.args_model
-    if args_model is None:
+    parameter_overrides = parameter_overrides or {}
+    if definition.args_model is None:
         return []
 
-    parameter_overrides = parameter_overrides or {}
-    schema = args_model.model_json_schema(by_alias=True)
+    schema = definition.args_model.model_json_schema()
+    required_keys = set(schema.get("required", []))
     properties = schema.get("properties", {})
-    required = set(schema.get("required", []))
-    parameters: list[ToolParameterDescriptor] = []
-
-    for field_name, field in args_model.model_fields.items():
-        schema_key = field.alias or field_name
-        prop = properties.get(schema_key, {})
-        override = parameter_overrides.get(schema_key, parameter_overrides.get(field_name, {}))
-        prop_type = _extract_data_type(prop)
-        parameters.append(
+    descriptors: list[ToolParameterDescriptor] = []
+    for key, field_schema in properties.items():
+        override = parameter_overrides.get(key, {})
+        extra = {
+            **(field_schema.get("json_schema_extra") or {}),
+            **{item_key: item_value for item_key, item_value in field_schema.items() if item_key.startswith("x-") or item_key == "placeholder"},
+        }
+        options = [
+            ToolParameterOption(label=str(item.get("label", item.get("value", ""))), value=str(item.get("value", "")))
+            for item in (override.get("options") or extra.get("options") or [])
+        ]
+        descriptors.append(
             ToolParameterDescriptor(
-                key=schema_key,
-                label=str(override.get("label") or prop.get("title") or schema_key),
-                data_type=str(override.get("dataType") or prop_type),
-                source=str(override.get("source") or prop.get("x-ui-source") or _default_source(prop_type)),
-                required=bool(override.get("required", schema_key in required)),
-                description=override.get("description") or prop.get("description"),
-                placeholder=override.get("placeholder") or prop.get("x-ui-placeholder") or prop.get("placeholder"),
-                default_value=override.get("defaultValue", prop.get("default")),
-                options=_extract_options(override.get("options"), prop),
+                key=key,
+                label=str(override.get("label") or field_schema.get("title") or key),
+                data_type=_normalize_schema_type(str(field_schema.get("type", "string"))),
+                source=str(override.get("source") or extra.get("x-ui-source") or "text"),
+                required=bool(key in required_keys),
+                description=str(override.get("description") or field_schema.get("description") or "") or None,
+                placeholder=str(override.get("placeholder") or extra.get("placeholder") or "") or None,
+                default_value=override.get("defaultValue", field_schema.get("default")),
+                options=options,
             )
         )
-
-    return parameters
+    return descriptors
 
 
 def build_qgis_algorithm_descriptors(
-    discovered_algorithms: list[dict[str, Any]],
+    algorithms: list[dict[str, Any]],
     *,
     available: bool,
     error: str | None,
     catalog: dict[str, Any],
 ) -> list[ToolDescriptor]:
-    # 动态 QGIS algorithm 描述构建。
-    #
-    # 先以 qgis-runtime 返回的发现结果为基线，再叠加 SQLite override，
-    # 这样算法数量可以随运行时变化，而 UI 仍然能持续被人工打磨。
-    algorithm_overrides = catalog.get("qgisAlgorithms", {})
+    overrides = catalog.get("qgisAlgorithms", {})
     descriptors: list[ToolDescriptor] = []
-
-    for algorithm in sorted(discovered_algorithms, key=lambda item: str(item.get("display_name") or item.get("id") or "")):
-        algorithm_id = str(algorithm.get("id") or "")
-        if not algorithm_id:
-            continue
-        override = algorithm_overrides.get(algorithm_id, {})
-        parameters = _build_qgis_algorithm_parameters(algorithm, override.get("parameters"))
+    for algorithm in algorithms:
+        override = overrides.get(algorithm.get("id"), {})
+        parameters = []
+        parameter_overrides = override.get("parameters", {})
+        for parameter in algorithm.get("parameters", []):
+            if parameter.get("is_destination"):
+                continue
+            current_override = parameter_overrides.get(parameter.get("name"), {})
+            parameters.append(
+                ToolParameterDescriptor(
+                    key=str(parameter.get("name")),
+                    label=str(current_override.get("label") or parameter.get("description") or parameter.get("name")),
+                    data_type=_normalize_qgis_parameter_type(str(parameter.get("type") or "string")),
+                    source="collection" if str(parameter.get("type") or "") in {"source", "vector", "raster"} else "text",
+                    required=not bool(parameter.get("optional")),
+                    description=str(parameter.get("help") or parameter.get("description") or "") or None,
+                    default_value=current_override.get("defaultValue", parameter.get("default_value")),
+                )
+            )
         descriptors.append(
             ToolDescriptor(
-                name=algorithm_id,
-                label=str(override.get("label") or algorithm.get("display_name") or algorithm_id),
-                description=str(override.get("description") or algorithm.get("description") or "调用 QGIS Processing 算法。"),
+                name=str(algorithm.get("id")),
+                label=str(override.get("label") or algorithm.get("display_name") or algorithm.get("id")),
+                description=str(override.get("description") or algorithm.get("description") or ""),
                 group=str(override.get("group") or "qgis"),
-                tool_kind=str(override.get("toolKind") or "qgis_algorithm"),
-                available=bool(override.get("available", available)),
-                tags=[str(item) for item in override.get("tags", algorithm.get("tags", ["qgis", "algorithm"]))],
+                tool_kind="qgis_algorithm",
+                available=available,
+                tags=[str(item) for item in override.get("tags", algorithm.get("tags") or [])],
                 parameters=parameters,
-                error=str(override.get("error") or error) if (override.get("error") or error) else None,
+                error=error,
                 meta={
                     "providerId": algorithm.get("provider_id"),
                     "providerName": algorithm.get("provider_name"),
-                    "groupName": algorithm.get("group"),
-                    "outputs": algorithm.get("outputs", []),
-                    "outputParameterName": override.get("outputParameterName") or algorithm.get("output_parameter_name"),
-                    "algorithmId": algorithm_id,
+                    "outputParameterName": algorithm.get("output_parameter_name"),
                     **dict(override.get("meta", {})),
                 },
             )
@@ -379,165 +337,52 @@ def build_qgis_algorithm_descriptors(
     return descriptors
 
 
-def build_qgis_model_descriptors(model_names: list[str], *, available: bool, error: str | None, catalog: dict[str, Any]) -> list[ToolDescriptor]:
-    # QGIS model3 描述构建。
-    qgis_models = catalog.get("qgisModels", {})
-    defaults = qgis_models.get("defaults", {})
-    default_parameters = [ToolParameterDescriptor.model_validate(item) for item in defaults.get("parameters", [])]
+def build_qgis_model_descriptors(models: list[str], *, available: bool, error: str | None, catalog: dict[str, Any]) -> list[ToolDescriptor]:
+    defaults = catalog.get("qgisModels", {}).get("defaults", {})
+    overrides = catalog.get("qgisModels", {})
     descriptors: list[ToolDescriptor] = []
-
-    for model_name in sorted(model_names):
-        override = qgis_models.get(model_name, {})
-        parameters_payload = override.get("parameters")
-        parameters = [ToolParameterDescriptor.model_validate(item) for item in parameters_payload] if isinstance(parameters_payload, list) else default_parameters
+    for model_name in models:
+        override = overrides.get(model_name, {})
+        parameter_payloads = override.get("parameters") or defaults.get("parameters") or []
+        parameters = [ToolParameterDescriptor.model_validate(item) for item in parameter_payloads]
         descriptors.append(
             ToolDescriptor(
                 name=model_name,
-                label=str(override.get("label") or f"QGIS 模型 · {model_name}"),
-                description=str(override.get("description") or "调用 qgis-runtime 中已发现的模型。"),
+                label=str(override.get("label") or model_name),
+                description=str(override.get("description") or f"QGIS 模型 {model_name}"),
                 group=str(override.get("group") or "qgis"),
-                tool_kind=str(override.get("toolKind") or "qgis_model"),
-                available=bool(override.get("available", available)),
+                tool_kind="qgis_model",
+                available=available,
                 tags=[str(item) for item in override.get("tags", ["qgis", "model"])],
                 parameters=parameters,
-                error=str(override.get("error") or error) if (override.get("error") or error) else None,
-                meta={"modelName": model_name, **dict(override.get("meta", {}))},
+                error=error,
+                meta=dict(override.get("meta", {})),
             )
         )
     return descriptors
 
 
-def _extract_data_type(prop: dict[str, Any]) -> str:
-    if "enum" in prop:
-        return "string"
-    if "anyOf" in prop:
-        for candidate in prop["anyOf"]:
-            candidate_type = candidate.get("type")
-            if candidate_type and candidate_type != "null":
-                return str(candidate_type)
-    return str(prop.get("type") or "string")
-
-
-def _default_source(data_type: str) -> str:
-    return {
+def _normalize_schema_type(value: str) -> str:
+    mapping = {
+        "string": "string",
         "number": "number",
         "integer": "number",
         "boolean": "boolean",
         "object": "json",
-    }.get(data_type, "text")
+        "array": "json",
+    }
+    return mapping.get(value, "string")
 
 
-def _extract_options(override_options: Any, prop: dict[str, Any]) -> list[ToolParameterOption]:
-    if isinstance(override_options, list):
-        return [ToolParameterOption.model_validate(item) for item in override_options]
-    if "enum" not in prop:
-        return []
-    return [ToolParameterOption(label=str(item), value=str(item)) for item in prop["enum"]]
-
-
-def _build_qgis_algorithm_parameters(algorithm: dict[str, Any], overrides: Any) -> list[ToolParameterDescriptor]:
-    # QGIS 参数自动映射
-    #
-    # 基于 runtime 返回的原生参数定义生成参数描述，只接受 SQLite 的局部覆盖。
-    parameter_overrides = overrides if isinstance(overrides, dict) else {}
-    parameters_payload = algorithm.get("parameters", [])
-    parameters: list[ToolParameterDescriptor] = []
-
-    for parameter in parameters_payload:
-        if parameter.get("is_destination"):
-            continue
-        key = str(parameter.get("name") or "")
-        if not key:
-            continue
-        override = parameter_overrides.get(key, {})
-        param_type = str(parameter.get("type") or "string")
-        data_type = str(override.get("dataType") or _map_qgis_parameter_data_type(param_type))
-        parameters.append(
-            ToolParameterDescriptor(
-                key=key,
-                label=str(override.get("label") or parameter.get("description") or key),
-                data_type=data_type,
-                source=str(override.get("source") or _map_qgis_parameter_source(param_type, parameter)),
-                required=bool(override.get("required", not bool(parameter.get("optional")))),
-                description=str(override.get("description") or parameter.get("help") or parameter.get("description") or ""),
-                placeholder=override.get("placeholder"),
-                default_value=override.get("defaultValue", parameter.get("default_value")),
-                options=_map_qgis_parameter_options(parameter, override.get("options")),
-            )
-        )
-
-    return _append_common_qgis_execution_parameters(parameters)
-
-
-def _append_common_qgis_execution_parameters(parameters: list[ToolParameterDescriptor]) -> list[ToolParameterDescriptor]:
-    # QGIS 通用执行参数补齐
-    #
-    # save_as_artifact 和 result_name 不是算法原生参数，
-    # 而是平台级执行选项，因此在这里统一补上，避免每个算法重复声明。
-    existing = {parameter.key for parameter in parameters}
-    result = list(parameters)
-    if "save_as_artifact" not in existing:
-        result.append(
-            ToolParameterDescriptor(
-                key="save_as_artifact",
-                label="保存为结果",
-                data_type="boolean",
-                source="boolean",
-                default_value=True,
-            )
-        )
-    if "result_name" not in existing:
-        result.append(
-            ToolParameterDescriptor(
-                key="result_name",
-                label="结果名称",
-                data_type="string",
-                source="text",
-                placeholder="可选",
-            )
-        )
-    return result
-
-
-def _map_qgis_parameter_data_type(parameter_type: str) -> str:
+def _normalize_qgis_parameter_type(value: str) -> str:
     mapping = {
-        "boolean": "boolean",
         "distance": "number",
         "number": "number",
-        "scale": "number",
-        "enum": "string",
-        "expression": "string",
-        "field": "string",
-        "string": "string",
-        "crs": "string",
-        "extent": "string",
+        "boolean": "boolean",
+        "band": "number",
         "source": "string",
         "vector": "string",
         "raster": "string",
-        "file": "string",
-        "folder": "string",
+        "string": "string",
     }
-    return mapping.get(parameter_type, "string")
-
-
-def _map_qgis_parameter_source(parameter_type: str, parameter: dict[str, Any]) -> str:
-    if parameter_type in {"boolean"}:
-        return "boolean"
-    if parameter_type in {"number", "distance", "scale"}:
-        return "number"
-    if parameter_type == "enum":
-        return "text"
-    if parameter_type in {"source", "vector", "raster"}:
-        return "collection"
-    if parameter_type in {"matrix", "map", "json"}:
-        return "json"
-    return "text"
-
-
-def _map_qgis_parameter_options(parameter: dict[str, Any], override_options: Any) -> list[ToolParameterOption]:
-    if isinstance(override_options, list):
-        return [ToolParameterOption.model_validate(item) for item in override_options]
-    options = parameter.get("options")
-    if not isinstance(options, list):
-        return []
-    return [ToolParameterOption(label=str(option), value=str(index)) for index, option in enumerate(options)]
+    return mapping.get(value, "string")

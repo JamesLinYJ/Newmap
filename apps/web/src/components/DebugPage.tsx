@@ -502,7 +502,7 @@ export function DebugPage({
                   onSave={onUpsertToolCatalogEntry}
                   onDelete={onDeleteToolCatalogEntry}
                 />
-                <p className="panel__muted">这里只管理 SQLite 里的目录与展示配置，不会修改工具的实际执行逻辑。</p>
+                <p className="panel__muted">这里只管理 Postgres 里的目录与展示配置，不会修改工具的实际执行逻辑。</p>
               </div>
             ) : null}
           </section>
