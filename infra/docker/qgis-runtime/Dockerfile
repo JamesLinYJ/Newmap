@@ -14,8 +14,8 @@ WORKDIR /opt/geo-agent
 
 COPY pyproject.toml README.md ./
 COPY apps ./apps
+COPY infra ./infra
 COPY packages ./packages
-COPY data ./data
 COPY qgis ./qgis
 
 RUN python3 -m venv --system-site-packages "${VIRTUAL_ENV}" \

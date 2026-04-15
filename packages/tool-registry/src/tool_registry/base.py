@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -48,11 +49,13 @@ class ToolRuntimeState:
 @dataclass(frozen=True)
 class ToolRuntimeStore:
     # 工具执行可访问的持久化依赖集合。
-    store: Any
-    catalog: Any
+    platform_store: Any
+    layer_repository: Any
+    artifact_export_store: Any
     spatial_service: Any
     qgis_runner: Any
     publisher: Any
+    runtime_root: Path
 
 
 @dataclass

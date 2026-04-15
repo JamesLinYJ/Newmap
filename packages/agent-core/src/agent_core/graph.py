@@ -154,7 +154,7 @@ class GeoAgentRuntime:
             # 意图解析节点
             #
             # 这里只做语义理解，不做任何真正的 GIS 计算或数据修改。
-            available_layers = [item.layer_key for item in runtime.store.catalog.list_layers()]
+            available_layers = [item.layer_key for item in runtime.store.layer_repository.list_layers()]
             intent = await parse_user_intent_with_model(
                 state["user_query"],
                 adapter=adapter,
@@ -220,7 +220,7 @@ class GeoAgentRuntime:
                 plan,
                 self.tool_registry.list_tools(),
                 intent_state.area,
-                available_layers=[item.layer_key for item in runtime.store.catalog.list_layers()],
+                available_layers=[item.layer_key for item in runtime.store.layer_repository.list_layers()],
                 latest_uploaded_layer_key=latest_uploaded_layer_key,
             )
             for warning in warnings:
@@ -421,19 +421,26 @@ class GeoAgentRuntime:
             # 推到 QGIS Server。否则这里只负责发出最终 run.completed / run.failed 事件。
             publish_payload: dict[str, Any] | None = None
             errors = list(state.get("errors", []))
+            artifacts = list(state.get("artifacts", []))
             intent = UserIntent.model_validate(state["parsed_intent"]) if state.get("parsed_intent") else None
-            if not errors and intent and intent.publish_requested and state.get("artifacts"):
-                latest_artifact = state["artifacts"][-1]
+            if not errors and intent and intent.publish_requested and artifacts:
+                latest_artifact = dict(artifacts[-1])
                 latest_artifact_id = latest_artifact.get("artifact_id") or latest_artifact.get("artifactId")
                 latest_artifact_name = latest_artifact.get("name")
                 latest_collection = self.store.get_artifact_collection(latest_artifact_id)
                 try:
-                    publish_payload = await runtime.store.publisher.publish_artifact(
+                    publish_result = await runtime.store.publisher.publish_artifact(
                         latest_artifact_id,
                         latest_artifact_name,
                         "demo-workspace",
                         collection=latest_collection,
                     )
+                    publish_payload = {"artifactId": latest_artifact_id, **publish_result}
+                    self.store.update_artifact_metadata(latest_artifact_id, publishResult=publish_payload)
+                    latest_metadata = dict(latest_artifact.get("metadata") or {})
+                    latest_metadata["publishResult"] = publish_payload
+                    latest_artifact["metadata"] = latest_metadata
+                    artifacts[-1] = latest_artifact
                 except Exception as exc:
                     errors.append(_format_agent_error(exc, tool="publish_to_qgis_project", step_id="publish"))
             event_type = EventType.RUN_FAILED if state.get("errors") else EventType.RUN_COMPLETED
@@ -456,7 +463,7 @@ class GeoAgentRuntime:
                     },
                 ),
             )
-            return {**state, "errors": errors}
+            return {**state, "artifacts": artifacts, "errors": errors}
 
         workflow.add_node("intent_parser", intent_parser_node)
         workflow.add_node("plan_builder", plan_builder_node)

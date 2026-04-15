@@ -139,6 +139,69 @@ async def test_tool_run_reuses_alias_context_across_requests(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_qgis_process_endpoint_accepts_plain_http_body(api_client: httpx.AsyncClient):
+    async def run_processing_algorithm(algorithm_id: str, inputs: dict[str, Any], output_dir: Path | str):
+        output_path = _from_qgis_runtime_path(Path(output_dir)) / "plain_http_buffer.geojson"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {"distance": inputs.get("DISTANCE")},
+                            "geometry": {"type": "Point", "coordinates": [13.4, 52.5]},
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "status": "completed",
+            "resolved_outputs": {"OUTPUT": str(Path(output_dir) / "plain_http_buffer.geojson")},
+            "algorithm_ref": algorithm_id,
+            "inputs": inputs,
+        }
+
+    app.state.qgis_runner.run_processing_algorithm = run_processing_algorithm
+    app.state.qgis_runner.health = lambda: _async_value({"available": True})
+
+    session = (await api_client.post("/api/v1/sessions")).json()
+    run = app.state.store.create_run(session["id"], "QGIS process HTTP body test")
+    artifact = app.state.store.save_geojson_artifact(
+        run_id=run.id,
+        artifact_id="artifact_plain_http_seed",
+        name="HTTP 输入种子",
+        collection=_polygon_collection(),
+        metadata={},
+    )
+    app.state.store.add_artifact_to_run(run.id, artifact)
+
+    response = await api_client.post(
+        "/api/v1/qgis/process",
+        json={
+            "algorithmId": "native:buffer",
+            "artifactId": artifact.artifact_id,
+            "runId": run.id,
+            "saveAsArtifact": True,
+            "resultName": "HTTP 直接调用 buffer",
+            "inputs": {
+                "DISTANCE": 250,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["artifact"] is not None
+    assert payload["artifact"]["name"] == "HTTP 直接调用 buffer"
+
+
+@pytest.mark.asyncio
 async def test_tool_run_harness_surfaces_specific_validation_errors(api_client: httpx.AsyncClient):
     session = (await api_client.post("/api/v1/sessions")).json()
 
@@ -307,6 +370,45 @@ async def test_dynamic_qgis_algorithm_tool_can_run_through_generic_executor(api_
     payload = response.json()
     assert payload["artifact"] is not None
     assert payload["payload"]["inputs"]["DISTANCE"] == 125
+
+
+@pytest.mark.asyncio
+async def test_publish_endpoint_persists_links_to_artifact_metadata(api_client: httpx.AsyncClient):
+    async def publish_artifact(artifact_id: str, artifact_name: str, project_key: str, *, collection: dict[str, Any]):
+        assert artifact_id == "artifact_publish_demo"
+        assert artifact_name == "待发布结果"
+        assert project_key == "demo-workspace"
+        assert collection["type"] == "FeatureCollection"
+        return {
+            "geojsonUrl": "http://example.test/data/artifact_publish_demo.geojson",
+            "wmsCapabilitiesUrl": "http://example.test/ows/demo-workspace?SERVICE=WMS&REQUEST=GetCapabilities",
+        }
+
+    app.state.publisher.publish_artifact = publish_artifact
+
+    session = (await api_client.post("/api/v1/sessions")).json()
+    run = app.state.store.create_run(session["id"], "发布结果")
+    artifact = app.state.store.save_geojson_artifact(
+        run_id=run.id,
+        artifact_id="artifact_publish_demo",
+        name="待发布结果",
+        collection=_polygon_collection(),
+        metadata={"feature_count": 1},
+    )
+    app.state.store.add_artifact_to_run(run.id, artifact)
+
+    response = await api_client.post(
+        f"/api/v1/results/{artifact.artifact_id}/publish",
+        json={"projectKey": "demo-workspace"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["artifactId"] == artifact.artifact_id
+    metadata_payload = (await api_client.get(f"/api/v1/results/{artifact.artifact_id}/metadata")).json()
+    assert metadata_payload["metadata"]["publishResult"]["geojsonUrl"] == payload["geojsonUrl"]
+    run_payload = (await api_client.get(f"/api/v1/analysis/{run.id}")).json()
+    assert run_payload["state"]["artifacts"][0]["metadata"]["publishResult"]["artifactId"] == artifact.artifact_id
 
 
 async def _async_value(value: Any):

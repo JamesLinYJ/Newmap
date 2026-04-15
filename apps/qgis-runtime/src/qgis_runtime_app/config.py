@@ -22,21 +22,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "qgis-runtime"
-    workspace_root: str = "."
+    runtime_root: str = "./runtime"
     qgis_process_bin: str = "qgis_process"
     qgis_models_dir: str = "./qgis/models"
-    qgis_publish_dir: str = "./qgis/published"
-    data_dir: str = "./data"
+    qgis_publish_dir: str = "./runtime/published"
 
     @property
-    def resolved_workspace_root(self) -> Path:
-        return Path(self.workspace_root).expanduser().resolve()
+    def resolved_runtime_root(self) -> Path:
+        return self.resolve_path(self.runtime_root)
 
     def resolve_path(self, value: str) -> Path:
         candidate = Path(value).expanduser()
         if candidate.is_absolute():
             return candidate.resolve()
-        return (self.resolved_workspace_root / candidate).resolve()
+        return candidate.resolve()
 
     @property
     def resolved_models_dir(self) -> Path:
@@ -45,10 +44,6 @@ class Settings(BaseSettings):
     @property
     def resolved_publish_dir(self) -> Path:
         return self.resolve_path(self.qgis_publish_dir)
-
-    @property
-    def resolved_data_dir(self) -> Path:
-        return self.resolve_path(self.data_dir)
 
 
 settings = Settings()

@@ -52,6 +52,7 @@ import {
   uploadLayer,
 } from './api'
 import './App.css'
+import { pickArtifactPublishResult, pickPreferredArtifactId } from './artifactSelection'
 import { ChatPanel } from './components/ChatPanel'
 import { DetailPanel } from './components/DetailPanel'
 import { AppIcon, type AppIconName } from './components/AppIcon'
@@ -123,7 +124,6 @@ function App() {
   const [artifactMetadata, setArtifactMetadata] = useState<Record<string, Record<string, unknown>>>({})
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [uploadedLayerName, setUploadedLayerName] = useState<string>()
-  const [publishResult, setPublishResult] = useState<Record<string, unknown> | null>(null)
   const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isQgisSubmitting, setIsQgisSubmitting] = useState(false)
@@ -138,6 +138,7 @@ function App() {
   const deferredEvents = useDeferredValue(events)
 
   const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId)
+  const publishResult = pickArtifactPublishResult(selectedArtifactId, artifacts, artifactMetadata)
   const progressItems = buildProgressItems({
     runStatus: run?.status,
     intent,
@@ -215,10 +216,8 @@ function App() {
         setArtifacts(latestRun.state.artifacts)
         setProvider(latestRun.modelProvider ?? 'demo')
         setModel(latestRun.modelName ?? '')
-        const firstArtifact = latestRun.state.artifacts[0]?.artifactId
-        if (firstArtifact) {
-          setSelectedArtifactId((current) => current ?? firstArtifact)
-        }
+        const preferredArtifactId = pickPreferredArtifactId(latestRun.state.artifacts)
+        setSelectedArtifactId(preferredArtifactId)
       })
 
       if (latestRun.state.artifacts.length > 0) {
@@ -489,7 +488,7 @@ function App() {
                 setArtifacts((current) =>
                   current.some((item) => item.artifactId === artifact.artifactId) ? current : [...current, artifact],
                 )
-                setSelectedArtifactId((current) => current ?? artifact.artifactId)
+                setSelectedArtifactId(artifact.artifactId)
               })
             })
           }
@@ -500,10 +499,20 @@ function App() {
 
           if (event.type === 'run.completed' || event.type === 'run.failed') {
             const payload = event.payload as Record<string, unknown> | undefined
-            if (payload?.published) {
-              startTransition(() => {
-                setPublishResult(payload.published as Record<string, unknown>)
-              })
+            if (payload?.published && typeof payload.published === 'object' && payload.published !== null) {
+              const published = payload.published as Record<string, unknown>
+              const publishedArtifactId = typeof published.artifactId === 'string' ? published.artifactId : undefined
+              if (publishedArtifactId) {
+                startTransition(() => {
+                  setArtifactMetadata((current) => ({
+                    ...current,
+                    [publishedArtifactId]: {
+                      ...current[publishedArtifactId],
+                      publishResult: published,
+                    },
+                  }))
+                })
+              }
             }
             if (event.type === 'run.failed') {
               startTransition(() => {
@@ -558,11 +567,12 @@ function App() {
       setActiveNav('analysis')
       setPanelMode('summary')
       setActiveSidebarItem('assistant')
-      setPublishResult(null)
       setEvents([])
       setArtifacts([])
       setArtifactData({})
       setArtifactMetadata({})
+      setSelectedArtifactId(undefined)
+      setToolRunResult(null)
 
       const createdRun = await startAnalysis(session.id, query.trim(), provider, model || undefined)
       startTransition(() => {
@@ -618,7 +628,13 @@ function App() {
     try {
       setUiError(undefined)
       const result = await publishArtifact(artifactId, { projectKey: 'demo-workspace' })
-      setPublishResult(result)
+      setArtifactMetadata((current) => ({
+        ...current,
+        [artifactId]: {
+          ...current[artifactId],
+          publishResult: result,
+        },
+      }))
       setSystemComponents(await getSystemComponents())
     } catch (error) {
       setUiError(formatUiError(error, '发布失败。'))

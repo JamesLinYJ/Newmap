@@ -8,8 +8,8 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY apps ./apps
+COPY infra ./infra
 COPY packages ./packages
-COPY data ./data
 COPY qgis ./qgis
 
 RUN python -m pip install --upgrade pip setuptools wheel \

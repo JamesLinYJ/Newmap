@@ -21,18 +21,19 @@ services:
       - ../../.env
     environment:
       APP_ENV: production
-      WORKSPACE_ROOT: /app
-      APP_BASE_URL: ${PUBLIC_BASE_URL}
-      WEB_BASE_URL: ${PUBLIC_BASE_URL}
-      DATA_DIR: ./data
-      QGIS_SERVER_BASE_URL: ${PUBLIC_BASE_URL}/qgis
+      APP_BASE_URL: ${APP_BASE_URL}
+      WEB_BASE_URL: ${WEB_BASE_URL}
+      RUNTIME_ROOT: ./runtime
+      SEED_LAYERS_DIR: ./infra/seeds/layers
+      QGIS_SERVER_BASE_URL: ${QGIS_SERVER_BASE_URL}
       QGIS_SERVER_INTERNAL_BASE_URL: http://qgis-server
       QGIS_MODELS_DIR: ./qgis/models
-      QGIS_PUBLISH_DIR: ./qgis/published
+      QGIS_PUBLISH_DIR: ./runtime/published
       QGIS_RUNTIME_BASE_URL: http://qgis-runtime:8090
       DATABASE_URL: postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
     volumes:
-      - ../../data:/app/data
+      - ../../runtime:/app/runtime
+      - ../../infra/seeds:/app/infra/seeds
       - ../../qgis:/app/qgis
     depends_on:
       - postgis
@@ -47,13 +48,13 @@ services:
     env_file:
       - ../../.env
     environment:
-      WORKSPACE_ROOT: /app
-      DATA_DIR: ./data
+      APP_ENV: production
+      RUNTIME_ROOT: ./runtime
       QGIS_MODELS_DIR: ./qgis/models
-      QGIS_PUBLISH_DIR: ./qgis/published
+      QGIS_PUBLISH_DIR: ./runtime/published
       QGIS_PROCESS_BIN: qgis_process
     volumes:
-      - ../../data:/app/data
+      - ../../runtime:/app/runtime
       - ../../qgis:/app/qgis
 
   worker:
@@ -66,9 +67,11 @@ services:
     depends_on:
       - api
     environment:
+      APP_ENV: production
+      RUNTIME_ROOT: ./runtime
       DATABASE_URL: postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
     volumes:
-      - ../../data:/app/data
+      - ../../runtime:/app/runtime
       - ../../qgis:/app/qgis
 
   postgis:
@@ -86,7 +89,7 @@ services:
     image: qgis/qgis-server:latest
     restart: unless-stopped
     volumes:
-      - ../../qgis:/io/data
+      - ../../runtime:/io/data
       - ../docker/qgis-server/nginx.conf:/etc/nginx/nginx.conf:ro
 
 volumes:

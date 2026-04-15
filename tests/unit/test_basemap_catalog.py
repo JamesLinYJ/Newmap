@@ -1,10 +1,8 @@
-from pathlib import Path
-
 from api_app.basemap_catalog import BasemapCatalog
 
 
-def test_basemap_catalog_seeds_osm_and_tianditu(tmp_path: Path):
-    catalog = BasemapCatalog(tmp_path, tianditu_api_key="test-token")
+def test_basemap_catalog_seeds_osm_and_tianditu():
+    catalog = BasemapCatalog(tianditu_api_key="test-token")
     catalog.ensure_schema()
 
     basemaps = catalog.list_basemaps()

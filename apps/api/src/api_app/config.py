@@ -23,16 +23,16 @@ class Settings(BaseSettings):
 
     app_name: str = "geo-agent-platform"
     app_env: str = "development"
-    workspace_root: str = "."
     app_base_url: str = "http://localhost:8000"
     web_base_url: str = "http://localhost:5173"
     qgis_server_base_url: str = "http://localhost:8080"
     qgis_server_internal_base_url: str | None = None
+    runtime_root: str = "./runtime"
+    seed_layers_dir: str = "./infra/seeds/layers"
     qgis_models_dir: str = "./qgis/models"
-    qgis_publish_dir: str = "./qgis/published"
+    qgis_publish_dir: str = "./runtime/published"
     qgis_process_bin: str = "qgis_process"
     qgis_runtime_base_url: str | None = "http://localhost:8090"
-    qgis_runtime_workspace_root: str | None = None
     database_url: str | None = None
     tianditu_api_key: str | None = None
     default_model_provider: str = "demo"
@@ -50,22 +50,21 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str | None = None
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
-    data_dir: str = "./data"
     upload_max_bytes: int = 10 * 1024 * 1024
 
     @property
-    def resolved_workspace_root(self) -> Path:
-        return Path(self.workspace_root).expanduser().resolve()
+    def resolved_runtime_root(self) -> Path:
+        return self.resolve_path(self.runtime_root)
 
     def resolve_path(self, value: str) -> Path:
         candidate = Path(value).expanduser()
         if candidate.is_absolute():
             return candidate.resolve()
-        return (self.resolved_workspace_root / candidate).resolve()
+        return candidate.resolve()
 
     @property
-    def resolved_data_dir(self) -> Path:
-        return self.resolve_path(self.data_dir)
+    def resolved_seed_layers_dir(self) -> Path:
+        return self.resolve_path(self.seed_layers_dir)
 
     @property
     def resolved_qgis_models_dir(self) -> Path:
@@ -74,12 +73,6 @@ class Settings(BaseSettings):
     @property
     def resolved_qgis_publish_dir(self) -> Path:
         return self.resolve_path(self.qgis_publish_dir)
-
-    @property
-    def resolved_qgis_runtime_workspace_root(self) -> Path | None:
-        if not self.qgis_runtime_workspace_root:
-            return None
-        return Path(self.qgis_runtime_workspace_root).expanduser().resolve()
 
 
 settings = Settings()
