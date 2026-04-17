@@ -84,7 +84,7 @@ export function deriveRunTranscript({
   }
 
   const maxEntries = Math.max(runtimeConfig?.ui?.transcriptMaxEntries ?? 40, 12)
-  return entries.slice(-maxEntries)
+  return compactTranscriptEntries(entries).slice(-maxEntries)
 }
 
 export function pickTranscriptHeadline(entries: TranscriptEntry[], runStatus?: string) {
@@ -262,6 +262,56 @@ function deriveRecoveryNote(event: RunEvent, events: RunEvent[]) {
     return '系统无法自动恢复，本次运行已经停止。'
   }
   return `系统后续进入了“${nextMeaningfulEvent.type}”阶段。`
+}
+
+function compactTranscriptEntries(entries: TranscriptEntry[]) {
+  const compacted: TranscriptEntry[] = []
+
+  for (const entry of entries) {
+    const previous = compacted.at(-1)
+    if (previous && shouldMergeTranscriptEntries(previous, entry)) {
+      compacted[compacted.length - 1] = {
+        ...previous,
+        ...entry,
+        id: previous.id,
+        timestamp: entry.timestamp,
+        details: entry.details ?? previous.details,
+        commandText: entry.commandText ?? previous.commandText,
+        recoveryNote: entry.recoveryNote ?? previous.recoveryNote,
+      }
+      continue
+    }
+    compacted.push(entry)
+  }
+
+  return compacted
+}
+
+function shouldMergeTranscriptEntries(previous: TranscriptEntry, current: TranscriptEntry) {
+  if (previous.kind !== current.kind) {
+    return false
+  }
+  if (!['supervisor', 'subagent', 'tool'].includes(current.kind)) {
+    return false
+  }
+  if (previous.status !== current.status) {
+    return false
+  }
+  if ((previous.agentId ?? null) !== (current.agentId ?? null)) {
+    return false
+  }
+  if ((previous.toolName ?? null) !== (current.toolName ?? null)) {
+    return false
+  }
+  if (previous.title !== current.title) {
+    return false
+  }
+
+  if (current.kind === 'tool') {
+    return previous.commandText === current.commandText
+  }
+
+  return previous.body === current.body
 }
 
 function findPreviousToolArgs(event: RunEvent, events: RunEvent[]) {

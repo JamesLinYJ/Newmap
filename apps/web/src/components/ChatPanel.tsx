@@ -63,18 +63,19 @@ export function ChatPanel({
   onSelectArtifact,
   onResolveApproval,
 }: ChatPanelProps) {
+  const hasTranscript = transcriptEntries.length > 1
   const transcriptLabel =
     runStatus === 'running'
-      ? '分析过程会在这里持续写入，工具调用、结果和待确认操作都会按真实顺序展开。'
+      ? '分析过程会实时写入。'
     : runStatus === 'waiting_approval'
-        ? '当前停在待确认节点，处理完成后会继续向下执行。'
-        : '新的空间分析任务会从这里开始记录。'
+        ? '当前停在待确认节点。'
+        : '新的空间分析任务会从这里开始。'
   const workingLabel = runCreatedAt && runStatus === 'running' ? formatElapsedLabel(runCreatedAt) : null
   const topicLabel = query.trim() || '新的空间分析任务'
   const showSamples = !isSubmitting && transcriptEntries.length <= 1
   const recordCount = transcriptEntries.filter((entry) => entry.kind !== 'user').length
   const compactContextLabel = runtimeConfig?.context
-    ? `会延续最近 ${runtimeConfig.context.historyRunLimit} 轮任务与 ${runtimeConfig.context.eventWindow} 条关键记录`
+    ? `会延续最近 ${runtimeConfig.context.historyRunLimit} 轮任务与 ${runtimeConfig.context.eventWindow} 条记录`
     : '会延续当前会话里的最近任务与结果'
 
   return (
@@ -94,11 +95,11 @@ export function ChatPanel({
         <div className="dc-chat-console__thread">
           <div className="dc-chat-console__thread-main">
             <span className="dc-chat-console__thread-path">← {topicLabel}</span>
-            <p>{transcriptLabel}</p>
+            {!hasTranscript ? <p>{transcriptLabel}</p> : null}
           </div>
           <div className="dc-chat-console__thread-meta">
-            <span>{artifactCount} 个结果对象</span>
-            <span>{recordCount} 条执行记录</span>
+            <span className="dc-chat-console__thread-chip">{artifactCount} 个结果</span>
+            <span className="dc-chat-console__thread-chip">{recordCount} 条记录</span>
           </div>
         </div>
 
