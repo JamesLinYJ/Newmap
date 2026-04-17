@@ -31,6 +31,8 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/qgis-runtime/Dockerfile
+      args:
+        QGIS_RUNTIME_BASE_IMAGE: ${QGIS_RUNTIME_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qgis/qgis-server:3.40.15-noble}
     env_file:
       - ../../.env
     environment:
@@ -70,7 +72,7 @@ services:
       - ../../infra/migrations:/docker-entrypoint-initdb.d
 
   qgis-server:
-    image: qgis/qgis-server:latest
+    image: ${QGIS_SERVER_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qgis/qgis-server:3.40.15-noble}
     ports:
       - "8080:80"
     volumes:
