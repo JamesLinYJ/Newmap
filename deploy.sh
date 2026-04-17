@@ -73,6 +73,9 @@ EOF"
 configure_docker_mirror() {
   local default_mirror="https://hd1esep4.mirror.aliyuncs.com"
   local daemon_file="/etc/docker/daemon.json"
+  local daemon_content=""
+
+  daemon_content="$(run_shell_as_root "cat '${daemon_file}' 2>/dev/null || true")"
 
   if [[ -n "${DOCKER_REGISTRY_MIRRORS}" ]]; then
     print_step "写入 Docker 镜像加速配置"
@@ -81,7 +84,7 @@ configure_docker_mirror() {
   \"registry-mirrors\": [\"${DOCKER_REGISTRY_MIRRORS}\"]
 }
 EOF"
-  elif run_shell_as_root "[[ -f '${daemon_file}' ]] && grep -q '${default_mirror}' '${daemon_file}'"; then
+  elif [[ "${daemon_content}" == *"${default_mirror}"* ]]; then
     print_step "移除旧的默认镜像加速配置"
     run_shell_as_root "rm -f '${daemon_file}'"
   else
