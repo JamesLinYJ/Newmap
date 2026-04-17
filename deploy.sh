@@ -18,8 +18,22 @@ PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1}"
 APP_BASE_URL="${APP_BASE_URL:-${PUBLIC_BASE_URL}}"
 WEB_BASE_URL="${WEB_BASE_URL:-${PUBLIC_BASE_URL}}"
 QGIS_SERVER_BASE_URL="${QGIS_SERVER_BASE_URL:-${PUBLIC_BASE_URL%/}/qgis}"
+WEB_PORT="${WEB_PORT:-}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-$(current_branch_name)}"
 DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-}"
+
+derive_default_web_port() {
+  local base_url="${1:-}"
+  if [[ "${base_url}" =~ :([0-9]+)$ ]]; then
+    printf "%s" "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "${base_url}" == https://* ]]; then
+    printf "443"
+    return 0
+  fi
+  printf "80"
+}
 
 detect_working_docker_mirror() {
   if [[ -n "${DOCKER_REGISTRY_MIRRORS}" ]]; then
@@ -124,7 +138,7 @@ write_env_file() {
   cat > "${ROOT_DIR}/.env" <<EOF
 APP_NAME=geo-agent-platform
 APP_ENV=production
-WEB_PORT=80
+WEB_PORT=${WEB_PORT}
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 APP_BASE_URL=${APP_BASE_URL}
 WEB_BASE_URL=${WEB_BASE_URL}
@@ -149,6 +163,9 @@ EOF
 
 print_banner "Map 平台一键部署"
 
+WEB_PORT="${WEB_PORT:-$(derive_default_web_port "${WEB_BASE_URL}")}"
+prompt_with_default WEB_PORT "请输入前端监听端口" "${WEB_PORT}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_PORT}}"
 prompt_with_default PUBLIC_BASE_URL "请输入访问地址（例如 http://127.0.0.1 或你的域名）" "${PUBLIC_BASE_URL}"
 APP_BASE_URL="${APP_BASE_URL:-${PUBLIC_BASE_URL}}"
 WEB_BASE_URL="${WEB_BASE_URL:-${PUBLIC_BASE_URL}}"
