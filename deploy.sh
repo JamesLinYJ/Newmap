@@ -26,7 +26,7 @@ detect_working_docker_mirror() {
     return 0
   fi
 
-  if curl -I -m 5 -sS https://registry-1.docker.io/v2/ >/dev/null 2>&1; then
+  if curl -I -4 -m 5 -sS https://registry-1.docker.io/v2/qgis/qgis/manifests/latest >/dev/null 2>&1; then
     return 0
   fi
 
@@ -35,7 +35,7 @@ detect_working_docker_mirror() {
   )
   local mirror=""
   for mirror in "${mirror_candidates[@]}"; do
-    if curl -I -m 5 -sS "${mirror}/v2/" >/dev/null 2>&1; then
+    if curl -I -4 -m 5 -sS "${mirror}/v2/qgis/qgis/manifests/latest" >/dev/null 2>&1; then
       DOCKER_REGISTRY_MIRRORS="${mirror}"
       print_warn "检测到直连 Docker Hub 不稳定，已自动切换到镜像源 ${mirror}"
       return 0
