@@ -64,3 +64,19 @@ def test_add_artifact_to_run_deduplicates_by_artifact_id(tmp_path: Path):
 
     assert len(updated.state.artifacts) == 1
     assert updated.state.artifacts[0].artifact_id == "artifact_existing_sync"
+
+
+def test_update_run_state_persists_snake_case_fields(tmp_path: Path):
+    store = _build_store(tmp_path)
+    session = store.create_session()
+    thread = store.create_thread(session.id, title="状态更新")
+    run = store.create_run(session.id, "检查状态写回", thread_id=thread.id)
+
+    updated = store.update_run_state(run.id, loop_phase="observe", loop_iteration=2, warnings=["需要复核"])
+
+    assert updated.state.loop_phase == "observe"
+    assert updated.state.loop_iteration == 2
+    assert updated.state.warnings == ["需要复核"]
+    persisted = store.get_run(run.id)
+    assert persisted.state.loop_phase == "observe"
+    assert persisted.state.loop_iteration == 2

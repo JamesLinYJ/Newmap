@@ -9,7 +9,9 @@
 // --------------------------------------------------------------------------
 
 import type {
+  AgentRuntimeConfig,
   AnalysisRun,
+  AgentThreadRecord,
   ArtifactRef,
   BasemapDescriptor,
   LayerDescriptor,
@@ -87,6 +89,17 @@ export function getSession(sessionId: string) {
   return requestJson<SessionRecord>(`/api/v1/sessions/${sessionId}`)
 }
 
+export function createThread(sessionId: string, title?: string) {
+  return requestJson<AgentThreadRecord>('/api/v2/threads', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, title }),
+  })
+}
+
+export function getThread(threadId: string) {
+  return requestJson<{ thread: AgentThreadRecord; runs: AnalysisRun[]; latestRun?: AnalysisRun | null }>(`/api/v2/threads/${threadId}`)
+}
+
 export function listSessionRuns(sessionId: string) {
   return requestJson<AnalysisRun[]>(`/api/v1/sessions/${sessionId}/runs`)
 }
@@ -124,6 +137,17 @@ export function listToolCatalogEntries() {
   return requestJson<Array<Record<string, unknown>>>('/api/v1/tools/catalog')
 }
 
+export function getRuntimeConfig() {
+  return requestJson<AgentRuntimeConfig>('/api/v1/runtime/config')
+}
+
+export function updateRuntimeConfig(payload: AgentRuntimeConfig) {
+  return requestJson<AgentRuntimeConfig>('/api/v1/runtime/config', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function upsertToolCatalogEntry(toolKind: string, toolName: string, payload: Record<string, unknown>, sortOrder?: number) {
   return requestJson<Record<string, unknown>>(`/api/v1/tools/catalog/${encodeURIComponent(toolKind)}/${encodeURIComponent(toolName)}`, {
     method: 'PUT',
@@ -144,8 +168,19 @@ export function startAnalysis(sessionId: string, query: string, provider?: strin
   })
 }
 
+export function startThreadRun(threadId: string, query: string, provider?: string, model?: string) {
+  return requestJson<AnalysisRun>(`/api/v2/threads/${threadId}/runs`, {
+    method: 'POST',
+    body: JSON.stringify({ query, provider, model }),
+  })
+}
+
 export function getRun(runId: string) {
   return requestJson<AnalysisRun>(`/api/v1/analysis/${runId}`)
+}
+
+export function getThreadRun(runId: string) {
+  return requestJson<AnalysisRun>(`/api/v2/runs/${runId}`)
 }
 
 export function getArtifacts(runId: string) {
@@ -164,6 +199,13 @@ export function publishArtifact(artifactId: string, payload: PublishRequest) {
   return requestJson<Record<string, unknown>>(`/api/v1/results/${artifactId}/publish`, {
     method: 'POST',
     body: JSON.stringify(payload),
+  })
+}
+
+export function resolveApproval(runId: string, approvalId: string, approved: boolean) {
+  return requestJson<AnalysisRun>(`/api/v2/runs/${runId}/approvals/${approvalId}`, {
+    method: 'POST',
+    body: JSON.stringify({ approved }),
   })
 }
 

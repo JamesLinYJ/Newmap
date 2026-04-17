@@ -24,6 +24,16 @@ CREATE TABLE IF NOT EXISTS platform_sessions (
 
 CREATE TABLE IF NOT EXISTS platform_runs (
   run_id TEXT PRIMARY KEY,
+  thread_id TEXT,
+  session_id TEXT NOT NULL REFERENCES platform_sessions(session_id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  payload_json JSONB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_threads (
+  thread_id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES platform_sessions(session_id) ON DELETE CASCADE,
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
@@ -59,6 +69,12 @@ CREATE TABLE IF NOT EXISTS tool_catalog_entries (
 
 CREATE INDEX IF NOT EXISTS idx_platform_runs_session_updated
   ON platform_runs(session_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_platform_runs_thread_updated
+  ON platform_runs(thread_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_platform_threads_session_updated
+  ON platform_threads(session_id, updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_platform_events_run_occurred
   ON platform_events(run_id, occurred_at, event_id);

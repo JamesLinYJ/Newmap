@@ -53,7 +53,7 @@ class BaseModelAdapter(ABC):
         return {"repaired": payload}
 
     def is_configured(self) -> bool:
-        return self.provider == "demo"
+        return False
 
     def capabilities(self) -> list[str]:
         return ["chat", "structured", "stream", "repair_tool_json"]

@@ -33,6 +33,7 @@ from gis_qgis import QgisRuntimeClient
 from map_publisher import MapPublisher
 from model_adapters import ModelAdapterRegistry
 from shared_types.schemas import ArtifactRef, EventType, PublishRequest, RunEvent, SystemComponentsStatus, ToolCall, ToolDescriptor
+from shared_types.schemas import AgentRuntimeConfig
 from tool_registry import ToolExecutionResult, ToolRuntime, ToolRuntimeContext, ToolRuntimeState, ToolRuntimeStore
 from tool_registry.registry import build_default_registry
 
@@ -72,6 +73,21 @@ class AnalysisRequest(BaseModel):
     query: str
     provider: str | None = None
     model: str | None = None
+
+
+class ThreadCreateRequest(BaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    title: str | None = None
+
+
+class ThreadRunRequest(BaseModel):
+    query: str
+    provider: str | None = None
+    model: str | None = None
+
+
+class ApprovalResolutionRequest(BaseModel):
+    approved: bool
 
 
 class QgisProcessRequest(BaseModel):
@@ -146,6 +162,7 @@ async def lifespan(app: FastAPI):
     artifact_export_store = ArtifactExportStore(runtime_root)
     store = PostgresPlatformStore(settings.database_url, artifact_store=artifact_export_store)
     store.ensure_schema()
+    runtime_config = store.get_runtime_config()
     spatial_service = SpatialAnalysisService(layer_repository, nominatim_base_url=settings.nominatim_base_url)
     qgis_runner = QgisRuntimeClient(settings.qgis_runtime_base_url)
     publisher = MapPublisher(
@@ -153,6 +170,7 @@ async def lifespan(app: FastAPI):
         settings.qgis_server_base_url,
         app_base_url=settings.app_base_url,
         qgis_runtime=qgis_runner,
+        default_project_key=runtime_config.default_publish_project_key,
     )
     tool_registry = build_default_registry()
     tool_catalog_store = ToolCatalogStore(settings.database_url)
@@ -297,6 +315,18 @@ async def list_tool_catalog_entries():
     return app.state.tool_catalog_store.list_entries()
 
 
+@app.get("/api/v1/runtime/config")
+async def get_runtime_config(store: PostgresPlatformStore = Depends(get_store)):
+    return store.get_runtime_config()
+
+
+@app.put("/api/v1/runtime/config")
+async def update_runtime_config(payload: AgentRuntimeConfig, store: PostgresPlatformStore = Depends(get_store)):
+    saved = store.save_runtime_config(payload)
+    app.state.publisher.default_project_key = saved.default_publish_project_key
+    return saved
+
+
 @app.put("/api/v1/tools/catalog/{tool_kind}/{tool_name:path}")
 async def upsert_tool_catalog_entry(tool_kind: str, tool_name: str, payload: ToolCatalogEntryUpsertRequest):
     entry = app.state.tool_catalog_store.upsert_entry(
@@ -324,7 +354,8 @@ async def run_tool(payload: ToolRunRequest, store: PostgresPlatformStore = Depen
     # 如果调用方没有 run_id，这里会自动创建一个“工具调用 run”，
     # 让工具执行也能完整写入 run / event / artifact 三条索引链。
     session = store.get_session(payload.session_id)
-    run = store.get_run(payload.run_id) if payload.run_id else store.create_run(session.id, f"工具调用：{payload.tool_name}")
+    thread = store.get_or_create_thread_for_session(session.id, title=f"工具调用：{payload.tool_name}")
+    run = store.get_run(payload.run_id) if payload.run_id else store.create_run(session.id, f"工具调用：{payload.tool_name}", thread_id=thread.id)
     if not payload.run_id:
         store.mark_run_running(run.id)
 
@@ -452,6 +483,39 @@ async def list_session_runs(session_id: str, store: PostgresPlatformStore = Depe
     return store.list_runs_for_session(session_id)
 
 
+@app.post("/api/v2/threads")
+async def create_thread(payload: ThreadCreateRequest, store: PostgresPlatformStore = Depends(get_store)):
+    return store.create_thread(payload.session_id, title=payload.title)
+
+
+@app.get("/api/v2/threads/{thread_id}")
+async def get_thread(thread_id: str, store: PostgresPlatformStore = Depends(get_store)):
+    thread = store.get_thread(thread_id)
+    runs = store.list_runs_for_thread(thread_id)
+    latest_run = runs[0] if runs else None
+    return {
+        "thread": thread,
+        "runs": runs,
+        "latestRun": latest_run,
+    }
+
+
+@app.post("/api/v2/threads/{thread_id}/runs")
+async def create_thread_run(
+    thread_id: str,
+    request: ThreadRunRequest,
+    store: PostgresPlatformStore = Depends(get_store),
+    runtime: GeoAgentRuntime = Depends(get_runtime),
+):
+    thread = store.get_thread(thread_id)
+    return await _start_run(
+        AnalysisRequest(sessionId=thread.session_id, query=request.query, provider=request.provider, model=request.model),
+        store,
+        runtime,
+        thread_id=thread_id,
+    )
+
+
 @app.get("/api/v1/layers")
 async def list_layers(layer_repository: PostGISLayerRepository = Depends(get_layer_repository)):
     return layer_repository.list_layers()
@@ -509,6 +573,11 @@ async def run_analysis(request: AnalysisRequest, store: PostgresPlatformStore = 
     return await _start_run(request, store, runtime)
 
 
+@app.get("/api/v2/runs/{run_id}")
+async def get_thread_run(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
+    return store.get_run(run_id)
+
+
 @app.get("/api/v1/analysis/{run_id}")
 async def get_analysis_run(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return store.get_run(run_id)
@@ -545,6 +614,30 @@ async def stream_analysis_events(run_id: str, store: PostgresPlatformStore = Dep
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.get("/api/v2/runs/{run_id}/events")
+async def stream_thread_run_events(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
+    return await stream_analysis_events(run_id, store)
+
+
+@app.post("/api/v2/runs/{run_id}/approvals/{approval_id}")
+async def resolve_run_approval(
+    run_id: str,
+    approval_id: str,
+    payload: ApprovalResolutionRequest,
+    store: PostgresPlatformStore = Depends(get_store),
+    runtime: GeoAgentRuntime = Depends(get_runtime),
+):
+    run = store.get_run(run_id)
+    session = store.get_session(run.session_id)
+    return await runtime.resolve_approval(
+        run_id=run_id,
+        approval_id=approval_id,
+        approved=payload.approved,
+        context_factory=_build_tool_runtime,
+        latest_uploaded_layer_key=session.latest_uploaded_layer_key,
+    )
+
+
 @app.get("/api/v1/results/{artifact_id}/geojson")
 async def get_result_geojson(artifact_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return JSONResponse(store.get_artifact_collection(artifact_id))
@@ -566,10 +659,11 @@ async def publish_result(
     artifact = store.get_artifact(artifact_id)
     collection = store.get_artifact_collection(artifact_id)
     try:
+        runtime_config = store.get_runtime_config()
         result = await app.state.publisher.publish_artifact(
             artifact.artifact_id,
             artifact.name,
-            payload.project_key or "demo-workspace",
+            payload.project_key or runtime_config.default_publish_project_key,
             collection=collection,
         )
     except ValueError as exc:
@@ -581,7 +675,7 @@ async def publish_result(
     return persisted_result
 
 
-async def _start_run(request: AnalysisRequest, store: PostgresPlatformStore, runtime: GeoAgentRuntime):
+async def _start_run(request: AnalysisRequest, store: PostgresPlatformStore, runtime: GeoAgentRuntime, *, thread_id: str | None = None):
     # 分析任务启动器
     #
     # 统一负责：
@@ -589,14 +683,19 @@ async def _start_run(request: AnalysisRequest, store: PostgresPlatformStore, run
     # 2. 创建 run 并标记 running。
     # 3. 在测试环境同步执行，在开发/生产环境切到后台任务。
     session = store.get_session(request.session_id)
-    adapter = runtime.model_registry.resolve_provider(request.provider or settings.default_model_provider)
+    thread = store.get_thread(thread_id) if thread_id else store.get_or_create_thread_for_session(session.id, title=request.query[:80])
+    try:
+        adapter = runtime.model_registry.resolve_provider(request.provider or settings.default_model_provider)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     model_name = request.model or adapter.default_model or settings.default_model_name
     provider_name = adapter.provider
-    run = store.create_run(session.id, request.query, model_provider=provider_name, model_name=model_name)
+    run = store.create_run(session.id, request.query, thread_id=thread.id, model_provider=provider_name, model_name=model_name)
     store.mark_run_running(run.id)
 
     runner = runtime.run(
         run_id=run.id,
+        thread_id=thread.id,
         session_id=session.id,
         query=request.query,
         latest_uploaded_layer_key=session.latest_uploaded_layer_key,
@@ -614,7 +713,7 @@ async def _start_run(request: AnalysisRequest, store: PostgresPlatformStore, run
     return store.get_run(run.id)
 
 
-def _build_tool_runtime(*, run_id: str, session_id: str, latest_uploaded_layer_key: str | None) -> ToolRuntime:
+def _build_tool_runtime(*, run_id: str, thread_id: str | None, session_id: str, latest_uploaded_layer_key: str | None) -> ToolRuntime:
     # ToolRuntime 组装器
     #
     # 将运行时拆成 context、state、store 三层，避免职责继续堆叠在单个对象上。
@@ -623,6 +722,7 @@ def _build_tool_runtime(*, run_id: str, session_id: str, latest_uploaded_layer_k
     return ToolRuntime(
         context=ToolRuntimeContext(
             run_id=run_id,
+            thread_id=thread_id,
             session_id=session_id,
             latest_uploaded_layer_key=latest_uploaded_layer_key,
         ),
@@ -672,7 +772,13 @@ async def _execute_tool_request(payload: ToolRunRequest, *, run_id: str, session
     # registry 工具走 ToolRegistry；QGIS 工具走专门执行分支。
     # 这样工具调用虽然统一暴露成一个入口，但不同类型仍保留最合适的运行语义。
     if payload.tool_kind == "registry":
-        runtime = _build_tool_runtime(run_id=run_id, session_id=session_id, latest_uploaded_layer_key=latest_uploaded_layer_key)
+        run = app.state.store.get_run(run_id)
+        runtime = _build_tool_runtime(
+            run_id=run_id,
+            thread_id=run.thread_id,
+            session_id=session_id,
+            latest_uploaded_layer_key=latest_uploaded_layer_key,
+        )
         return await app.state.tool_registry.execute(payload.tool_name, dict(payload.args), runtime)
 
     if payload.tool_kind == "qgis_algorithm":
@@ -828,6 +934,19 @@ def _apply_tool_result_to_run(
         RunEvent(
             event_id=make_id("evt"),
             run_id=run_id,
+            thread_id=run.thread_id,
+            type=EventType.TOOL_COMPLETED,
+            message=result.message,
+            timestamp=now_utc(),
+            payload={"tool": tool_name, "toolKind": tool_kind, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None},
+        ),
+    )
+    store.append_event(
+        run_id,
+        RunEvent(
+            event_id=make_id("evt"),
+            run_id=run_id,
+            thread_id=run.thread_id,
             type=EventType.STEP_COMPLETED,
             message=result.message,
             timestamp=now_utc(),
@@ -874,6 +993,19 @@ def _record_tool_failure(
         RunEvent(
             event_id=make_id("evt"),
             run_id=run_id,
+            thread_id=run.thread_id,
+            type=EventType.TOOL_COMPLETED,
+            message=str(exc),
+            timestamp=now_utc(),
+            payload={"tool": tool_name, "toolKind": tool_kind, "errors": errors},
+        ),
+    )
+    store.append_event(
+        run_id,
+        RunEvent(
+            event_id=make_id("evt"),
+            run_id=run_id,
+            thread_id=run.thread_id,
             type=EventType.RUN_FAILED,
             message=str(exc),
             timestamp=now_utc(),
@@ -945,11 +1077,13 @@ async def _maybe_attach_qgis_artifact(
         },
     )
     store.add_artifact_to_run(run_id, artifact)
+    run = store.get_run(run_id)
     store.append_event(
         run_id,
         RunEvent(
             event_id=make_id("evt"),
             run_id=run_id,
+            thread_id=run.thread_id,
             type=EventType.ARTIFACT_CREATED,
             message=f"QGIS 输出已保存为结果图层：{artifact.name}",
             timestamp=now_utc(),
@@ -965,21 +1099,54 @@ async def _qgis_server_capabilities() -> tuple[bool, bool]:
     # 这里只回答“在线否、基础能力是否存在”，不做更深的巡检，
     # 避免系统状态页因为探测过重而拖慢。
     base_url = (settings.qgis_server_internal_base_url or settings.qgis_server_base_url).rstrip("/")
-    project_key = app.state.publisher.default_project_key
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            wms_response = await client.get(
-                f"{base_url}/ows/{project_key}/",
-                params={"SERVICE": "WMS", "REQUEST": "GetCapabilities"},
+            wms_response = await _probe_qgis_server_endpoint(
+                client,
+                [
+                    (f"{base_url}/ows/", {"SERVICE": "WMS", "REQUEST": "GetCapabilities"}),
+                    (f"{base_url}/ows/{app.state.publisher.default_project_key}/", {"SERVICE": "WMS", "REQUEST": "GetCapabilities"}),
+                ],
             )
-            ogc_response = await client.get(f"{base_url}/ogc/{project_key}/collections")
-            if ogc_response.status_code == 404 or "ServiceExceptionReport" in ogc_response.text:
-                ogc_response = await client.get(f"{base_url}/ogc/{project_key}/ogcapi/collections")
+            ogc_response = await _probe_qgis_server_endpoint(
+                client,
+                [
+                    (f"{base_url}/ogc/collections", None),
+                    (f"{base_url}/ogcapi/collections", None),
+                    (f"{base_url}/ogc/{app.state.publisher.default_project_key}/collections", None),
+                    (f"{base_url}/ogc/{app.state.publisher.default_project_key}/ogcapi/collections", None),
+                ],
+            )
     except Exception as exc:
         logger.warning("QGIS server capability probe failed: %s", _format_component_error("QGIS server", "capability probe", exc))
         return False, False
-    ogc_available = ogc_response.is_success and "ServiceExceptionReport" not in ogc_response.text
-    return wms_response.is_success, ogc_available
+    qgis_server_available = _response_looks_online(wms_response)
+    ogc_available = _response_looks_online(ogc_response) and "ServiceExceptionReport" not in ogc_response.text
+    return qgis_server_available, ogc_available
+
+
+async def _probe_qgis_server_endpoint(
+    client: httpx.AsyncClient,
+    candidates: list[tuple[str, dict[str, str] | None]],
+) -> httpx.Response:
+    last_response: httpx.Response | None = None
+    for url, params in candidates:
+        response = await client.get(url, params=params)
+        if _response_looks_online(response):
+            return response
+        last_response = response
+    if last_response is None:
+        raise RuntimeError("QGIS server probe did not issue any HTTP request")
+    return last_response
+
+
+def _response_looks_online(response: httpx.Response) -> bool:
+    text = response.text
+    if response.is_success:
+        return True
+    if "ServiceExceptionReport" in text or "WMS_Capabilities" in text or "ows:ExceptionReport" in text:
+        return True
+    return response.status_code < 500
 
 
 def _resolve_qgis_inputs(

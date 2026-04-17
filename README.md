@@ -49,70 +49,51 @@ make dev-web
 - `/api/*` FastAPI
 - `/qgis/*` QGIS Server
 
-### 1. 准备环境变量
+### 1. 一键部署
 
-复制模板并填写：
-
-```bash
-cp .env.example .env
-```
-
-生产环境至少需要设置：
+仓库根目录自带一个可以直接在当前机器运行的傻瓜脚本：
 
 ```bash
-APP_BASE_URL=http://你的服务器IP或域名
-WEB_BASE_URL=http://你的服务器IP或域名
-QGIS_SERVER_BASE_URL=http://你的服务器IP或域名/qgis
-RUNTIME_ROOT=./runtime
-SEED_LAYERS_DIR=./infra/seeds/layers
-GEMINI_API_KEY=你的密钥
-TIANDITU_API_KEY=你的密钥
-DEFAULT_MODEL_PROVIDER=gemini
-GEMINI_MODEL=gemini-2.5-flash
+bash deploy.sh
 ```
 
-### 2. 本机直接启动生产栈
+不管你是在云主机、本地 Linux、还是本地 WSL，只要已经把仓库拉到本机，这个脚本都会自动：
+
+- 拉取当前分支最新代码
+- 安装 `git / curl / Docker / Docker Compose`（如果缺失）
+- 交互式询问访问地址和密钥
+- 生成生产 `.env`
+- 启动完整生产服务
+
+默认会询问并生成这些关键配置：
+
+- `PUBLIC_BASE_URL`
+- `APP_BASE_URL`
+- `WEB_BASE_URL`
+- `QGIS_SERVER_BASE_URL`
+- `GEMINI_API_KEY`
+- `TIANDITU_API_KEY`
+
+### 2. 一键卸载
+
+如果要停止并卸载当前机器上的服务：
 
 ```bash
-make deploy-prod
+bash uninstall.sh
 ```
 
-### 3. 一键推送并远程部署
-
-项目内置了完整远程部署脚本：
+支持的常用参数：
 
 ```bash
-export GEMINI_API_KEY=你的密钥
-export TIANDITU_API_KEY=你的密钥
-bash scripts/deploy/push-and-remote-deploy.sh
+bash uninstall.sh --purge-data --purge-images --purge-project -y
 ```
 
-它会自动完成：
+说明：
 
-- 提交并推送当前代码到 GitHub
-- SSH 到服务器
-- 安装 Docker 与 Compose 插件
-- 克隆或更新仓库到 `/opt/newmap`
-- 写入生产 `.env`
-- 启动整套生产服务
-
-默认目标：
-
-- GitHub 仓库：`https://github.com/JamesLinYJ/Newmap.git`
-- 服务器：`root@8.140.248.249`
-
-如需覆盖，可通过环境变量指定：
-
-```bash
-REPO_URL=...
-SERVER_HOST=...
-REMOTE_ROOT=...
-PUBLIC_BASE_URL=...   # 快捷写法，会作为 APP/WEB/QGIS 的默认值
-APP_BASE_URL=...      # 可选，单独覆盖 API 对外基址
-WEB_BASE_URL=...      # 可选，单独覆盖前端对外基址
-QGIS_SERVER_BASE_URL=... # 可选，单独覆盖 QGIS 对外基址
-COMMIT_MESSAGE=...
-```
+- `--purge-data` 删除数据库卷和 runtime 数据
+- `--purge-images` 删除本机 Docker 镜像缓存
+- `--purge-project` 删除当前项目目录
+- `-y` 跳过确认
 
 ## 目录
 
@@ -125,4 +106,4 @@ COMMIT_MESSAGE=...
 - `infra/docker` 各服务镜像定义
 - `infra/compose` 开发与生产编排
 - `runtime` 统一运行时目录
-- `scripts/deploy` 本机与服务器部署脚本
+- `scripts/deploy` 部署脚本公共辅助模块

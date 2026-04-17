@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     qgis_runtime_base_url: str | None = "http://localhost:8090"
     database_url: str | None = None
     tianditu_api_key: str | None = None
-    default_model_provider: str = "demo"
+    default_model_provider: str = "gemini"
     default_model_name: str | None = None
     openai_base_url: str | None = None
     openai_api_key: str | None = None

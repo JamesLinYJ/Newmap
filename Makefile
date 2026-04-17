@@ -23,7 +23,7 @@ build-web:
 	npm run build --workspace apps/web
 
 deploy-prod:
-	sg docker -c "docker compose --env-file .env -f infra/compose/docker-compose.prod.yml up -d --build"
+	bash deploy.sh
 
 deploy-remote:
-	bash scripts/deploy/push-and-remote-deploy.sh
+	bash deploy.sh

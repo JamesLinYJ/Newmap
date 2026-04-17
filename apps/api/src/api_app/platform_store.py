@@ -7,11 +7,12 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from shared_types.schemas import AgentStateModel, AnalysisRunRecord, ArtifactRef, RunEvent, SessionRecord
+from shared_types.schemas import AgentRuntimeConfig, AgentStateModel, AgentThreadRecord, AnalysisRunRecord, ArtifactRef, RunEvent, SessionRecord
 from gis_common.ids import make_id, now_utc
 
 from .artifact_store import ArtifactExportStore
 from .postgres import connect_postgres
+from agent_core.supervisor_config import build_default_runtime_config, normalize_runtime_config
 
 
 class PostgresPlatformStore:
@@ -36,6 +37,20 @@ class PostgresPlatformStore:
                 """
                 CREATE TABLE IF NOT EXISTS platform_runs (
                     run_id TEXT PRIMARY KEY,
+                    thread_id TEXT,
+                    session_id TEXT NOT NULL REFERENCES platform_sessions(session_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    payload_json JSONB NOT NULL
+                )
+                """
+            )
+            cur.execute("ALTER TABLE platform_runs ADD COLUMN IF NOT EXISTS thread_id TEXT")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS platform_threads (
+                    thread_id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES platform_sessions(session_id) ON DELETE CASCADE,
                     status TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL,
@@ -69,10 +84,33 @@ class PostgresPlatformStore:
                 """
             )
             cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS platform_runtime_config (
+                    config_key TEXT PRIMARY KEY,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    payload_json JSONB NOT NULL
+                )
+                """
+            )
+            cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_platform_runs_session_updated ON platform_runs(session_id, updated_at DESC)"
             )
             cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_platform_runs_thread_updated ON platform_runs(thread_id, updated_at DESC)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_platform_threads_session_updated ON platform_threads(session_id, updated_at DESC)"
+            )
+            cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_platform_events_run_occurred ON platform_events(run_id, occurred_at, event_id)"
+            )
+            cur.execute(
+                """
+                INSERT INTO platform_runtime_config (config_key, updated_at, payload_json)
+                VALUES (%s, %s, %s::jsonb)
+                ON CONFLICT (config_key) DO NOTHING
+                """,
+                ("default", now_utc(), json.dumps(normalize_runtime_config(build_default_runtime_config()).model_dump(mode="json", by_alias=True), ensure_ascii=False)),
             )
 
     def create_session(self) -> SessionRecord:
@@ -124,16 +162,71 @@ class PostgresPlatformStore:
             rows = cur.fetchall()
         return [AnalysisRunRecord.model_validate(row[0]) for row in rows]
 
+    def create_thread(self, session_id: str, *, title: str | None = None) -> AgentThreadRecord:
+        self.get_session(session_id)
+        timestamp = now_utc()
+        thread = AgentThreadRecord(
+            id=make_id("thread"),
+            session_id=session_id,
+            title=title or "GIS 智能分析线程",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        self.save_thread(thread)
+        self.update_session(session_id, latest_thread_id=thread.id)
+        return thread
+
+    def save_thread(self, thread: AgentThreadRecord) -> None:
+        payload = thread.model_dump(mode="json", by_alias=True)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO platform_threads (thread_id, session_id, status, created_at, updated_at, payload_json)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (thread_id) DO UPDATE SET
+                    session_id = EXCLUDED.session_id,
+                    status = EXCLUDED.status,
+                    updated_at = EXCLUDED.updated_at,
+                    payload_json = EXCLUDED.payload_json
+                """,
+                (thread.id, thread.session_id, thread.status, thread.created_at, thread.updated_at, json.dumps(payload, ensure_ascii=False)),
+            )
+
+    def get_thread(self, thread_id: str) -> AgentThreadRecord:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT payload_json FROM platform_threads WHERE thread_id = %s", (thread_id,))
+            row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="线程不存在。")
+        return AgentThreadRecord.model_validate(row[0])
+
+    def get_or_create_thread_for_session(self, session_id: str, *, title: str | None = None) -> AgentThreadRecord:
+        session = self.get_session(session_id)
+        if session.latest_thread_id:
+            try:
+                return self.get_thread(session.latest_thread_id)
+            except HTTPException:
+                pass
+        return self.create_thread(session_id, title=title)
+
+    def update_thread(self, thread_id: str, **fields: Any) -> AgentThreadRecord:
+        thread = self.get_thread(thread_id)
+        updated = thread.model_copy(update={**fields, "updated_at": now_utc()})
+        self.save_thread(updated)
+        return updated
+
     def create_run(
         self,
         session_id: str,
         user_query: str,
         *,
-        model_provider: str = "demo",
+        thread_id: str | None = None,
+        model_provider: str = "gemini",
         model_name: str | None = None,
     ) -> AnalysisRunRecord:
         state = AgentStateModel(
             session_id=session_id,
+            thread_id=thread_id,
             user_query=user_query,
             model_provider=model_provider,
             model_name=model_name,
@@ -141,6 +234,7 @@ class PostgresPlatformStore:
         timestamp = now_utc()
         run = AnalysisRunRecord(
             id=make_id("run"),
+            thread_id=thread_id,
             session_id=session_id,
             user_query=user_query,
             model_provider=model_provider,
@@ -151,7 +245,11 @@ class PostgresPlatformStore:
             state=state,
         )
         self.save_run(run)
-        self.update_session(session_id, latest_run_id=run.id)
+        session_fields: dict[str, Any] = {"latest_run_id": run.id}
+        if thread_id:
+            session_fields["latest_thread_id"] = thread_id
+            self.update_thread(thread_id, latest_run_id=run.id)
+        self.update_session(session_id, **session_fields)
         return run
 
     def mark_run_running(self, run_id: str) -> AnalysisRunRecord:
@@ -173,22 +271,27 @@ class PostgresPlatformStore:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO platform_runs (run_id, session_id, status, created_at, updated_at, payload_json)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                INSERT INTO platform_runs (run_id, thread_id, session_id, status, created_at, updated_at, payload_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
                 ON CONFLICT (run_id) DO UPDATE SET
+                    thread_id = EXCLUDED.thread_id,
                     session_id = EXCLUDED.session_id,
                     status = EXCLUDED.status,
                     updated_at = EXCLUDED.updated_at,
                     payload_json = EXCLUDED.payload_json
                 """,
-                (run.id, run.session_id, run.status, run.created_at, run.updated_at, json.dumps(payload, ensure_ascii=False)),
+                (run.id, run.thread_id, run.session_id, run.status, run.created_at, run.updated_at, json.dumps(payload, ensure_ascii=False)),
             )
+        if run.thread_id:
+            self.update_thread(run.thread_id, latest_run_id=run.id)
 
     def complete_run(self, run_id: str, state: AgentStateModel) -> AnalysisRunRecord:
         run = self.get_run(run_id)
         status = "completed"
         if state.errors:
             status = "failed"
+        elif any(item.status == "pending" for item in state.approvals):
+            status = "waiting_approval"
         elif state.parsed_intent and state.parsed_intent.clarification_required:
             status = "clarification_needed"
         updated = run.model_copy(update={"state": state, "status": status, "updated_at": now_utc()})
@@ -197,7 +300,7 @@ class PostgresPlatformStore:
 
     def update_run_state(self, run_id: str, *, status: str | None = None, **fields: Any) -> AnalysisRunRecord:
         run = self.get_run(run_id)
-        updated_state = AgentStateModel.model_validate({**run.state.model_dump(mode="python"), **fields})
+        updated_state = run.state.model_copy(update=fields)
         update_fields: dict[str, Any] = {"state": updated_state, "updated_at": now_utc()}
         if status is not None:
             update_fields["status"] = status
@@ -232,6 +335,21 @@ class PostgresPlatformStore:
             rows = cur.fetchall()
         return [RunEvent.model_validate(row[0]) for row in rows]
 
+    def list_runs_for_thread(self, thread_id: str) -> list[AnalysisRunRecord]:
+        self.get_thread(thread_id)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT payload_json
+                FROM platform_runs
+                WHERE thread_id = %s
+                ORDER BY updated_at DESC
+                """,
+                (thread_id,),
+            )
+            rows = cur.fetchall()
+        return [AnalysisRunRecord.model_validate(row[0]) for row in rows]
+
     def subscribe(self, run_id: str) -> asyncio.Queue[RunEvent]:
         queue: asyncio.Queue[RunEvent] = asyncio.Queue()
         self._subscribers.setdefault(run_id, []).append(queue)
@@ -241,6 +359,32 @@ class PostgresPlatformStore:
         subscribers = self._subscribers.get(run_id, [])
         if queue in subscribers:
             subscribers.remove(queue)
+
+    def get_runtime_config(self) -> AgentRuntimeConfig:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT payload_json FROM platform_runtime_config WHERE config_key = %s", ("default",))
+            row = cur.fetchone()
+        if row is None:
+            config = normalize_runtime_config(build_default_runtime_config())
+            self.save_runtime_config(config)
+            return config
+        return normalize_runtime_config(row[0])
+
+    def save_runtime_config(self, config: AgentRuntimeConfig) -> AgentRuntimeConfig:
+        normalized = normalize_runtime_config(config)
+        payload = normalized.model_dump(mode="json", by_alias=True)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO platform_runtime_config (config_key, updated_at, payload_json)
+                VALUES (%s, %s, %s::jsonb)
+                ON CONFLICT (config_key) DO UPDATE SET
+                    updated_at = EXCLUDED.updated_at,
+                    payload_json = EXCLUDED.payload_json
+                """,
+                ("default", now_utc(), json.dumps(payload, ensure_ascii=False)),
+            )
+        return normalized
 
     def save_geojson_artifact(
         self,

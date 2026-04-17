@@ -1,40 +1,41 @@
 // +-------------------------------------------------------------------------
 //
-//   地理智能平台 - 对话与任务面板
+//   地理智能平台 - REPL 对话面板
 //
 //   文件:       ChatPanel.tsx
 //
-//   日期:       2026年04月14日
-//   作者:       JamesLinYJ
+//   日期:       2026年04月16日
+//   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
 import { LoaderCircle } from 'lucide-react'
 
-import type { UserIntent } from '@geo-agent-platform/shared-types'
+import type { AgentRuntimeConfig, UserIntent } from '@geo-agent-platform/shared-types'
+import type { TranscriptEntry } from '../runTranscript'
 import { AppIcon } from './AppIcon'
 
-interface ProgressItem {
-  id: string
-  title: string
-  description: string
-  status: 'done' | 'active' | 'pending' | 'warning'
-}
-
 interface ChatPanelProps {
+  artifactCount: number
+  currentRunId?: string
+  runCreatedAt?: string
+  providerLabel: string
+  runStatus?: string
   query: string
   isSubmitting: boolean
   errorMessage?: string
   uploadedLayerName?: string
   intent?: UserIntent
-  progressItems: ReadonlyArray<ProgressItem>
+  transcriptEntries: ReadonlyArray<TranscriptEntry>
+  runtimeConfig?: AgentRuntimeConfig
   onQueryChange: (value: string) => void
   onSubmit: () => void
   onFillSample: (value: string) => void
   onUseTemplate: () => void
   onUpload: (file: File) => void
+  onSelectArtifact: (artifactId: string) => void
+  onResolveApproval: (approvalId: string, approved: boolean) => void
 }
 
-const QUICK_ACTIONS = ['生成热力图', '识别高密度区', '选址推荐'] as const
 const SAMPLE_QUERIES = [
   '查询巴黎地铁站 1 公里范围内的医院',
   '判断我上传的点是否落在柏林行政区内',
@@ -42,65 +43,63 @@ const SAMPLE_QUERIES = [
 ] as const
 
 export function ChatPanel({
+  artifactCount,
+  currentRunId,
+  runCreatedAt,
+  providerLabel,
+  runStatus,
   query,
   isSubmitting,
   errorMessage,
   uploadedLayerName,
   intent,
-  progressItems,
+  transcriptEntries,
+  runtimeConfig,
   onQueryChange,
   onSubmit,
   onFillSample,
   onUseTemplate,
   onUpload,
+  onSelectArtifact,
+  onResolveApproval,
 }: ChatPanelProps) {
-  // 聊天与任务提交面板。
-  const liveStatus =
-    progressItems.find((item) => item.status === 'active' || item.status === 'warning') ?? progressItems.at(-1)
-  const assistantIntro = intent?.clarificationRequired
-    ? '我已经识别到你的空间问题，不过当前还有一个地点或范围需要你确认，确认后我会继续把结果落到地图上。'
-    : uploadedLayerName
-      ? `我已经接入你上传的数据“${uploadedLayerName}”。你可以继续描述范围、目标对象和分析方式，我会自动组织步骤。`
-      : '你好，我是你的 GIS 助手。你可以直接告诉我想看哪个区域、哪些对象，以及希望做什么空间分析，我会把过程和结果展示在地图上。'
-  const userPromptPreview = query || '比如：查询某个区域内的医院、学校、站点关系，或者判断上传点位是否落在指定行政区内。'
+  const transcriptLabel =
+    runStatus === 'running'
+      ? '分析过程会在这里持续写入，工具调用、结果和待确认操作都会按真实顺序展开。'
+    : runStatus === 'waiting_approval'
+        ? '当前停在待确认节点，处理完成后会继续向下执行。'
+        : '新的空间分析任务会从这里开始记录。'
+  const workingLabel = runCreatedAt && runStatus === 'running' ? formatElapsedLabel(runCreatedAt) : null
+  const topicLabel = query.trim() || '新的空间分析任务'
+  const showSamples = !isSubmitting && transcriptEntries.length <= 1
+  const recordCount = transcriptEntries.filter((entry) => entry.kind !== 'user').length
+  const compactContextLabel = runtimeConfig?.context
+    ? `会延续最近 ${runtimeConfig.context.historyRunLimit} 轮任务与 ${runtimeConfig.context.eventWindow} 条关键记录`
+    : '会延续当前会话里的最近任务与结果'
 
   return (
     <div className="dc-chat-column">
-      <section className="dc-chat-shell">
-        <div className="dc-chat-shell__header">
-          <div className="dc-chat-shell__identity">
-            <div className="dc-avatar dc-avatar--assistant">
-              <AppIcon name="smart_toy" size={20} />
-            </div>
-            <div>
-              <strong>GIS 助手</strong>
-              <span>{intent?.clarificationRequired ? '等待你确认范围' : '地图分析会同步显示在右侧和地图上'}</span>
-            </div>
+      <section className="dc-chat-console">
+        <header className="dc-chat-console__header">
+          <div className="dc-chat-console__tabs">
+            <span className="dc-chat-console__tab dc-chat-console__tab--active">聊天</span>
+            <span className="dc-chat-console__tab">{providerLabel}</span>
           </div>
-          <div className={`dc-chat-shell__status dc-chat-shell__status--${liveStatus?.status ?? 'pending'}`}>
-            {liveStatus?.title ?? '待命'}
+          <div className="dc-chat-console__actions">
+            <span className="dc-chat-shell__status">{formatRunStatus(runStatus)}</span>
+            {currentRunId ? <span className="dc-chat-shell__status">任务 {currentRunId.slice(0, 8)}</span> : null}
           </div>
-        </div>
+        </header>
 
-        <div className="dc-chat-shell__intro">
-          <p>{assistantIntro}</p>
-          <div className="dc-chip-row">
-            {QUICK_ACTIONS.map((item, index) => (
-              <button
-                key={item}
-                className="dc-chip"
-                type="button"
-                onClick={() => onFillSample(SAMPLE_QUERIES[index] ?? SAMPLE_QUERIES[0])}
-              >
-                {item}
-              </button>
-            ))}
+        <div className="dc-chat-console__thread">
+          <div className="dc-chat-console__thread-main">
+            <span className="dc-chat-console__thread-path">← {topicLabel}</span>
+            <p>{transcriptLabel}</p>
           </div>
-        </div>
-
-        <div className="dc-chat-shell__query">
-          <div className="dc-chat-shell__query-label">当前问题</div>
-          <p>{userPromptPreview}</p>
+          <div className="dc-chat-console__thread-meta">
+            <span>{artifactCount} 个结果对象</span>
+            <span>{recordCount} 条执行记录</span>
+          </div>
         </div>
 
         {intent?.clarificationRequired ? (
@@ -118,15 +117,66 @@ export function ChatPanel({
 
         {errorMessage ? <div className="dc-error-banner">{errorMessage}</div> : null}
 
-        <div className="dc-stage-note">
-          <AppIcon name="insights" size={18} />
-          <div>
-            <strong>{liveStatus?.title ?? '等待开始分析'}</strong>
-            <p>{liveStatus?.description ?? '系统会根据你的问题自动拆解空间步骤，并把结果同步到地图和右侧摘要卡片。'}</p>
-          </div>
+        <div className="dc-chat-console__feed" aria-label="Agent transcript">
+          {transcriptEntries.length ? (
+            transcriptEntries.map((entry) => (
+              <article
+                key={entry.id}
+                className={`dc-chat-message dc-chat-message--${entry.kind === 'user' ? 'user' : 'assistant'} dc-chat-message--kind-${entry.kind} dc-chat-message--status-${entry.status}`}
+              >
+                <div className="dc-chat-message__meta">
+                  <span className={`dc-chat-message__kind dc-chat-message__kind--${entry.kind}`}>{entry.kind === 'user' ? '你' : formatKind(entry.kind)}</span>
+                  <span className={`dc-chat-message__status dc-chat-message__status--${entry.status}`}>{formatEntryStatus(entry.status)}</span>
+                  <time dateTime={entry.timestamp}>{formatEventTime(entry.timestamp)}</time>
+                </div>
+                <strong>{entry.title}</strong>
+                <p>{entry.body}</p>
+                {entry.commandText ? (
+                  <div className="dc-chat-message__command-block">
+                    <span className="dc-chat-message__section-label">执行命令</span>
+                    <pre className="dc-chat-message__command">{entry.commandText}</pre>
+                  </div>
+                ) : null}
+                {entry.recoveryNote ? <p className="dc-chat-message__recovery">恢复说明：{entry.recoveryNote}</p> : null}
+                {entry.details ? (
+                  <details className="dc-chat-message__details">
+                    <summary>{detailSummaryLabel(entry)}</summary>
+                    <pre>{JSON.stringify(entry.details, null, 2)}</pre>
+                  </details>
+                ) : null}
+                {entry.kind === 'artifact' && entry.artifactId ? (
+                  <div className="dc-chat-message__actions">
+                    <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onSelectArtifact(entry.artifactId!)}>
+                      在地图中查看
+                    </button>
+                  </div>
+                ) : null}
+                {entry.kind === 'approval' && entry.approvalId ? (
+                  <div className="dc-chat-message__actions">
+                    <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onResolveApproval(entry.approvalId!, true)}>
+                      批准
+                    </button>
+                    <button type="button" className="dc-link-button" onClick={() => onResolveApproval(entry.approvalId!, false)}>
+                      拒绝
+                    </button>
+                  </div>
+                ) : null}
+              </article>
+            ))
+          ) : (
+            <div className="dc-transcript-empty">
+              <strong>等待第一条运行记录</strong>
+              <p>提交空间问题后，这里会按真实顺序展示分析过程、工具调用、结果产物和待确认操作。</p>
+            </div>
+          )}
         </div>
 
-        <div className="dc-composer dc-composer--inline">
+        <div className="dc-chat-console__footer">
+          {workingLabel ? <div className="dc-chat-console__footer-note">已运行 {workingLabel}</div> : null}
+          <div className="dc-chat-console__footer-hint">{uploadedLayerName ? `已接入数据：${uploadedLayerName}` : compactContextLabel}</div>
+        </div>
+
+        <div className="dc-composer dc-composer--repl">
           <div className="dc-composer__field">
             <AppIcon name="auto_awesome" size={18} />
             <input
@@ -164,18 +214,75 @@ export function ChatPanel({
               使用模板
             </button>
           </div>
-
-          {uploadedLayerName ? <p className="dc-composer__hint">已接入你的数据：{uploadedLayerName}</p> : null}
         </div>
       </section>
 
-      <div className="dc-sample-row" aria-label="推荐问题">
-        {SAMPLE_QUERIES.map((sample) => (
-          <button key={sample} type="button" className="dc-sample-pill" onClick={() => onFillSample(sample)}>
-            {sample}
-          </button>
-        ))}
-      </div>
+      {showSamples ? (
+        <div className="dc-sample-row" aria-label="推荐问题">
+          {SAMPLE_QUERIES.map((sample) => (
+            <button key={sample} type="button" className="dc-sample-pill" onClick={() => onFillSample(sample)}>
+              {sample}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
+}
+
+function formatKind(kind: TranscriptEntry['kind']) {
+  if (kind === 'user') return '用户'
+  if (kind === 'assistant') return '助手'
+  if (kind === 'supervisor') return '主智能体'
+  if (kind === 'subagent') return '子智能体'
+  if (kind === 'tool') return '工具调用'
+  if (kind === 'approval') return '审批'
+  if (kind === 'artifact') return '结果产物'
+  return '错误'
+}
+
+function detailSummaryLabel(entry: TranscriptEntry) {
+  if (entry.kind === 'tool') return '展开工具参数与返回'
+  if (entry.kind === 'approval') return '展开审批上下文'
+  if (entry.kind === 'artifact') return '展开结果元数据'
+  if (entry.kind === 'error') return '展开错误详情'
+  if (entry.kind === 'supervisor' || entry.kind === 'subagent') return '展开运行细节'
+  return '展开详细记录'
+}
+
+function formatEntryStatus(status: TranscriptEntry['status']) {
+  if (status === 'running') return '进行中'
+  if (status === 'completed') return '已完成'
+  if (status === 'blocked') return '待处理'
+  if (status === 'failed') return '失败'
+  return '待命'
+}
+
+function formatRunStatus(status?: string) {
+  if (status === 'running') return '执行中'
+  if (status === 'waiting_approval') return '待审批'
+  if (status === 'completed') return '已完成'
+  if (status === 'failed') return '失败'
+  if (status === 'clarification_needed') return '待澄清'
+  if (status === 'cancelled') return '已取消'
+  return '准备就绪'
+}
+
+function formatEventTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '--:--:--' : date.toLocaleTimeString('zh-CN')
+}
+
+function formatElapsedLabel(value: string) {
+  const started = new Date(value).getTime()
+  if (Number.isNaN(started)) {
+    return '--'
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - started) / 1000))
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds} 秒`
+  }
+  const minutes = Math.floor(elapsedSeconds / 60)
+  const seconds = elapsedSeconds % 60
+  return `${minutes} 分 ${seconds} 秒`
 }

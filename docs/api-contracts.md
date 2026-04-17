@@ -14,6 +14,12 @@
 - `GET /api/v1/analysis/{run_id}`
 - `GET /api/v1/analysis/{run_id}/events`
 - `GET /api/v1/analysis/{run_id}/artifacts`
+- `POST /api/v2/threads`
+- `GET /api/v2/threads/{thread_id}`
+- `POST /api/v2/threads/{thread_id}/runs`
+- `GET /api/v2/runs/{run_id}`
+- `GET /api/v2/runs/{run_id}/events`
+- `POST /api/v2/runs/{run_id}/approvals/{approval_id}`
 - `GET /api/v1/qgis/models`
 - `POST /api/v1/qgis/process`
 - `POST /api/v1/qgis/models/run`

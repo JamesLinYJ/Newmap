@@ -62,6 +62,7 @@ interface DetailPanelProps {
   onCopyShareLink: () => void
   onProviderChange: (value: string) => void
   onModelChange: (value: string) => void
+  onResolveApproval: (approvalId: string, approved: boolean) => void
 }
 
 export function DetailPanel({
@@ -93,6 +94,7 @@ export function DetailPanel({
   onCopyShareLink,
   onProviderChange,
   onModelChange,
+  onResolveApproval,
 }: DetailPanelProps) {
   // 右侧详情面板
   //
@@ -114,6 +116,9 @@ export function DetailPanel({
   const metricScore = featureCount ? (92 + Math.min(featureCount, 8) * 0.55).toFixed(1) : '--'
   const growthLabel = runStatus === 'completed' ? `+${Math.max(featureCount, 1) * 6.25}%` : '等待结果'
   const primaryItems = artifacts.slice(0, 2)
+  const todoItems = agentState?.todos ?? []
+  const subAgents = agentState?.subAgents ?? []
+  const approvals = agentState?.approvals ?? []
   const availableModelName =
     qgisModels?.models.find((item) => item === 'buffer_and_intersect') ?? qgisModels?.models[0] ?? null
   const overlayCandidates = artifacts.filter((artifact) => artifact.artifactId !== selectedArtifact?.artifactId)
@@ -209,6 +214,83 @@ export function DetailPanel({
               </article>
             </div>
           </section>
+
+          {todoItems.length || subAgents.length || approvals.length ? (
+            <section className="dc-card">
+              <div className="dc-card__header">
+                <div>
+                  <div className="dc-card__eyebrow">运行状态</div>
+                  <h3>Deep Agents 状态</h3>
+                </div>
+                <div className="dc-card__icon">
+                  <Sparkles size={18} aria-hidden="true" />
+                </div>
+              </div>
+
+              {todoItems.length ? (
+                <div className="dc-panel-section">
+                  <div className="dc-panel-section__title">待办清单</div>
+                  <div className="dc-panel-list">
+                    {todoItems.slice(0, 4).map((todo) => (
+                      <div key={todo.todoId} className="dc-panel-item dc-panel-item--static">
+                        <div>
+                          <strong>{todo.title}</strong>
+                          <span>{todo.description ?? '系统正在持续更新这个待办的执行状态。'}</span>
+                        </div>
+                        <span className="dc-pill-meta">{todo.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {subAgents.length ? (
+                <div className="dc-panel-section">
+                  <div className="dc-panel-section__title">子智能体</div>
+                  <div className="dc-panel-list">
+                    {subAgents.map((agent) => (
+                      <div key={agent.agentId} className="dc-panel-item dc-panel-item--static">
+                        <div>
+                          <strong>{agent.name}</strong>
+                          <span>{agent.latestMessage ?? agent.summary}</span>
+                        </div>
+                        <span className="dc-pill-meta">{agent.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {approvals.length ? (
+                <div className="dc-panel-section">
+                  <div className="dc-panel-section__title">审批</div>
+                  <div className="dc-panel-list">
+                    {approvals.map((approval) => (
+                      <div key={approval.approvalId} className="dc-panel-item dc-panel-item--static">
+                        <div>
+                          <strong>{approval.title}</strong>
+                          <span>{approval.description}</span>
+                        </div>
+                        <div className="dc-card__actions">
+                          <span className="dc-pill-meta">{approval.status}</span>
+                          {approval.status === 'pending' ? (
+                            <>
+                              <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onResolveApproval(approval.approvalId, true)}>
+                                批准
+                              </button>
+                              <button type="button" className="dc-link-button" onClick={() => onResolveApproval(approval.approvalId, false)}>
+                                拒绝
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           {publishLinks.length ? (
             <section className="dc-card dc-card--links">
@@ -351,6 +433,40 @@ export function DetailPanel({
               )}
             </div>
           </div>
+
+          {todoItems.length ? (
+            <div className="dc-panel-section">
+              <div className="dc-panel-section__title">待办状态</div>
+              <div className="dc-panel-list">
+                {todoItems.map((todo) => (
+                  <div key={todo.todoId} className="dc-panel-item dc-panel-item--static">
+                    <div>
+                      <strong>{todo.title}</strong>
+                      <span>{todo.description ?? '系统会持续回写这个待办的执行信息。'}</span>
+                    </div>
+                    <span className="dc-pill-meta">{todo.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {subAgents.length ? (
+            <div className="dc-panel-section">
+              <div className="dc-panel-section__title">子智能体状态</div>
+              <div className="dc-panel-list">
+                {subAgents.map((agent) => (
+                  <div key={agent.agentId} className="dc-panel-item dc-panel-item--static">
+                    <div>
+                      <strong>{agent.name}</strong>
+                      <span>{agent.latestMessage ?? agent.summary}</span>
+                    </div>
+                    <span className="dc-pill-meta">{agent.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -541,9 +657,9 @@ export function DetailPanel({
                 <span>模型 Provider</span>
                 <select value={provider} onChange={(event) => onProviderChange(event.target.value)}>
                   {providers.map((item) => (
-                    <option key={item.provider} value={item.provider} disabled={!item.configured && item.provider !== 'demo'}>
+                    <option key={item.provider} value={item.provider} disabled={!item.configured}>
                       {item.displayName}
-                      {!item.configured && item.provider !== 'demo' ? '（未配置）' : ''}
+                      {!item.configured ? '（未配置）' : ''}
                     </option>
                   ))}
                 </select>
@@ -645,6 +761,9 @@ function formatEventTime(timestamp: string) {
 function formatRunStatus(status: string) {
   if (status === 'completed') {
     return '已完成'
+  }
+  if (status === 'waiting_approval') {
+    return '待审批'
   }
   if (status === 'failed') {
     return '失败'

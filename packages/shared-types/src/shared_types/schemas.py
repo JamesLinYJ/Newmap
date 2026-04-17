@@ -42,6 +42,14 @@ class EventType(str, Enum):
     STEP_STARTED = "step.started"
     STEP_COMPLETED = "step.completed"
     ARTIFACT_CREATED = "artifact.created"
+    SUBAGENT_CREATED = "subagent.created"
+    SUBAGENT_UPDATED = "subagent.updated"
+    MESSAGE_DELTA = "message.delta"
+    LOOP_UPDATED = "loop.updated"
+    TODO_UPDATED = "todo.updated"
+    TOOL_STARTED = "tool.started"
+    TOOL_COMPLETED = "tool.completed"
+    APPROVAL_REQUIRED = "approval.required"
     WARNING_RAISED = "warning.raised"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
@@ -88,6 +96,39 @@ class ToolCall(CamelModel):
     completed_at: datetime | None = None
 
 
+class TodoItem(CamelModel):
+    todo_id: str
+    title: str
+    status: str = "pending"
+    description: str | None = None
+    owner_agent_id: str | None = None
+    step_id: str | None = None
+
+
+class SubAgentState(CamelModel):
+    agent_id: str
+    name: str
+    role: str
+    status: str = "pending"
+    summary: str
+    step_ids: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    current_step_id: str | None = None
+    latest_message: str | None = None
+
+
+class ApprovalRequest(CamelModel):
+    approval_id: str
+    action: str
+    title: str
+    description: str
+    status: str = "pending"
+    artifact_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
 class ArtifactRef(CamelModel):
     artifact_id: str
     run_id: str
@@ -101,6 +142,57 @@ class AgentFinalResponse(CamelModel):
     summary: str
     limitations: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
+
+
+class RuntimeSubAgentConfig(CamelModel):
+    agent_id: str
+    name: str
+    role: str
+    summary: str
+    system_prompt: str | None = None
+    tools: list[str] = Field(default_factory=list)
+
+
+class SupervisorRuntimeConfig(CamelModel):
+    name: str = "geo_agent_supervisor"
+    system_prompt: str = ""
+    approval_interrupt_tools: list[str] = Field(default_factory=list)
+
+
+class RuntimeUiConfig(CamelModel):
+    transcript_max_entries: int = 40
+    show_internal_reasoning_labels: bool = True
+    event_grouping_window_ms: int = 1500
+
+
+class RuntimeContextConfig(CamelModel):
+    memory_file_paths: list[str] = Field(default_factory=lambda: ["/AGENTS.md", "/THREAD_CONTEXT.md"])
+    history_run_limit: int = 4
+    event_window: int = 24
+    tool_call_window: int = 8
+    artifact_window: int = 6
+    warning_window: int = 6
+
+
+class AgentRuntimeConfig(CamelModel):
+    default_publish_project_key: str = "geo-agent-workspace"
+    loop_trace_limit: int = 80
+    supervisor: SupervisorRuntimeConfig = Field(default_factory=SupervisorRuntimeConfig)
+    sub_agents: list[RuntimeSubAgentConfig] = Field(default_factory=list)
+    ui: RuntimeUiConfig = Field(default_factory=RuntimeUiConfig)
+    context: RuntimeContextConfig = Field(default_factory=RuntimeContextConfig)
+
+
+class LoopTraceEntry(CamelModel):
+    iteration: int
+    phase: str
+    title: str
+    description: str
+    status: str = "running"
+    timestamp: datetime
+    agent_id: str | None = None
+    tool_name: str | None = None
+    step_id: str | None = None
 
 
 class LayerDescriptor(CamelModel):
@@ -127,7 +219,7 @@ class BasemapDescriptor(CamelModel):
 
 
 class PublishRequest(CamelModel):
-    project_key: str | None = "demo-workspace"
+    project_key: str | None = None
 
     @field_validator("project_key")
     @classmethod
@@ -147,6 +239,7 @@ class PublishRequest(CamelModel):
 class RunEvent(CamelModel):
     event_id: str
     run_id: str
+    thread_id: str | None = None
     type: EventType
     message: str
     timestamp: datetime
@@ -155,12 +248,19 @@ class RunEvent(CamelModel):
 
 class AgentStateModel(CamelModel):
     session_id: str
+    thread_id: str | None = None
     user_query: str
-    model_provider: str = "demo"
+    model_provider: str | None = None
     model_name: str | None = None
     parsed_intent: UserIntent | None = None
     execution_plan: ExecutionPlan | None = None
     current_step: int = 0
+    loop_iteration: int = 0
+    loop_phase: str = "idle"
+    loop_trace: list[LoopTraceEntry] = Field(default_factory=list)
+    todos: list[TodoItem] = Field(default_factory=list)
+    sub_agents: list[SubAgentState] = Field(default_factory=list)
+    approvals: list[ApprovalRequest] = Field(default_factory=list)
     tool_results: list[ToolCall] = Field(default_factory=list)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -175,15 +275,27 @@ class SessionRecord(CamelModel):
     created_at: datetime
     status: str = "active"
     share_token: str
+    latest_thread_id: str | None = None
     latest_run_id: str | None = None
     latest_uploaded_layer_key: str | None = None
 
 
-class AnalysisRunRecord(CamelModel):
+class AgentThreadRecord(CamelModel):
     id: str
     session_id: str
+    title: str
+    status: str = "active"
+    created_at: datetime
+    updated_at: datetime
+    latest_run_id: str | None = None
+
+
+class AnalysisRunRecord(CamelModel):
+    id: str
+    thread_id: str | None = None
+    session_id: str
     user_query: str
-    model_provider: str = "demo"
+    model_provider: str | None = None
     model_name: str | None = None
     status: str = "queued"
     created_at: datetime

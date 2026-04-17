@@ -12,22 +12,8 @@ from gis_common.geojson import ensure_feature_collection, load_geojson
 from gis_common.ids import make_id
 from shared_types.schemas import LayerDescriptor
 
+from .layer_catalog import resolve_catalog_layer_key
 from .postgis_catalog import PostGISLayerCatalog
-
-
-SEMANTIC_LAYER_ALIASES = {
-    "医院": "hospitals",
-    "hospital": "hospitals",
-    "hospitals": "hospitals",
-    "poi": "candidate_sites",
-    "候选点": "candidate_sites",
-    "候选点位": "candidate_sites",
-    "地铁站": "metro_stations",
-    "metro": "metro_stations",
-    "metro_stations": "metro_stations",
-    "行政区": "admin_boundaries",
-    "边界": "admin_boundaries",
-}
 
 
 class PostGISLayerRepository(PostGISLayerCatalog):
@@ -53,7 +39,7 @@ class PostGISLayerRepository(PostGISLayerCatalog):
                 self._upsert_metadata(cur, descriptor, table_name)
 
     def resolve_layer_key(self, layer_key_or_name: str) -> str:
-        return SEMANTIC_LAYER_ALIASES.get(layer_key_or_name, layer_key_or_name)
+        return resolve_catalog_layer_key(layer_key_or_name, [descriptor.layer_key for descriptor in self.list_layers()])
 
     def register_upload(self, session_id: str, filename: str, payload: bytes) -> LayerDescriptor:
         collection = _parse_upload_payload(filename, payload)

@@ -374,14 +374,16 @@ async def test_dynamic_qgis_algorithm_tool_can_run_through_generic_executor(api_
 
 @pytest.mark.asyncio
 async def test_publish_endpoint_persists_links_to_artifact_metadata(api_client: httpx.AsyncClient):
+    default_project_key = app.state.store.get_runtime_config().default_publish_project_key
+
     async def publish_artifact(artifact_id: str, artifact_name: str, project_key: str, *, collection: dict[str, Any]):
         assert artifact_id == "artifact_publish_demo"
         assert artifact_name == "待发布结果"
-        assert project_key == "demo-workspace"
+        assert project_key == default_project_key
         assert collection["type"] == "FeatureCollection"
         return {
             "geojsonUrl": "http://example.test/data/artifact_publish_demo.geojson",
-            "wmsCapabilitiesUrl": "http://example.test/ows/demo-workspace?SERVICE=WMS&REQUEST=GetCapabilities",
+            "wmsCapabilitiesUrl": f"http://example.test/ows/{default_project_key}?SERVICE=WMS&REQUEST=GetCapabilities",
         }
 
     app.state.publisher.publish_artifact = publish_artifact
@@ -399,7 +401,7 @@ async def test_publish_endpoint_persists_links_to_artifact_metadata(api_client: 
 
     response = await api_client.post(
         f"/api/v1/results/{artifact.artifact_id}/publish",
-        json={"projectKey": "demo-workspace"},
+        json={"projectKey": default_project_key},
     )
 
     assert response.status_code == 200

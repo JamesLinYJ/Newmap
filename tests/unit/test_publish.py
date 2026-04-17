@@ -31,6 +31,7 @@ def test_map_publisher_returns_project_scoped_service_urls(tmp_path: Path):
         "http://127.0.0.1:8080",
         app_base_url="http://127.0.0.1:8001",
         qgis_runtime=runtime,
+        default_project_key="geo-agent-workspace",
     )
 
     payload = asyncio.run(

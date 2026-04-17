@@ -12,6 +12,7 @@ import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffe
 import { Route, Routes, useLocation } from 'react-router-dom'
 
 import type {
+  AgentRuntimeConfig,
   AgentState,
   AnalysisRun,
   ArtifactRef,
@@ -33,6 +34,7 @@ import {
   getArtifactGeoJson,
   getArtifactMetadata,
   getRun,
+  getRuntimeConfig,
   getSession,
   getSystemComponents,
   listBasemaps,
@@ -44,15 +46,18 @@ import {
   listQgisModels,
   openRunEventStream,
   publishArtifact,
+  resolveApproval,
   runQgisModel,
   runQgisProcess,
   runTool,
   startAnalysis,
   upsertToolCatalogEntry,
+  updateRuntimeConfig,
   uploadLayer,
 } from './api'
 import './App.css'
 import { pickArtifactPublishResult, pickPreferredArtifactId } from './artifactSelection'
+import { deriveRunTranscript, pickTranscriptHeadline } from './runTranscript'
 import { ChatPanel } from './components/ChatPanel'
 import { DetailPanel } from './components/DetailPanel'
 import { AppIcon, type AppIconName } from './components/AppIcon'
@@ -105,19 +110,12 @@ function App() {
   const [events, setEvents] = useState<RunEvent[]>([])
   const [layers, setLayers] = useState<LayerDescriptor[]>([])
   const [basemaps, setBasemaps] = useState<BasemapDescriptor[]>([FALLBACK_BASEMAP])
-  const [providers, setProviders] = useState<ModelProviderDescriptor[]>([
-    {
-      provider: 'demo',
-      displayName: 'Demo Heuristics',
-      configured: true,
-      defaultModel: null,
-      capabilities: ['chat', 'structured', 'stream', 'repair_tool_json'],
-    },
-  ])
+  const [providers, setProviders] = useState<ModelProviderDescriptor[]>([])
   const [systemComponents, setSystemComponents] = useState<SystemComponentsStatus>()
   const [qgisModels, setQgisModels] = useState<QgisModelsResponse>()
   const [availableTools, setAvailableTools] = useState<ToolDescriptor[]>([])
   const [toolCatalogEntries, setToolCatalogEntries] = useState<Array<Record<string, unknown>>>([])
+  const [runtimeConfig, setRuntimeConfig] = useState<AgentRuntimeConfig>()
   const [sessionRuns, setSessionRuns] = useState<AnalysisRun[]>([])
   const [artifacts, setArtifacts] = useState<ArtifactRef[]>([])
   const [artifactData, setArtifactData] = useState<Record<string, GeoJSON.FeatureCollection>>({})
@@ -129,7 +127,7 @@ function App() {
   const [isQgisSubmitting, setIsQgisSubmitting] = useState(false)
   const [isToolCatalogSubmitting, setIsToolCatalogSubmitting] = useState(false)
   const [uiError, setUiError] = useState<string>()
-  const [provider, setProvider] = useState('demo')
+  const [provider, setProvider] = useState('gemini')
   const [model, setModel] = useState('')
   const [selectedBasemapKey, setSelectedBasemapKey] = useState('osm')
   const [activeNav, setActiveNav] = useState<PrimaryNav>('analysis')
@@ -139,6 +137,7 @@ function App() {
 
   const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId)
   const publishResult = pickArtifactPublishResult(selectedArtifactId, artifacts, artifactMetadata)
+  const providerLabel = providers.find((item) => item.provider === provider)?.displayName ?? provider
   const progressItems = buildProgressItems({
     runStatus: run?.status,
     intent,
@@ -146,6 +145,15 @@ function App() {
     artifacts,
     events: deferredEvents,
   })
+  const transcriptEntries = deriveRunTranscript({
+    run,
+    agentState,
+    events: deferredEvents,
+    artifacts,
+    query,
+    runtimeConfig,
+  })
+  const transcriptHeadline = pickTranscriptHeadline(transcriptEntries, run?.status)
   const selectedBasemap = basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? FALLBACK_BASEMAP
   const primaryActionLabel = selectedArtifactId ? '发布结果' : '开始分析'
 
@@ -214,7 +222,7 @@ function App() {
         setIntent(latestRun.state.parsedIntent)
         setExecutionPlan(latestRun.state.executionPlan)
         setArtifacts(latestRun.state.artifacts)
-        setProvider(latestRun.modelProvider ?? 'demo')
+        setProvider(latestRun.modelProvider ?? 'gemini')
         setModel(latestRun.modelName ?? '')
         const preferredArtifactId = pickPreferredArtifactId(latestRun.state.artifacts)
         setSelectedArtifactId(preferredArtifactId)
@@ -385,13 +393,23 @@ function App() {
           setProviders(providerList)
           const preferred =
             providerList.find((item) => item.provider === 'gemini' && item.configured) ??
-            providerList.find((item) => item.provider === 'demo') ??
+            providerList.find((item) => item.configured) ??
             providerList[0]
 
           if (preferred) {
             setProvider(preferred.provider)
             setModel(preferred.defaultModel ?? '')
           }
+        })
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    void getRuntimeConfig()
+      .then((loadedRuntimeConfig) => {
+        startTransition(() => {
+          setRuntimeConfig(loadedRuntimeConfig)
         })
       })
       .catch(() => {})
@@ -406,13 +424,14 @@ function App() {
       return
     }
 
-    void Promise.all([getSystemComponents(), listQgisModels(), listTools(), listToolCatalogEntries()])
-      .then(([components, modelList, tools, catalogEntries]) => {
+    void Promise.all([getSystemComponents(), listQgisModels(), listTools(), listToolCatalogEntries(), getRuntimeConfig()])
+      .then(([components, modelList, tools, catalogEntries, loadedRuntimeConfig]) => {
         startTransition(() => {
           setSystemComponents(components)
           setQgisModels(modelList)
           setAvailableTools(tools)
           setToolCatalogEntries(catalogEntries)
+          setRuntimeConfig(loadedRuntimeConfig)
         })
       })
       .catch((error) => {
@@ -421,17 +440,19 @@ function App() {
   }, [location.pathname, panelMode])
 
   const refreshToolingState = useCallback(async () => {
-    const [components, modelList, tools, catalogEntries] = await Promise.all([
+    const [components, modelList, tools, catalogEntries, loadedRuntimeConfig] = await Promise.all([
       getSystemComponents(),
       listQgisModels(),
       listTools(),
       listToolCatalogEntries(),
+      getRuntimeConfig(),
     ])
     startTransition(() => {
       setSystemComponents(components)
       setQgisModels(modelList)
       setAvailableTools(tools)
       setToolCatalogEntries(catalogEntries)
+      setRuntimeConfig(loadedRuntimeConfig)
     })
   }, [])
 
@@ -562,6 +583,11 @@ function App() {
     }
 
     try {
+      const selectedProvider = providers.find((item) => item.provider === provider)
+      if (selectedProvider && !selectedProvider.configured) {
+        setUiError(`${selectedProvider.displayName} 尚未配置，当前不能提交分析。`)
+        return
+      }
       setUiError(undefined)
       setIsSubmitting(true)
       setActiveNav('analysis')
@@ -595,7 +621,7 @@ function App() {
       setUiError(formatUiError(error, '任务提交失败。'))
       setIsSubmitting(false)
     }
-  }, [model, provider, query, session])
+  }, [model, provider, providers, query, session])
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -627,7 +653,7 @@ function App() {
     // 让详情面板里的服务状态和链接区与最新发布结果保持一致。
     try {
       setUiError(undefined)
-      const result = await publishArtifact(artifactId, { projectKey: 'demo-workspace' })
+      const result = await publishArtifact(artifactId, { projectKey: runtimeConfig?.defaultPublishProjectKey })
       setArtifactMetadata((current) => ({
         ...current,
         [artifactId]: {
@@ -639,7 +665,24 @@ function App() {
     } catch (error) {
       setUiError(formatUiError(error, '发布失败。'))
     }
-  }, [])
+  }, [runtimeConfig?.defaultPublishProjectKey])
+
+  const handleResolveApproval = useCallback(
+    async (approvalId: string, approved: boolean) => {
+      if (!run?.id) {
+        return
+      }
+
+      try {
+        setUiError(undefined)
+        await resolveApproval(run.id, approvalId, approved)
+        await hydrateRunState(run.id)
+      } catch (error) {
+        setUiError(formatUiError(error, approved ? '审批通过失败。' : '审批拒绝失败。'))
+      }
+    },
+    [hydrateRunState, run?.id],
+  )
 
   const handleRunQgisProcess = useCallback(
     async (algorithmId: string, distance?: number) => {
@@ -769,6 +812,18 @@ function App() {
     [refreshToolingState],
   )
 
+  const handleSaveRuntimeConfig = useCallback(async (nextConfig: AgentRuntimeConfig) => {
+    try {
+      setUiError(undefined)
+      const saved = await updateRuntimeConfig(nextConfig)
+      startTransition(() => {
+        setRuntimeConfig(saved)
+      })
+    } catch (error) {
+      setUiError(formatUiError(error, '运行时配置保存失败。'))
+    }
+  }, [])
+
   const handleDeleteToolCatalogEntry = useCallback(
     async (tool: ToolDescriptor) => {
       try {
@@ -825,24 +880,33 @@ function App() {
           path="/"
           element={
             <div className="digital-cartographer">
-              <TopBar activeNav={activeNav} onNavChange={handleNavChange} onPrimaryAction={async () => {
-                if (selectedArtifactId) {
-                  setPanelMode('export')
-                  await handlePublish(selectedArtifactId)
-                  return
-                }
-                if (query.trim()) {
-                  await handleSubmit()
-                  return
-                }
-                focusQueryInput()
-              }} primaryActionLabel={primaryActionLabel} />
+              <TopBar
+                activeNav={activeNav}
+                artifactCount={artifacts.length}
+                providerLabel={providerLabel}
+                runStatusLabel={formatTopBarRunStatus(run?.status)}
+                onNavChange={handleNavChange}
+                onPrimaryAction={async () => {
+                  if (selectedArtifactId) {
+                    setPanelMode('export')
+                    await handlePublish(selectedArtifactId)
+                    return
+                  }
+                  if (query.trim()) {
+                    await handleSubmit()
+                    return
+                  }
+                  focusQueryInput()
+                }}
+                primaryActionLabel={primaryActionLabel}
+              />
 
               <div className="digital-cartographer__body">
                 <aside className="dc-sidebar" aria-label="工作空间导航">
                   <div className="dc-sidebar__intro">
+                    <div className="dc-sidebar__eyebrow">Agent Workspace</div>
                     <h2>工作空间</h2>
-                    <p>GIS 智能助手</p>
+                    <p>GIS 智能助手会把查询、空间分析、发布和审批统一组织在同一个工作台里。</p>
                   </div>
                   <nav className="dc-sidebar__nav">
                     {SIDEBAR_ITEMS.map((item) => (
@@ -858,18 +922,60 @@ function App() {
                       </button>
                     ))}
                   </nav>
+                  <div className="dc-sidebar__metrics" aria-label="工作空间概览">
+                    <article className="dc-sidebar__metric-card">
+                      <span>运行状态</span>
+                      <strong>{formatTopBarRunStatus(run?.status)}</strong>
+                      <p>{run?.id ? `任务 ${run.id.slice(0, 8)}…` : '等待新的分析请求'}</p>
+                    </article>
+                    <article className="dc-sidebar__metric-card">
+                      <span>数据与底图</span>
+                      <strong>
+                        {artifacts.length + layers.length} 个对象
+                      </strong>
+                      <p>{selectedBasemap.name} · {uploadedLayerName ?? '未上传自定义数据'}</p>
+                    </article>
+                  </div>
                 </aside>
 
                 <main className="dc-main">
+                  <section className="dc-workspace-bar" aria-label="当前工作台概览">
+                    <article className="dc-workspace-bar__card">
+                      <span>当前模式</span>
+                      <strong>{formatPrimaryNav(activeNav)}</strong>
+                      <p>{formatPanelMode(panelMode)} 已准备好承接当前任务。</p>
+                    </article>
+                    <article className="dc-workspace-bar__card">
+                      <span>当前模型</span>
+                      <strong>{providerLabel}</strong>
+                      <p>{model || '使用默认模型'} · 正在处理当前分析任务</p>
+                    </article>
+                    <article className="dc-workspace-bar__card">
+                      <span>空间结果</span>
+                      <strong>{artifacts.length} 个产物</strong>
+                      <p>{selectedArtifact?.name ?? '当前还没有选中的结果图层'}</p>
+                    </article>
+                    <article className="dc-workspace-bar__card">
+                      <span>系统进度</span>
+                      <strong>{transcriptHeadline.title}</strong>
+                      <p>{transcriptHeadline.body}</p>
+                    </article>
+                  </section>
                   <div className="dc-main__workspace">
                     <div className="dc-main__assistant">
                       <ChatPanel
+                        artifactCount={artifacts.length}
+                        runStatus={run?.status}
+                        providerLabel={providerLabel}
                         query={query}
+                        currentRunId={run?.id}
+                        runCreatedAt={run?.createdAt}
                         isSubmitting={isSubmitting}
                         errorMessage={uiError}
                         uploadedLayerName={uploadedLayerName}
                         intent={intent}
-                        progressItems={progressItems}
+                        transcriptEntries={transcriptEntries}
+                        runtimeConfig={runtimeConfig}
                         onQueryChange={setQuery}
                         onSubmit={() => {
                           void handleSubmit()
@@ -879,12 +985,18 @@ function App() {
                         onUpload={(file) => {
                           void handleUpload(file)
                         }}
+                        onSelectArtifact={setSelectedArtifactId}
+                        onResolveApproval={(approvalId, approved) => {
+                          void handleResolveApproval(approvalId, approved)
+                        }}
                       />
                     </div>
 
                     <div className="dc-main__map">
                       <MapCanvas
+                        artifactCount={artifacts.length}
                         basemaps={basemaps}
+                        runStatus={run?.status}
                         selectedBasemapKey={selectedBasemapKey}
                         onSelectBasemap={setSelectedBasemapKey}
                         layers={mapLayers}
@@ -938,6 +1050,9 @@ function App() {
                         }}
                         onProviderChange={handleProviderChange}
                         onModelChange={setModel}
+                        onResolveApproval={(approvalId, approved) => {
+                          void handleResolveApproval(approvalId, approved)
+                        }}
                       />
                     </div>
                   </div>
@@ -973,6 +1088,7 @@ function App() {
               publishResult={publishResult}
               toolRunResult={toolRunResult}
               toolCatalogEntries={toolCatalogEntries}
+              runtimeConfig={runtimeConfig}
               systemComponents={systemComponents}
               qgisModels={qgisModels}
               tools={availableTools}
@@ -1005,6 +1121,9 @@ function App() {
               onDeleteToolCatalogEntry={(tool) => {
                 void handleDeleteToolCatalogEntry(tool)
               }}
+              onSaveRuntimeConfig={(nextConfig) => {
+                void handleSaveRuntimeConfig(nextConfig)
+              }}
             />
           }
         />
@@ -1014,6 +1133,63 @@ function App() {
 }
 
 export default App
+
+function formatTopBarRunStatus(status?: string) {
+  if (status === 'completed') {
+    return '分析完成'
+  }
+  if (status === 'waiting_approval') {
+    return '待审批'
+  }
+  if (status === 'running') {
+    return '执行中'
+  }
+  if (status === 'failed') {
+    return '运行失败'
+  }
+  if (status === 'clarification_needed') {
+    return '待澄清'
+  }
+  if (status === 'cancelled') {
+    return '已取消'
+  }
+  return '准备就绪'
+}
+
+function formatPrimaryNav(nav: PrimaryNav) {
+  if (nav === 'analysis') {
+    return '分析工作台'
+  }
+  if (nav === 'layers') {
+    return '图层视图'
+  }
+  if (nav === 'history') {
+    return '历史追踪'
+  }
+  return '计算扩展'
+}
+
+function formatPanelMode(mode: PanelMode) {
+  if (mode === 'summary') {
+    return '结果摘要'
+  }
+  if (mode === 'layers') {
+    return '图层明细'
+  }
+  if (mode === 'history') {
+    return '执行历史'
+  }
+  if (mode === 'compute') {
+    return '计算工作区'
+  }
+  if (mode === 'sources') {
+    return '数据源面板'
+  }
+  if (mode === 'export') {
+    return '导出面板'
+  }
+  return '系统配置'
+}
 
 function syncUrl(sessionId: string, runId: string) {
   const url = new URL(window.location.href)
@@ -1072,11 +1248,13 @@ function buildProgressItems({
       description:
         runStatus === 'running'
           ? friendlyEventMessage(latestEvent)
+          : runStatus === 'waiting_approval'
+            ? '分析已经完成，系统正在等待你确认发布或执行敏感操作。'
           : artifacts.length
             ? '空间分析已经完成，结果正在整理。'
             : '分析时会自动执行缓冲、相交、裁剪等操作。',
       status:
-        runStatus === 'running'
+        runStatus === 'running' || runStatus === 'waiting_approval'
           ? ('active' as const)
           : artifacts.length || runStatus === 'completed'
             ? ('done' as const)
@@ -1090,12 +1268,16 @@ function buildProgressItems({
       description:
         runStatus === 'completed'
           ? '结果图层、下载入口和服务链接已经生成。'
+          : runStatus === 'waiting_approval'
+            ? '结果已经生成，待审批动作会在确认后继续执行。'
           : runStatus === 'failed'
             ? '本次没有成功生成最终结果。'
             : '完成后会自动把结果高亮到地图上。',
       status:
         runStatus === 'completed'
           ? ('done' as const)
+          : runStatus === 'waiting_approval'
+            ? ('warning' as const)
           : runStatus === 'failed'
             ? ('warning' as const)
             : runStatus === 'running'
@@ -1117,6 +1299,9 @@ function friendlyEventMessage(event?: RunEvent) {
   }
   if (event.type === 'artifact.created') {
     return '已经生成新的地图结果，正在加入地图。'
+  }
+  if (event.type === 'approval.required') {
+    return '分析结果已生成，正在等待审批。'
   }
   if (event.type === 'run.failed') {
     return '分析没有顺利完成，请稍后重试。'

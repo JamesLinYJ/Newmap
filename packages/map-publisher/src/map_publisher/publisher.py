@@ -40,7 +40,7 @@ class MapPublisher:
         *,
         app_base_url: str,
         qgis_runtime: ProjectRuntime,
-        default_project_key: str = "demo-workspace",
+        default_project_key: str,
     ):
         self.publish_dir = publish_dir
         self.qgis_server_base_url = qgis_server_base_url.rstrip("/")

@@ -171,7 +171,7 @@ class PublishResultGeojsonArgs(ToolArgsModel):
 
 class PublishToQgisProjectArgs(ToolArgsModel):
     artifact_id: str = Field(..., title="结果对象", description="要发布的 artifact id。", json_schema_extra={"x-ui-source": "artifact"})
-    project_key: str = Field(default="demo-workspace", title="项目 Key", description="QGIS 项目 key。", json_schema_extra={"x-ui-source": "text", "placeholder": "demo-workspace"})
+    project_key: str | None = Field(default=None, title="项目 Key", description="QGIS 项目 key。", json_schema_extra={"x-ui-source": "text", "placeholder": "workspace-key"})
 
 
 def build_default_tool_definitions() -> list[ToolDefinition]:
@@ -295,7 +295,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         publish_result = await runtime.store.publisher.publish_artifact(
             artifact_ref.artifact_id,
             artifact_ref.name,
-            args.get("project_key", "demo-workspace"),
+            str(args.get("project_key") or runtime.store.publisher.default_project_key),
             collection=collection,
         )
         payload = {"artifactId": artifact_ref.artifact_id, **publish_result}

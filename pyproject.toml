@@ -9,8 +9,14 @@ description = "Chinese-first GIS agent platform MVP with FastAPI, LangGraph and 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "deepagents>=0.5.3",
   "fastapi>=0.116.0",
   "httpx>=0.28.0",
+  "langchain>=1.2.15",
+  "langchain-anthropic>=1.4.0",
+  "langchain-google-genai>=4.2.2",
+  "langchain-ollama>=1.1.0",
+  "langchain-openai>=1.1.13",
   "langgraph>=0.3.0",
   "pydantic>=2.11.0",
   "pydantic-settings>=2.8.0",

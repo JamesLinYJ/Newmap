@@ -20,18 +20,6 @@ from shared_types.schemas import ModelProviderDescriptor
 from .base import BaseModelAdapter
 
 
-# Provider 适配器实现
-#
-# 这里集中封装 Demo、OpenAI Compatible、Anthropic、Gemini 和 Ollama 的调用差异。
-class DemoModelAdapter(BaseModelAdapter):
-    def __init__(self, provider: str = "demo"):
-        super().__init__(provider)
-        self.display_name = "Demo Heuristics"
-
-    async def chat(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
-        return {"provider": self.provider, "content": prompt, "mode": "demo", "metadata": kwargs}
-
-
 class OpenAICompatibleAdapter(BaseModelAdapter):
     def __init__(self, *, base_url: str | None, api_key: str | None, default_model: str | None):
         super().__init__("openai_compatible")
@@ -223,7 +211,6 @@ class ModelAdapterRegistry:
         self.default_model_name = settings.default_model_name
         default_model_for = lambda provider: settings.default_model_name if settings.default_model_provider == provider else None
 
-        self.register(DemoModelAdapter())
         self.register(
             OpenAICompatibleAdapter(
                 base_url=settings.openai_base_url,
@@ -263,8 +250,33 @@ class ModelAdapterRegistry:
         return sorted(self._adapters)
 
     def resolve_provider(self, provider: str | None) -> BaseModelAdapter:
-        selected = provider or self.default_provider or "demo"
-        return self.get(selected if selected in self._adapters else "demo")
+        configured = [adapter for adapter in self._adapters.values() if adapter.is_configured()]
+        selected = provider or self.default_provider
+        if selected and selected in self._adapters:
+            adapter = self.get(selected)
+            if adapter.is_configured():
+                return adapter
+            raise RuntimeError(f"模型 provider '{selected}' 尚未配置，当前无法启动运行。")
+        if self.default_provider and self.default_provider in self._adapters:
+            adapter = self.get(self.default_provider)
+            if adapter.is_configured():
+                return adapter
+        if configured:
+            return configured[0]
+        if self._adapters:
+            available = ", ".join(sorted(self._adapters))
+            raise RuntimeError(f"当前没有可用的模型 provider。已注册 provider: {available}")
+        raise RuntimeError("当前没有注册任何模型 provider。")
+
+    def is_provider_configured(self, provider: str | None) -> bool:
+        if not provider or provider not in self._adapters:
+            return False
+        return self._adapters[provider].is_configured()
+
+    def supports_live_supervisor(self, provider: str | None) -> bool:
+        if not self.is_provider_configured(provider):
+            return False
+        return provider in {"openai_compatible", "anthropic", "gemini", "ollama"}
 
     def descriptors(self) -> list[ModelProviderDescriptor]:
         return [

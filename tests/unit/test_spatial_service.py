@@ -19,6 +19,13 @@ def test_intersection_returns_nearby_paris_hospitals():
     assert len(result["features"]) >= 1
 
 
+def test_load_layer_accepts_city_prefixed_layer_key():
+    service = build_service()
+    boundary = service.load_boundary("巴黎")
+    metros = service.load_layer("paris_metro_stations", area_name="巴黎", boundary=boundary)
+    assert len(metros["features"]) >= 1
+
+
 def test_point_in_polygon_filters_inside_points():
     service = build_service()
     boundary = service.load_boundary("柏林")

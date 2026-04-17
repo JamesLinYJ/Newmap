@@ -34,6 +34,7 @@ class ToolExecutionResult:
 class ToolRuntimeContext:
     # 不可变运行上下文。
     run_id: str
+    thread_id: str | None
     session_id: str
     latest_uploaded_layer_key: str | None
 

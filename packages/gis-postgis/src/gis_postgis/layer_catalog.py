@@ -37,6 +37,54 @@ SEMANTIC_LAYER_ALIASES = {
 }
 
 
+def resolve_catalog_layer_key(layer_key_or_name: str, available_keys: list[str] | None = None) -> str:
+    candidate = layer_key_or_name.strip()
+    if not candidate:
+        return candidate
+
+    normalized_aliases = {str(key).casefold(): value for key, value in SEMANTIC_LAYER_ALIASES.items()}
+    alias_match = normalized_aliases.get(candidate.casefold())
+    if alias_match:
+        return alias_match
+
+    if not available_keys:
+        return candidate
+
+    exact_matches = {item.casefold(): item for item in available_keys}
+    exact = exact_matches.get(candidate.casefold())
+    if exact:
+        return exact
+
+    normalized_candidate = candidate.casefold().replace("-", "_").replace(" ", "_")
+    suffix_matches = [
+        item
+        for item in available_keys
+        if normalized_candidate == item.casefold()
+        or normalized_candidate.endswith(f"_{item.casefold()}")
+        or normalized_candidate.startswith(f"{item.casefold()}_")
+    ]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
+
+    candidate_tokens = _layer_key_tokens(normalized_candidate)
+    token_matches = []
+    for item in available_keys:
+        item_tokens = _layer_key_tokens(item.casefold())
+        if item_tokens and set(item_tokens).issubset(candidate_tokens):
+            token_matches.append((len(item_tokens), len(item), item))
+    if not token_matches:
+        return candidate
+    token_matches.sort(reverse=True)
+    best = token_matches[0]
+    if len(token_matches) == 1 or token_matches[1][:2] != best[:2]:
+        return best[2]
+    return candidate
+
+
+def _layer_key_tokens(value: str) -> tuple[str, ...]:
+    return tuple(token for token in value.replace("-", "_").split("_") if token)
+
+
 # LayerCatalog
 #
 # 文件目录版图层存储，负责：
@@ -69,7 +117,7 @@ class LayerCatalog:
         return descriptors
 
     def resolve_layer_key(self, layer_key_or_name: str) -> str:
-        return SEMANTIC_LAYER_ALIASES.get(layer_key_or_name, layer_key_or_name)
+        return resolve_catalog_layer_key(layer_key_or_name, [descriptor.layer_key for descriptor in self.list_layers()])
 
     def get_layer_collection(self, layer_key: str) -> dict[str, Any]:
         resolved = self.resolve_layer_key(layer_key)

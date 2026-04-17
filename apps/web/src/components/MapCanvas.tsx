@@ -17,8 +17,10 @@ import { AppIcon } from './AppIcon'
 type GeoJsonPayload = GeoJSON.FeatureCollection
 
 interface MapCanvasProps {
+  artifactCount: number
   basemaps: BasemapDescriptor[]
   selectedBasemapKey: string
+  runStatus?: string
   onSelectBasemap: (basemapKey: string) => void
   layers: Array<{ artifact: ArtifactRef; data: GeoJsonPayload }>
   selectedArtifactId?: string
@@ -26,8 +28,10 @@ interface MapCanvasProps {
 }
 
 export function MapCanvas({
+  artifactCount,
   basemaps,
   selectedBasemapKey,
+  runStatus,
   onSelectBasemap,
   layers,
   selectedArtifactId,
@@ -251,6 +255,35 @@ export function MapCanvas({
         <strong>{cursor}</strong>
       </div>
 
+      <div className="dc-map-stage__summary" aria-label="地图工作台状态">
+        <article className="dc-map-stage__summary-card">
+          <span>运行</span>
+          <strong>{formatMapRunStatus(runStatus)}</strong>
+          <p>{artifactCount ? `地图中已载入 ${artifactCount} 个结果图层。` : '提交分析后会把结果直接绘制到这里。'}</p>
+        </article>
+        <article className="dc-map-stage__summary-card">
+          <span>底图</span>
+          <strong>{activeBasemap.name}</strong>
+          <p>{layers.length ? `${layers.length} 组空间结果正在可视化。` : '当前没有活动结果图层。'}</p>
+        </article>
+      </div>
+
+      {layers.length ? (
+        <div className="dc-map-stage__legend" aria-label="地图图层摘要">
+          {layers.slice(0, 4).map(({ artifact }) => (
+            <div
+              key={artifact.artifactId}
+              className={`dc-map-stage__legend-item${
+                artifact.artifactId === selectedArtifactId ? ' dc-map-stage__legend-item--active' : ''
+              }`}
+            >
+              <span className="dc-map-stage__legend-dot" aria-hidden="true" />
+              <strong>{artifact.name}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <div className="dc-map-stage__controls">
         <div className="dc-map-stage__zoom">
           <button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="放大地图">
@@ -301,6 +334,22 @@ function formatBasemapName(basemap?: BasemapDescriptor) {
     return '影像地图'
   }
   return '标准地图'
+}
+
+function formatMapRunStatus(status?: string) {
+  if (status === 'completed') {
+    return '分析完成'
+  }
+  if (status === 'waiting_approval') {
+    return '待审批'
+  }
+  if (status === 'running') {
+    return '执行中'
+  }
+  if (status === 'failed') {
+    return '运行失败'
+  }
+  return '等待开始'
 }
 
 function buildBasemapStyle(basemap?: BasemapDescriptor): StyleSpecification {
