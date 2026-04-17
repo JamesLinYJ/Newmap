@@ -21,6 +21,28 @@ QGIS_SERVER_BASE_URL="${QGIS_SERVER_BASE_URL:-${PUBLIC_BASE_URL%/}/qgis}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-$(current_branch_name)}"
 DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-}"
 
+detect_working_docker_mirror() {
+  if [[ -n "${DOCKER_REGISTRY_MIRRORS}" ]]; then
+    return 0
+  fi
+
+  if curl -I -m 5 -sS https://registry-1.docker.io/v2/ >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local mirror_candidates=(
+    "https://docker.m.daocloud.io"
+  )
+  local mirror=""
+  for mirror in "${mirror_candidates[@]}"; do
+    if curl -I -m 5 -sS "${mirror}/v2/" >/dev/null 2>&1; then
+      DOCKER_REGISTRY_MIRRORS="${mirror}"
+      print_warn "检测到直连 Docker Hub 不稳定，已自动切换到镜像源 ${mirror}"
+      return 0
+    fi
+  done
+}
+
 install_packages_if_needed() {
   if command -v git >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
     return 0
@@ -150,6 +172,7 @@ print_ok "代码已准备就绪"
 print_section "检查 Docker 运行环境"
 install_packages_if_needed
 install_docker_if_needed
+detect_working_docker_mirror
 configure_docker_mirror
 docker --version >/dev/null
 docker_cmd compose version >/dev/null
