@@ -19,6 +19,7 @@ APP_BASE_URL="${APP_BASE_URL:-${PUBLIC_BASE_URL}}"
 WEB_BASE_URL="${WEB_BASE_URL:-${PUBLIC_BASE_URL}}"
 QGIS_SERVER_BASE_URL="${QGIS_SERVER_BASE_URL:-${PUBLIC_BASE_URL%/}/qgis}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-$(current_branch_name)}"
+DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-}"
 
 install_packages_if_needed() {
   if command -v git >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
@@ -62,18 +63,35 @@ EOF"
     die "当前系统无法自动安装 Docker，请先手工安装 Docker 与 Docker Compose"
   fi
 
-  run_shell_as_root "mkdir -p /etc/docker && cat > /etc/docker/daemon.json <<'EOF'
-{
-  "registry-mirrors": ["https://hd1esep4.mirror.aliyuncs.com"]
-}
-EOF
-"
-
   if command -v systemctl >/dev/null 2>&1; then
     run_as_root systemctl enable --now docker
-    run_as_root systemctl restart docker
   else
     print_warn "当前环境没有 systemctl，请确认 Docker 守护进程已启动"
+  fi
+}
+
+configure_docker_mirror() {
+  local default_mirror="https://hd1esep4.mirror.aliyuncs.com"
+  local daemon_file="/etc/docker/daemon.json"
+
+  if [[ -n "${DOCKER_REGISTRY_MIRRORS}" ]]; then
+    print_step "写入 Docker 镜像加速配置"
+    run_shell_as_root "mkdir -p /etc/docker && cat > '${daemon_file}' <<EOF
+{
+  \"registry-mirrors\": [\"${DOCKER_REGISTRY_MIRRORS}\"]
+}
+EOF"
+  elif run_shell_as_root "[[ -f '${daemon_file}' ]] && grep -q '${default_mirror}' '${daemon_file}'"; then
+    print_step "移除旧的默认镜像加速配置"
+    run_shell_as_root "rm -f '${daemon_file}'"
+  else
+    return 0
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    run_as_root systemctl restart docker
+  else
+    print_warn "当前环境没有 systemctl，请手动重启 Docker 以应用镜像配置"
   fi
 }
 
@@ -129,6 +147,7 @@ print_ok "代码已准备就绪"
 print_section "检查 Docker 运行环境"
 install_packages_if_needed
 install_docker_if_needed
+configure_docker_mirror
 docker --version >/dev/null
 docker_cmd compose version >/dev/null
 print_ok "Docker 环境可用"
