@@ -101,7 +101,7 @@ function App() {
   // 这里本质上是前端的状态编排中心：负责把 API、SSE、URL、地图与调试页
   // 组织成一个稳定的工作台，而不是只渲染静态页面。
   const location = useLocation()
-  const [query, setQuery] = useState('查询巴黎地铁站 1 公里范围内的医院')
+  const [query, setQuery] = useState('')
   const [session, setSession] = useState<SessionRecord>()
   const [run, setRun] = useState<AnalysisRun>()
   const [intent, setIntent] = useState<UserIntent>()

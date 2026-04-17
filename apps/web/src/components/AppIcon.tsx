@@ -10,6 +10,7 @@
 
 import type { SVGProps } from 'react'
 import {
+  ArrowLeft,
   Bot,
   Brain,
   Database,
@@ -49,6 +50,7 @@ export type AppIconName =
   | 'add'
   | 'remove'
   | 'my_location'
+  | 'arrow_back'
 
 interface AppIconProps extends SVGProps<SVGSVGElement> {
   name: AppIconName
@@ -78,6 +80,7 @@ const ICONS: Record<AppIconName, typeof Bot> = {
   add: Plus,
   remove: Minus,
   my_location: LocateFixed,
+  arrow_back: ArrowLeft,
 }
 
 export function AppIcon({ name, size = 18, ...props }: AppIconProps) {

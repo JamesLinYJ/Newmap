@@ -42,7 +42,10 @@ export function deriveRunTranscript({
   runtimeConfig,
 }: DeriveRunTranscriptInput): TranscriptEntry[] {
   const entries: TranscriptEntry[] = []
-  const userQuery = run?.userQuery ?? agentState?.userQuery ?? query?.trim()
+  const userQuery =
+    run?.userQuery ??
+    agentState?.userQuery ??
+    (run || agentState || events.length > 0 ? query?.trim() : undefined)
   if (userQuery) {
     entries.push({
       id: `user:${run?.id ?? 'draft'}`,
