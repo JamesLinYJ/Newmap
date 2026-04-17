@@ -24,7 +24,7 @@ from api_app.main import (
     register_layer,
     run_qgis_model,
 )
-from shared_types.schemas import AgentFinalResponse, PublishRequest
+from shared_types.schemas import AgentFinalResponse, EventType, PublishRequest
 
 
 @pytest.mark.asyncio
@@ -584,6 +584,52 @@ async def test_runtime_fallback_after_empty_live_result_does_not_surface_warning
         assert current.state.warnings == []
         assert current.state.artifacts
         assert current.state.final_response is not None
+
+
+@pytest.mark.asyncio
+async def test_live_model_failure_surfaces_warning_before_fallback(monkeypatch: pytest.MonkeyPatch):
+    async with app.router.lifespan_context(app):
+        monkeypatch.setattr(app.state.runtime, "_supports_live_supervisor", lambda provider: True)
+
+        async def broken_live(**kwargs):
+            raise RuntimeError("gemini timeout while generating response")
+
+        async def fallback_loop(*, run_id, thread_id, query, latest_uploaded_layer_key, runtime):
+            final_response = AgentFinalResponse(
+                summary="已切换到稳定执行路径并完成当前分析。",
+                limitations=[],
+                next_actions=["查看地图结果", "继续下一步分析"],
+            )
+            app.state.store.update_run_state(run_id, final_response=final_response)
+            final_state = app.state.store.get_run(run_id).state
+            app.state.store.complete_run(run_id, final_state)
+
+        monkeypatch.setattr(app.state.runtime, "_run_with_deepagents", broken_live)
+        monkeypatch.setattr(app.state.runtime, "_run_deterministic_supervisor_loop", fallback_loop)
+
+        session = app.state.store.create_session()
+        thread = app.state.store.create_thread(session.id, title="模型失败回退")
+        run = app.state.store.create_run(session.id, "查询巴黎地铁站 1 公里范围内的医院", thread_id=thread.id, model_provider="gemini")
+        app.state.store.mark_run_running(run.id)
+
+        await app.state.runtime.run(
+            run_id=run.id,
+            thread_id=thread.id,
+            session_id=session.id,
+            query=run.user_query,
+            latest_uploaded_layer_key=None,
+            provider="gemini",
+            model_name=None,
+            context_factory=_build_tool_runtime,
+        )
+
+        updated = app.state.store.get_run(run.id)
+        warnings = updated.state.warnings
+        events = app.state.store.list_events(run.id)
+
+        assert updated.status == "completed"
+        assert any("模型调用暂时失败" in item for item in warnings)
+        assert any(event.type == EventType.WARNING_RAISED and "模型调用暂时失败" in event.message for event in events)
 
 
 @pytest.mark.asyncio

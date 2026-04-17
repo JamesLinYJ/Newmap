@@ -20,6 +20,10 @@ export interface TranscriptEntry {
   details?: Record<string, unknown> | null
 }
 
+export function isActivityEntry(kind: TranscriptEntryKind) {
+  return kind === 'supervisor' || kind === 'subagent' || kind === 'tool' || kind === 'approval' || kind === 'artifact'
+}
+
 interface DeriveRunTranscriptInput {
   run?: AnalysisRun
   agentState?: AgentState
@@ -193,14 +197,15 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
     }
   }
   if (event.type === 'warning.raised' || event.type === 'run.failed') {
+    const failurePayload = payload.finalResponse as Record<string, unknown> | undefined
     return {
       id: event.eventId,
       kind: 'error',
       timestamp: event.timestamp,
-      title: event.type === 'run.failed' ? '运行失败' : '运行警告',
-      body: sanitizeUserFacingText(event.message),
+      title: event.type === 'run.failed' ? humanizeFailureTitle(event.message, payload) : humanizeWarningTitle(event.message, payload),
+      body: humanizeFailureBody(event.message, payload),
       status: event.type === 'run.failed' ? 'failed' : 'blocked',
-      recoveryNote: deriveRecoveryNote(event, events),
+      recoveryNote: deriveRecoveryNote(event, events) ?? extractNextActions(failurePayload),
       details: payload,
     }
   }
@@ -343,6 +348,48 @@ function sanitizeUserFacingText(value: string) {
     .replaceAll('run', '任务')
     .replaceAll('deepagents', '系统')
     .trim()
+}
+
+function humanizeWarningTitle(message: string, payload: Record<string, unknown>) {
+  if (payload.kind === 'model_fallback') {
+    return '模型调用已自动恢复'
+  }
+  if (message.includes('审批')) {
+    return '需要你继续确认'
+  }
+  return '运行提醒'
+}
+
+function humanizeFailureTitle(message: string, payload: Record<string, unknown>) {
+  const failedTool = typeof payload.failedTool === 'string' ? payload.failedTool : ''
+  if (message.includes('模型') || String(payload.kind ?? '').includes('model')) {
+    return '模型调用失败'
+  }
+  if (failedTool) {
+    return `${failedTool} 执行失败`
+  }
+  return '本次运行失败'
+}
+
+function humanizeFailureBody(message: string, payload: Record<string, unknown>) {
+  const summary = (payload.finalResponse as Record<string, unknown> | undefined)?.summary
+  if (typeof summary === 'string' && summary.trim()) {
+    return sanitizeUserFacingText(summary)
+  }
+  if (payload.kind === 'model_fallback') {
+    return '模型调用暂时不稳定，系统已经自动切换到稳定路径继续处理。'
+  }
+  return sanitizeUserFacingText(message)
+}
+
+function extractNextActions(finalResponse: Record<string, unknown> | undefined) {
+  const nextActions = Array.isArray(finalResponse?.nextActions)
+    ? finalResponse?.nextActions.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+  if (!nextActions.length) {
+    return null
+  }
+  return `接下来可以：${nextActions.slice(0, 3).join('、')}。`
 }
 
 function normalizeTranscriptStatus(value: unknown): TranscriptEntryStatus {

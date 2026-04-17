@@ -8,10 +8,11 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
+import { useMemo, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 
-import type { AgentRuntimeConfig, UserIntent } from '@geo-agent-platform/shared-types'
-import type { TranscriptEntry } from '../runTranscript'
+import type { AgentRuntimeConfig, AnalysisRun, UserIntent } from '@geo-agent-platform/shared-types'
+import { isActivityEntry, type TranscriptEntry } from '../runTranscript'
 import { AppIcon } from './AppIcon'
 
 interface ChatPanelProps {
@@ -25,6 +26,7 @@ interface ChatPanelProps {
   errorMessage?: string
   uploadedLayerName?: string
   intent?: UserIntent
+  sessionRuns: AnalysisRun[]
   transcriptEntries: ReadonlyArray<TranscriptEntry>
   runtimeConfig?: AgentRuntimeConfig
   onQueryChange: (value: string) => void
@@ -33,6 +35,7 @@ interface ChatPanelProps {
   onUseTemplate: () => void
   onUpload: (file: File) => void
   onSelectArtifact: (artifactId: string) => void
+  onSelectTask: (runId: string) => void
   onResolveApproval: (approvalId: string, approved: boolean) => void
 }
 
@@ -53,6 +56,7 @@ export function ChatPanel({
   errorMessage,
   uploadedLayerName,
   intent,
+  sessionRuns,
   transcriptEntries,
   runtimeConfig,
   onQueryChange,
@@ -61,8 +65,11 @@ export function ChatPanel({
   onUseTemplate,
   onUpload,
   onSelectArtifact,
+  onSelectTask,
   onResolveApproval,
 }: ChatPanelProps) {
+  const [isTaskPickerOpen, setIsTaskPickerOpen] = useState(false)
+  const [taskSearch, setTaskSearch] = useState('')
   const hasTranscript = transcriptEntries.length > 1
   const transcriptLabel =
     runStatus === 'running'
@@ -74,6 +81,19 @@ export function ChatPanel({
   const topicLabel = query.trim() || '新的空间分析任务'
   const showSamples = !isSubmitting && transcriptEntries.length <= 1
   const recordCount = transcriptEntries.filter((entry) => entry.kind !== 'user').length
+  const currentTask = useMemo(
+    () => sessionRuns.find((item) => item.id === currentRunId) ?? sessionRuns[0],
+    [currentRunId, sessionRuns],
+  )
+  const filteredTasks = useMemo(() => {
+    const keyword = taskSearch.trim().toLowerCase()
+    if (!keyword) {
+      return sessionRuns.slice(0, 8)
+    }
+    return sessionRuns
+      .filter((item) => item.userQuery.toLowerCase().includes(keyword) || item.id.toLowerCase().includes(keyword))
+      .slice(0, 8)
+  }, [sessionRuns, taskSearch])
   const compactContextLabel = runtimeConfig?.context
     ? `会延续最近 ${runtimeConfig.context.historyRunLimit} 轮任务与 ${runtimeConfig.context.eventWindow} 条记录`
     : '会延续当前会话里的最近任务与结果'
@@ -91,6 +111,57 @@ export function ChatPanel({
             {currentRunId ? <span className="dc-chat-shell__status">任务 {currentRunId.slice(0, 8)}</span> : null}
           </div>
         </header>
+
+        <section className="dc-task-switcher" aria-label="任务选择">
+          <button
+            type="button"
+            className={isTaskPickerOpen ? 'dc-task-switcher__trigger dc-task-switcher__trigger--open' : 'dc-task-switcher__trigger'}
+            onClick={() => setIsTaskPickerOpen((current) => !current)}
+          >
+            <div className="dc-task-switcher__trigger-copy">
+              <span className="dc-task-switcher__eyebrow">任务</span>
+              <strong>{currentTask ? currentTask.userQuery : '还没有任务记录'}</strong>
+              <span>{currentTask ? `${formatTaskAge(currentTask.createdAt)} · ${formatRunStatus(currentTask.status)}` : '提交第一条问题后会出现在这里'}</span>
+            </div>
+            <span className="dc-task-switcher__trigger-action">{isTaskPickerOpen ? '收起' : '切换'}</span>
+          </button>
+
+          {isTaskPickerOpen ? (
+            <div className="dc-task-switcher__panel">
+              <div className="dc-task-switcher__search">
+                <input
+                  value={taskSearch}
+                  onChange={(event) => setTaskSearch(event.target.value)}
+                  placeholder="搜索最近任务"
+                  aria-label="搜索最近任务"
+                />
+              </div>
+              <div className="dc-task-switcher__list" role="list">
+                {filteredTasks.length ? (
+                  filteredTasks.map((task) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      className={task.id === currentRunId ? 'dc-task-switcher__item dc-task-switcher__item--active' : 'dc-task-switcher__item'}
+                      onClick={() => {
+                        onSelectTask(task.id)
+                        setIsTaskPickerOpen(false)
+                      }}
+                    >
+                      <div className="dc-task-switcher__item-main">
+                        <strong>{task.userQuery}</strong>
+                        <span>{task.id === currentRunId ? '当前任务' : formatRunStatus(task.status)}</span>
+                      </div>
+                      <time dateTime={task.createdAt}>{formatTaskAge(task.createdAt)}</time>
+                    </button>
+                  ))
+                ) : (
+                  <div className="dc-task-switcher__empty">没有找到匹配的任务。</div>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </section>
 
         <div className="dc-chat-console__thread">
           <div className="dc-chat-console__thread-main">
@@ -121,48 +192,72 @@ export function ChatPanel({
         <div className="dc-chat-console__feed" aria-label="Agent transcript">
           {transcriptEntries.length ? (
             transcriptEntries.map((entry) => (
-              <article
-                key={entry.id}
-                className={`dc-chat-message dc-chat-message--${entry.kind === 'user' ? 'user' : 'assistant'} dc-chat-message--kind-${entry.kind} dc-chat-message--status-${entry.status}`}
-              >
-                <div className="dc-chat-message__meta">
-                  <span className={`dc-chat-message__kind dc-chat-message__kind--${entry.kind}`}>{entry.kind === 'user' ? '你' : formatKind(entry.kind)}</span>
-                  <span className={`dc-chat-message__status dc-chat-message__status--${entry.status}`}>{formatEntryStatus(entry.status)}</span>
-                  <time dateTime={entry.timestamp}>{formatEventTime(entry.timestamp)}</time>
-                </div>
-                <strong>{entry.title}</strong>
-                <p>{entry.body}</p>
-                {entry.commandText ? (
-                  <div className="dc-chat-message__command-block">
-                    <span className="dc-chat-message__section-label">执行命令</span>
-                    <pre className="dc-chat-message__command">{entry.commandText}</pre>
+              isActivityEntry(entry.kind) ? (
+                <article
+                  key={entry.id}
+                  className={`dc-activity-card dc-activity-card--kind-${entry.kind} dc-activity-card--status-${entry.status}`}
+                >
+                  <div className="dc-activity-card__rail" aria-hidden="true" />
+                  <div className="dc-activity-card__content">
+                    <div className="dc-activity-card__meta">
+                      <span className={`dc-chat-message__kind dc-chat-message__kind--${entry.kind}`}>{formatKind(entry.kind)}</span>
+                      <span className={`dc-chat-message__status dc-chat-message__status--${entry.status}`}>{formatEntryStatus(entry.status)}</span>
+                      <time dateTime={entry.timestamp}>{formatEventTime(entry.timestamp)}</time>
+                    </div>
+                    <strong>{entry.title}</strong>
+                    <p>{entry.body}</p>
+                    {entry.commandText ? (
+                      <div className="dc-chat-message__command-block">
+                        <span className="dc-chat-message__section-label">执行命令</span>
+                        <pre className="dc-chat-message__command">{entry.commandText}</pre>
+                      </div>
+                    ) : null}
+                    {entry.details ? (
+                      <details className="dc-chat-message__details">
+                        <summary>{detailSummaryLabel(entry)}</summary>
+                        <pre>{JSON.stringify(entry.details, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                    {entry.kind === 'artifact' && entry.artifactId ? (
+                      <div className="dc-chat-message__actions">
+                        <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onSelectArtifact(entry.artifactId!)}>
+                          在地图中查看
+                        </button>
+                      </div>
+                    ) : null}
+                    {entry.kind === 'approval' && entry.approvalId ? (
+                      <div className="dc-chat-message__actions">
+                        <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onResolveApproval(entry.approvalId!, true)}>
+                          批准
+                        </button>
+                        <button type="button" className="dc-link-button" onClick={() => onResolveApproval(entry.approvalId!, false)}>
+                          拒绝
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-                {entry.recoveryNote ? <p className="dc-chat-message__recovery">恢复说明：{entry.recoveryNote}</p> : null}
-                {entry.details ? (
-                  <details className="dc-chat-message__details">
-                    <summary>{detailSummaryLabel(entry)}</summary>
-                    <pre>{JSON.stringify(entry.details, null, 2)}</pre>
-                  </details>
-                ) : null}
-                {entry.kind === 'artifact' && entry.artifactId ? (
-                  <div className="dc-chat-message__actions">
-                    <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onSelectArtifact(entry.artifactId!)}>
-                      在地图中查看
-                    </button>
+                </article>
+              ) : (
+                <article
+                  key={entry.id}
+                  className={`dc-chat-message dc-chat-message--${entry.kind === 'user' ? 'user' : 'assistant'} dc-chat-message--kind-${entry.kind} dc-chat-message--status-${entry.status}`}
+                >
+                  <div className="dc-chat-message__meta">
+                    <span className={`dc-chat-message__kind dc-chat-message__kind--${entry.kind}`}>{entry.kind === 'user' ? '你' : formatKind(entry.kind)}</span>
+                    <span className={`dc-chat-message__status dc-chat-message__status--${entry.status}`}>{formatEntryStatus(entry.status)}</span>
+                    <time dateTime={entry.timestamp}>{formatEventTime(entry.timestamp)}</time>
                   </div>
-                ) : null}
-                {entry.kind === 'approval' && entry.approvalId ? (
-                  <div className="dc-chat-message__actions">
-                    <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onResolveApproval(entry.approvalId!, true)}>
-                      批准
-                    </button>
-                    <button type="button" className="dc-link-button" onClick={() => onResolveApproval(entry.approvalId!, false)}>
-                      拒绝
-                    </button>
-                  </div>
-                ) : null}
-              </article>
+                  <strong>{entry.title}</strong>
+                  <p>{entry.body}</p>
+                  {entry.recoveryNote ? <p className="dc-chat-message__recovery">恢复说明：{entry.recoveryNote}</p> : null}
+                  {entry.details ? (
+                    <details className="dc-chat-message__details">
+                      <summary>{detailSummaryLabel(entry)}</summary>
+                      <pre>{JSON.stringify(entry.details, null, 2)}</pre>
+                    </details>
+                  ) : null}
+                </article>
+              )
             ))
           ) : (
             <div className="dc-transcript-empty">
@@ -286,4 +381,20 @@ function formatElapsedLabel(value: string) {
   const minutes = Math.floor(elapsedSeconds / 60)
   const seconds = elapsedSeconds % 60
   return `${minutes} 分 ${seconds} 秒`
+}
+
+function formatTaskAge(value: string) {
+  const created = new Date(value).getTime()
+  if (Number.isNaN(created)) {
+    return '刚刚'
+  }
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - created) / 60000))
+  if (diffMinutes < 1) return '刚刚'
+  if (diffMinutes < 60) return `${diffMinutes} 分钟前`
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours} 小时前`
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays} 天前`
+  const diffWeeks = Math.floor(diffDays / 7)
+  return `${diffWeeks} 周前`
 }

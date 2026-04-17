@@ -91,9 +91,17 @@ class GeoAgentRuntime:
                 return
             except Exception as exc:
                 if self._should_surface_live_fallback_warning(exc):
+                    warning_message = self._format_live_supervisor_warning(exc)
                     self.store.update_run_state(
                         run_id,
-                        warnings=self.store.get_run(run_id).state.warnings + [f"实时分析路径已切换到备用执行：{exc}"],
+                        warnings=self.store.get_run(run_id).state.warnings + [warning_message],
+                    )
+                    self._append_event(
+                        run_id,
+                        thread_id,
+                        EventType.WARNING_RAISED,
+                        warning_message,
+                        payload={"kind": "model_fallback", "error": str(exc), "provider": provider},
                     )
         try:
             await self._run_deterministic_supervisor_loop(
@@ -1193,6 +1201,13 @@ class GeoAgentRuntime:
         if "没有产出可交付结果" in message:
             return False
         return True
+
+    def _format_live_supervisor_warning(self, exc: Exception) -> str:
+        message = str(exc).strip()
+        lowered = message.lower()
+        if any(keyword in lowered for keyword in ["api key", "quota", "rate", "429", "503", "timeout", "connection", "model", "provider", "gemini", "openai", "anthropic", "ollama"]):
+            return "模型调用暂时失败，系统已切换到稳定执行路径继续处理。"
+        return "实时智能体执行异常，系统已切换到稳定执行路径继续处理。"
 
     def _pick_sub_agent(self, sub_agents: list[SubAgentState], tool_name: str) -> SubAgentState:
         if not sub_agents:

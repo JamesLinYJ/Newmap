@@ -974,6 +974,7 @@ function App() {
                         errorMessage={uiError}
                         uploadedLayerName={uploadedLayerName}
                         intent={intent}
+                        sessionRuns={sessionRuns}
                         transcriptEntries={transcriptEntries}
                         runtimeConfig={runtimeConfig}
                         onQueryChange={setQuery}
@@ -986,6 +987,12 @@ function App() {
                           void handleUpload(file)
                         }}
                         onSelectArtifact={setSelectedArtifactId}
+                        onSelectTask={(runId) => {
+                          void hydrateRunState(runId)
+                          if (session?.id) {
+                            syncUrl(session.id, runId)
+                          }
+                        }}
                         onResolveApproval={(approvalId, approved) => {
                           void handleResolveApproval(approvalId, approved)
                         }}
