@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 统一导出地图发布模块的公共入口。
+
 from .publisher import MapPublisher
 
 __all__ = ["MapPublisher"]

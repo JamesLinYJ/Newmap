@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 注册 GIS、QGIS、发布等工具，并提供统一执行入口。
+
 from __future__ import annotations
 
 import asyncio
@@ -48,6 +52,7 @@ class ToolDefinition:
 
 class ToolRegistry:
     def __init__(self, definitions: list[ToolDefinition] | None = None):
+        # registry 只做工具编排与调度，不持有业务状态。
         self._definitions: dict[str, ToolDefinition] = {}
         if definitions:
             self.register_many(definitions)
@@ -63,6 +68,7 @@ class ToolRegistry:
         self.register_definition(ToolDefinition(name=name, handler=handler, metadata=metadata, args_model=args_model))
 
     def register_definition(self, definition: ToolDefinition) -> None:
+        # 后注册覆盖先注册，允许测试或数据库配置替换内建工具定义。
         self._definitions[definition.name] = definition
 
     def register_many(self, definitions: list[ToolDefinition]) -> None:
@@ -79,6 +85,7 @@ class ToolRegistry:
         return [self._definitions[name] for name in self.list_tools()]
 
     def get_definition(self, name: str) -> ToolDefinition:
+        # 未注册工具直接失败，避免 runtime 默默吞掉未知调用。
         if name not in self._definitions:
             raise KeyError(f"Tool '{name}' is not registered.")
         return self._definitions[name]
@@ -93,11 +100,29 @@ class ToolRegistry:
         if definition.args_model is not None:
             model = definition.args_model.model_validate(args)
             validated_args = model.model_dump(mode="python", exclude_none=True)
-        return await definition.handler(validated_args, runtime)
+        result = await definition.handler(validated_args, runtime)
+        if result.result_id is None:
+            result.result_id = make_id("tool_result")
+        if result.feature_count is None and result.artifact is not None:
+            result.feature_count = int(result.artifact.metadata.get("feature_count") or 0)
+        return result
 
 
 class GeocodePlaceArgs(ToolArgsModel):
     query: str = Field(..., title="地点或地址", description="需要查找的地点或地址。", json_schema_extra={"x-ui-source": "text", "placeholder": "例如：上海外滩"})
+    alias: str | None = Field(None, title="地点引用", description="把地理编码结果保存为后续工具可复用的引用名。", json_schema_extra={"x-ui-source": "text", "placeholder": "可选，例如：city_center"})
+
+
+class SearchThreadContextArgs(ToolArgsModel):
+    query: str = Field(..., title="上下文问题", description="要从当前线程历史中检索的自然语言问题。", json_schema_extra={"x-ui-source": "text"})
+    limit: int = Field(6, title="返回数量", description="最多返回的历史片段数量。", ge=1, le=12, json_schema_extra={"x-ui-source": "number"})
+
+
+class RequestClarificationArgs(ToolArgsModel):
+    reason: str = Field("generic", title="澄清原因", description="例如 ambiguous_place、ambiguous_artifact、missing_distance。")
+    question: str = Field(..., title="澄清问题", description="要展示给用户的中文问题。")
+    options: list[dict[str, Any]] = Field(default_factory=list, title="候选项", description="每项至少包含 label，可选 optionId/kind/payload。")
+    allow_free_text: bool = Field(True, title="允许自由输入", description="是否允许用户不点候选、直接补充文本。")
 
 
 class ReverseGeocodeArgs(ToolArgsModel):
@@ -115,6 +140,14 @@ class LoadLayerArgs(ToolArgsModel):
     area_name: str | None = Field(None, title="区域名称", description="按区域裁剪时使用。", json_schema_extra={"x-ui-source": "text", "placeholder": "可选，例如：Paris"})
     boundary: str | None = Field(None, title="边界引用", description="已有边界结果或图层引用。", json_schema_extra={"x-ui-source": "collection", "placeholder": "可选，选择已有边界结果"})
     alias: str | None = Field(None, title="别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text", "placeholder": "例如：metro_stations"})
+
+
+class SearchExternalPoisArgs(ToolArgsModel):
+    category: str = Field(..., title="对象类别", description="要检索的对象类别，例如 hospital、metro_station。", json_schema_extra={"x-ui-source": "text"})
+    boundary: str | None = Field(None, title="范围引用", description="边界集合引用，优先按范围查询。", json_schema_extra={"x-ui-source": "collection"})
+    anchor: str | None = Field(None, title="地点锚点", description="地点或点集合引用，用于周边查询。", json_schema_extra={"x-ui-source": "collection"})
+    distance_m: float | None = Field(None, title="距离（米）", description="围绕锚点查询时的半径。", json_schema_extra={"x-ui-source": "number"})
+    alias: str | None = Field(None, title="结果别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text"})
 
 
 class BufferArgs(ToolArgsModel):
@@ -181,27 +214,97 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
     # 都应该从这里装配，避免两边工具集慢慢漂移。
 
     async def list_available_layers(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
-        layers = [descriptor.model_dump() for descriptor in runtime.store.layer_repository.list_layers()]
-        return ToolExecutionResult(message="已获取可用图层列表。", payload={"layers": layers})
+        # 目录型工具不产生 artifact，只返回可被模型和调试页直接消费的清单。
+        layers = [descriptor.model_dump() for descriptor in runtime.store.layer_repository.list_active_layers()]
+        return ToolExecutionResult(message="已获取可用图层列表。", payload={"layers": layers}, source="catalog", provenance={"source": "layer_repository"}, feature_count=len(layers))
+
+    async def list_context_references(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        # 当前 thread 可复用对象清单。
+        #
+        # 这不是“代码替 Agent 绑定上下文”，而是把真实存在的候选对象列出来；
+        # Agent 必须显式选择其中的 referenceId，再由 runtime / 工具校验是否可执行。
+        references = _build_context_references(runtime)
+        return ToolExecutionResult(
+            message=f"已读取 {len(references)} 个可复用上下文对象。",
+            payload={"references": references},
+            source="thread_context",
+            provenance={"threadId": runtime.context.thread_id},
+            feature_count=len(references),
+        )
+
+    async def search_thread_context(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        query = str(args["query"])
+        limit = int(args.get("limit") or 6)
+        snippets = _search_thread_context(runtime, query=query, limit=limit)
+        return ToolExecutionResult(
+            message=f"已检索当前对话上下文，找到 {len(snippets)} 条相关记录。",
+            payload={"query": query, "snippets": snippets},
+            source="thread_context",
+            used_query=query,
+            provenance={"threadId": runtime.context.thread_id, "limit": limit},
+            feature_count=len(snippets),
+        )
+
+    async def request_clarification(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        reason = str(args.get("reason") or "generic")
+        question = str(args["question"])
+        options = list(args.get("options") or [])
+        return ToolExecutionResult(
+            message=question,
+            payload={"reason": reason, "question": question, "options": options, "allowFreeText": bool(args.get("allow_free_text", True))},
+            source="agent_clarification",
+            provenance={"reason": reason, "optionCount": len(options)},
+            feature_count=len(options),
+        )
 
     async def geocode_place(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         query = str(args["query"])
         payload = await asyncio.to_thread(runtime.store.spatial_service.geocode_place, query)
-        return ToolExecutionResult(message=f"已解析地点 “{query}”。", payload=payload)
+        collection = _build_geocode_collection(payload)
+        references = _remember_runtime_collection(
+            runtime,
+            collection,
+            preferred_refs=[str(args.get("alias") or "").strip(), query],
+            extra_refs=_extract_geocode_labels(payload),
+        )
+        return ToolExecutionResult(
+            message=f"已解析地点 “{query}”。",
+            payload={
+                **payload,
+                "collectionRef": references[0] if references else None,
+                "collectionRefs": references,
+                "featureCount": len(collection["features"]),
+            },
+            source=str(payload.get("provider") or "geosearch"),
+            used_query=query,
+            confidence=1.0 if len(collection["features"]) == 1 else None,
+            provenance={"provider": payload.get("provider"), "query": query},
+            crs={"input": "EPSG:4326", "output": "EPSG:4326"},
+            geometry_type="Point",
+            feature_count=len(collection["features"]),
+        )
 
     async def reverse_geocode(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         latitude = float(args["latitude"])
         longitude = float(args["longitude"])
         payload = await asyncio.to_thread(runtime.store.spatial_service.reverse_geocode, latitude, longitude)
-        return ToolExecutionResult(message="已完成逆地理编码。", payload=payload)
+        return ToolExecutionResult(message="已完成逆地理编码。", payload=payload, source=str(payload.get("provider") or "geosearch"), used_query=f"{latitude},{longitude}", provenance={"latitude": latitude, "longitude": longitude})
 
     async def load_boundary(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         name = str(args["name"])
         collection = await asyncio.to_thread(runtime.store.spatial_service.load_boundary, name)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "boundary"), name=f"{name} 边界", collection=collection)
-        return ToolExecutionResult(message=f"已加载 {name} 的行政区边界。", artifact=artifact, payload={"feature_count": len(collection["features"])})
+        return _result_with_collection_metadata(
+            message=f"已加载 {name} 的行政区边界。",
+            artifact=artifact,
+            collection=collection,
+            source="admin_boundary",
+            used_query=name,
+            provenance={"name": name},
+        )
 
     async def load_layer(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        # latest_upload 在这里被解析成真实 layer key，避免上层 runtime 到处分支判断。
         layer_key = str(args["layer_key"])
         area_name = args.get("area_name")
         boundary_ref = args.get("boundary")
@@ -217,6 +320,47 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             message=f"已加载图层 “{descriptor.name}”。",
             artifact=artifact,
             payload={"feature_count": len(collection["features"]), "layer_key": layer_key},
+            source=descriptor.source_type,
+            used_query=layer_key,
+            provenance={"layerKey": layer_key, "layerName": descriptor.name, "srid": descriptor.srid},
+            crs={"input": f"EPSG:{descriptor.srid}", "output": "EPSG:4326"},
+            geometry_type=descriptor.geometry_type,
+            feature_count=len(collection["features"]),
+        )
+
+    async def search_external_pois(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        category = str(args["category"])
+        boundary_ref = str(args.get("boundary") or "").strip()
+        anchor_ref = str(args.get("anchor") or "").strip()
+        boundary = _resolve_collection_ref(runtime, boundary_ref) if boundary_ref else None
+        anchor = _resolve_collection_ref(runtime, anchor_ref) if anchor_ref else None
+        payload = runtime.store.spatial_service.search_external_pois(
+            category=category,
+            boundary=boundary,
+            anchor=anchor,
+            distance_m=float(args["distance_m"]) if args.get("distance_m") is not None else None,
+        )
+        collection = payload["collection"]
+        artifact = await _persist_collection(
+            runtime,
+            alias=args.get("alias", f"{category}_scope"),
+            name=f"{category} 检索结果",
+            collection=collection,
+        )
+        return ToolExecutionResult(
+            message=f"已通过外部来源获取 {category} 对象。",
+            artifact=artifact,
+            payload={
+                "feature_count": len(collection["features"]),
+                "provider": payload.get("provider"),
+                "category": category,
+            },
+            source=str(payload.get("provider") or "external_poi"),
+            used_query=category,
+            provenance={"provider": payload.get("provider"), "category": category, "distanceM": args.get("distance_m")},
+            crs={"input": "EPSG:4326", "output": "EPSG:4326"},
+            geometry_type=_infer_collection_geometry_type(collection),
+            feature_count=len(collection["features"]),
         )
 
     async def buffer(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
@@ -224,35 +368,49 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         distance_m = float(args["distance_m"])
         buffered = runtime.store.spatial_service.buffer(collection, distance_m)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "buffer"), name=f"{distance_m:.0f}m 缓冲区", collection=buffered)
-        return ToolExecutionResult(message=f"已生成 {distance_m:.0f} 米缓冲区。", artifact=artifact)
+        return _result_with_collection_metadata(
+            message=f"已生成 {distance_m:.0f} 米缓冲区。",
+            artifact=artifact,
+            collection=buffered,
+            source="spatial_analysis",
+            used_query=str(args["input"]),
+            provenance={"operation": "buffer", "input": args["input"], "distanceM": distance_m},
+            crs={"input": "EPSG:4326", "calculation": "local_metric_crs", "output": "EPSG:4326", "unit": "meter"},
+        )
 
     async def intersect(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         left = _resolve_collection_ref(runtime, str(args["a"]))
         right = _resolve_collection_ref(runtime, str(args["b"]))
         intersection = runtime.store.spatial_service.intersect(left, right)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "intersect"), name="相交结果", collection=intersection)
-        return ToolExecutionResult(message="已完成相交分析。", artifact=artifact, payload={"feature_count": len(intersection["features"])})
+        return _result_with_collection_metadata(
+            message="已完成相交分析。",
+            artifact=artifact,
+            collection=intersection,
+            source="spatial_analysis",
+            provenance={"operation": "intersect", "a": args["a"], "b": args["b"]},
+        )
 
     async def clip(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         left = _resolve_collection_ref(runtime, str(args["a"]))
         right = _resolve_collection_ref(runtime, str(args["b"]))
         clipped = runtime.store.spatial_service.clip(left, right)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "clip"), name="裁剪结果", collection=clipped)
-        return ToolExecutionResult(message="已完成裁剪分析。", artifact=artifact)
+        return _result_with_collection_metadata(message="已完成裁剪分析。", artifact=artifact, collection=clipped, source="spatial_analysis", provenance={"operation": "clip", "a": args["a"], "b": args["b"]})
 
     async def spatial_join(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         points = _resolve_collection_ref(runtime, str(args["points"]))
         polygons = _resolve_collection_ref(runtime, str(args["polygons"]))
         joined = runtime.store.spatial_service.spatial_join(points, polygons)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "spatial_join"), name="空间连接结果", collection=joined)
-        return ToolExecutionResult(message="已完成空间连接。", artifact=artifact)
+        return _result_with_collection_metadata(message="已完成空间连接。", artifact=artifact, collection=joined, source="spatial_analysis", provenance={"operation": "spatial_join", "points": args["points"], "polygons": args["polygons"]})
 
     async def point_in_polygon(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         points = _resolve_collection_ref(runtime, str(args["points"]))
         polygons = _resolve_collection_ref(runtime, str(args["polygon"]))
         inside = runtime.store.spatial_service.point_in_polygon(points, polygons)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "point_in_polygon"), name="点落区结果", collection=inside)
-        return ToolExecutionResult(message="已完成点落区分析。", artifact=artifact, payload={"feature_count": len(inside["features"])})
+        return _result_with_collection_metadata(message="已完成点落区分析。", artifact=artifact, collection=inside, source="spatial_analysis", provenance={"operation": "point_in_polygon", "points": args["points"], "polygon": args["polygon"]})
 
     async def distance_query(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         source = _resolve_collection_ref(runtime, str(args["source"]))
@@ -260,7 +418,14 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         distance_m = float(args["distance_m"])
         result = runtime.store.spatial_service.distance_query(source, target, distance_m)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "distance_query"), name="距离查询结果", collection=result)
-        return ToolExecutionResult(message="已完成距离查询。", artifact=artifact, payload={"feature_count": len(result["features"])})
+        return _result_with_collection_metadata(
+            message="已完成距离查询。",
+            artifact=artifact,
+            collection=result,
+            source="spatial_analysis",
+            provenance={"operation": "distance_query", "source": args["source"], "target": args["target"], "distanceM": distance_m},
+            crs={"input": "EPSG:4326", "calculation": "local_metric_crs", "output": "EPSG:4326", "unit": "meter"},
+        )
 
     async def run_qgis_model(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         model_name = str(args["model_name"])
@@ -271,7 +436,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         )
         if payload.get("status") != "completed":
             raise RuntimeError(str(payload.get("error") or f"QGIS 模型 {model_name} 执行失败。"))
-        return ToolExecutionResult(message=f"已调用 QGIS 模型 {model_name}。", payload=payload)
+        return ToolExecutionResult(message=f"已调用 QGIS 模型 {model_name}。", payload=payload, source="qgis_runtime", used_query=model_name, provenance={"modelName": model_name})
 
     async def run_qgis_processing_algorithm(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         algorithm_id = str(args["algorithm_id"])
@@ -282,14 +447,16 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         )
         if payload.get("status") != "completed":
             raise RuntimeError(str(payload.get("error") or f"QGIS 算法 {algorithm_id} 执行失败。"))
-        return ToolExecutionResult(message=f"已调用 QGIS Processing 算法 {algorithm_id}。", payload=payload)
+        return ToolExecutionResult(message=f"已调用 QGIS Processing 算法 {algorithm_id}。", payload=payload, source="qgis_runtime", used_query=algorithm_id, provenance={"algorithmId": algorithm_id})
 
     async def publish_result_geojson(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        # 纯结果落盘工具不直接发布服务，只负责把集合转成可追踪 artifact。
         collection = _resolve_collection_ref(runtime, str(args["input"]))
         artifact = await _persist_collection(runtime, alias=args.get("alias", "published_geojson"), name="GeoJSON 结果", collection=collection)
-        return ToolExecutionResult(message="已导出 GeoJSON。", artifact=artifact)
+        return _result_with_collection_metadata(message="已导出 GeoJSON。", artifact=artifact, collection=collection, source="artifact_store", provenance={"operation": "publish_result_geojson", "input": args["input"]})
 
     async def publish_to_qgis_project(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        # 真正对外发布的危险动作单独封装，便于审批逻辑精确拦截。
         artifact_ref = runtime.store.platform_store.get_artifact(str(args["artifact_id"]))
         collection = runtime.store.platform_store.get_artifact_collection(artifact_ref.artifact_id)
         publish_result = await runtime.store.publisher.publish_artifact(
@@ -300,14 +467,18 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         )
         payload = {"artifactId": artifact_ref.artifact_id, **publish_result}
         runtime.store.platform_store.update_artifact_metadata(artifact_ref.artifact_id, publishResult=payload)
-        return ToolExecutionResult(message="已生成 QGIS Server 发布链接。", payload=payload)
+        return ToolExecutionResult(message="已生成 QGIS Server 发布链接。", payload=payload, source="qgis_server", used_query=artifact_ref.artifact_id, provenance={"artifactId": artifact_ref.artifact_id, "projectKey": args.get("project_key")})
 
     return [
         ToolDefinition("list_available_layers", list_available_layers, ToolMetadata("列出可用图层", "读取当前 catalog 中可用的图层目录。", "catalog", ["catalog", "layers"])),
+        ToolDefinition("list_context_references", list_context_references, ToolMetadata("列出上下文引用", "读取当前对话中可复用的地点、结果、上传图层和历史工具结果。", "context", ["context", "thread"])),
+        ToolDefinition("search_thread_context", search_thread_context, ToolMetadata("检索对话上下文", "按自然语言问题检索当前 thread 的历史摘要。", "context", ["context", "memory"]), SearchThreadContextArgs),
+        ToolDefinition("request_clarification", request_clarification, ToolMetadata("请求用户澄清", "当地点、结果、图层、距离或发布目标不明确时，生成结构化澄清。", "control", ["clarification", "control"]), RequestClarificationArgs),
         ToolDefinition("geocode_place", geocode_place, ToolMetadata("地理编码", "根据地名或地址查找位置。", "lookup", ["geocode", "lookup"]), GeocodePlaceArgs),
         ToolDefinition("reverse_geocode", reverse_geocode, ToolMetadata("逆地理编码", "根据经纬度反查地点名称。", "lookup", ["geocode", "reverse"]), ReverseGeocodeArgs),
         ToolDefinition("load_boundary", load_boundary, ToolMetadata("加载行政边界", "按地名加载边界并保存为可复用结果。", "data", ["boundary", "catalog"]), LoadBoundaryArgs),
         ToolDefinition("load_layer", load_layer, ToolMetadata("加载图层", "从系统 catalog 或最近上传图层中读取数据。", "data", ["catalog", "layer"]), LoadLayerArgs),
+        ToolDefinition("search_external_pois", search_external_pois, ToolMetadata("检索外部 POI", "从外部公开来源按地点或范围检索 POI。", "external", ["poi", "external", "osm"]), SearchExternalPoisArgs),
         ToolDefinition("buffer", buffer, ToolMetadata("缓冲区分析", "为输入要素生成指定距离缓冲区。", "analysis", ["buffer", "vector"]), BufferArgs),
         ToolDefinition("intersect", intersect, ToolMetadata("相交分析", "对两组要素执行相交分析。", "analysis", ["intersect", "overlay"]), IntersectArgs),
         ToolDefinition("clip", clip, ToolMetadata("裁剪分析", "使用边界或面图层裁剪输入要素。", "analysis", ["clip", "overlay"]), ClipArgs),
@@ -335,6 +506,212 @@ def _resolve_collection_ref(runtime: ToolRuntime, ref: str) -> dict[str, Any]:
     if ref in runtime.state.alias_map:
         return runtime.state.alias_map[ref]
     return runtime.store.layer_repository.get_layer_collection(ref)
+
+
+def _build_context_references(runtime: ToolRuntime) -> list[dict[str, Any]]:
+    # 上下文候选构造。
+    #
+    # 候选只来自当前 thread 的已确认事实；这里会把可执行集合 materialize 到
+    # 当前 runtime.alias_map，Agent 后续可以显式使用 collectionRef 调用工具。
+    if not runtime.context.thread_id:
+        return []
+    list_runs = getattr(runtime.store.platform_store, "list_runs_for_thread", None)
+    if not callable(list_runs):
+        return []
+    references: list[dict[str, Any]] = []
+    for run in list_runs(runtime.context.thread_id):
+        state = run.state
+        if state.place_resolution and state.place_resolution.selected and state.place_resolution.selected.latitude is not None and state.place_resolution.selected.longitude is not None:
+            selected = state.place_resolution.selected
+            collection_ref = f"context_place_{run.id}"
+            collection = _build_place_collection(selected.model_dump(mode="json"))
+            runtime.state.alias_map[collection_ref] = collection
+            references.append(
+                {
+                    "referenceId": f"place:{run.id}",
+                    "kind": "place",
+                    "label": selected.display_name or selected.label,
+                    "description": f"来自历史问题：{run.user_query}",
+                    "sourceRunId": run.id,
+                    "collectionRef": collection_ref,
+                    "confidence": 0.9,
+                    "usableAs": ["collection", "place_anchor", "buffer_input", "poi_anchor"],
+                    "metadata": {
+                        "query": state.place_resolution.query,
+                        "provider": state.place_resolution.provider,
+                        "latitude": selected.latitude,
+                        "longitude": selected.longitude,
+                    },
+                }
+            )
+        for artifact in state.artifacts[-4:]:
+            collection_ref = f"context_artifact_{artifact.artifact_id}"
+            try:
+                collection = runtime.store.platform_store.get_artifact_collection(artifact.artifact_id)
+            except Exception:
+                collection = None
+            if collection is not None:
+                runtime.state.alias_map[collection_ref] = collection
+                runtime.state.alias_map[artifact.artifact_id] = collection
+            references.append(
+                {
+                    "referenceId": f"artifact:{artifact.artifact_id}",
+                    "kind": "artifact",
+                    "label": artifact.name,
+                    "description": f"来自历史结果：{run.user_query}",
+                    "sourceRunId": run.id,
+                    "artifactId": artifact.artifact_id,
+                    "collectionRef": collection_ref if collection is not None else None,
+                    "confidence": 0.95,
+                    "usableAs": ["collection", "artifact", "buffer_input", "overlay_input"] if collection is not None else ["artifact"],
+                    "metadata": artifact.metadata,
+                }
+            )
+        if state.clarification and state.clarification.selected_option_id:
+            references.append(
+                {
+                    "referenceId": f"clarification:{run.id}:{state.clarification.selected_option_id}",
+                    "kind": "clarification",
+                    "label": state.clarification.selected_option_id,
+                    "description": state.clarification.question,
+                    "sourceRunId": run.id,
+                    "confidence": 0.8,
+                    "usableAs": ["decision_context"],
+                    "metadata": state.clarification.model_dump(mode="json"),
+                }
+            )
+    if runtime.context.latest_uploaded_layer_key:
+        references.append(
+            {
+                "referenceId": f"layer:{runtime.context.latest_uploaded_layer_key}",
+                "kind": "layer",
+                "label": "最近上传图层",
+                "description": "当前会话最近上传的数据图层。",
+                "layerKey": runtime.context.latest_uploaded_layer_key,
+                "confidence": 1.0,
+                "usableAs": ["layer_key", "collection"],
+                "metadata": {"layerKey": runtime.context.latest_uploaded_layer_key},
+            }
+        )
+    return references[:24]
+
+
+def _search_thread_context(runtime: ToolRuntime, *, query: str, limit: int) -> list[dict[str, Any]]:
+    if not runtime.context.thread_id:
+        return []
+    list_runs = getattr(runtime.store.platform_store, "list_runs_for_thread", None)
+    if not callable(list_runs):
+        return []
+    normalized = query.strip().lower()
+    snippets: list[dict[str, Any]] = []
+    for run in list_runs(runtime.context.thread_id):
+        summary = run.state.final_response.summary if run.state.final_response else ""
+        haystack = f"{run.user_query}\n{summary}".lower()
+        score = 1.0 if normalized and normalized in haystack else 0.35
+        if normalized and not any(token and token in haystack for token in normalized.split()):
+            score = 0.2
+        snippets.append(
+            {
+                "runId": run.id,
+                "status": run.status,
+                "userQuery": run.user_query,
+                "summary": summary,
+                "score": score,
+                "artifactCount": len(run.state.artifacts),
+                "hasPlace": bool(run.state.place_resolution and run.state.place_resolution.selected),
+            }
+        )
+    return sorted(snippets, key=lambda item: item["score"], reverse=True)[:limit]
+
+
+def _build_place_collection(candidate: dict[str, Any]) -> dict[str, Any]:
+    latitude = candidate.get("latitude")
+    longitude = candidate.get("longitude")
+    if latitude is None or longitude is None:
+        return {"type": "FeatureCollection", "features": []}
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "label": candidate.get("label"),
+                    "display_name": candidate.get("display_name") or candidate.get("displayName"),
+                    "country": candidate.get("country"),
+                    "source": candidate.get("source") or "thread_context",
+                },
+                "geometry": {"type": "Point", "coordinates": [float(longitude), float(latitude)]},
+            }
+        ],
+    }
+
+
+def _build_geocode_collection(payload: dict[str, Any]) -> dict[str, Any]:
+    # 地理编码结果转换为可复用集合。
+    #
+    # geocode 原始 payload 以 matches 为主，更适合展示；
+    # 这里把带坐标的候选转换成点集合，供 distance_query / buffer 等工具继续消费。
+    features = []
+    for index, match in enumerate(payload.get("matches", []), start=1):
+        latitude = match.get("latitude") or match.get("lat")
+        longitude = match.get("longitude") or match.get("lon")
+        if latitude is None or longitude is None:
+            continue
+        try:
+            latitude_value = float(latitude)
+            longitude_value = float(longitude)
+        except (TypeError, ValueError):
+            continue
+        feature = {
+            "type": "Feature",
+            "properties": {
+                "match_index": index,
+                "label": match.get("label") or match.get("display_name"),
+                "display_name": match.get("display_name"),
+                "country": match.get("country"),
+                "source": match.get("source", "geocode"),
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [longitude_value, latitude_value],
+            },
+        }
+        features.append(feature)
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _extract_geocode_labels(payload: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for match in payload.get("matches", []):
+        for candidate in (match.get("label"), match.get("display_name")):
+            if isinstance(candidate, str) and candidate.strip():
+                labels.append(candidate.strip())
+    return labels
+
+
+def _remember_runtime_collection(
+    runtime: ToolRuntime,
+    collection: dict[str, Any],
+    *,
+    preferred_refs: list[str],
+    extra_refs: list[str] | None = None,
+) -> list[str]:
+    # 轻量级结果引用登记。
+    #
+    # 不是所有工具都需要立刻生成 artifact；
+    # 对 geocode 这类中间查询，先登记为 runtime collection 引用，就足够给后续分析复用。
+    references: list[str] = []
+    seen: set[str] = set()
+    for candidate in [*preferred_refs, *(extra_refs or [])]:
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            continue
+        runtime.state.alias_map[normalized] = collection
+        references.append(normalized)
+        seen.add(normalized)
+    if references:
+        runtime.state.latest_collection_ref = references[0]
+    return references
 
 
 async def _persist_collection(
@@ -368,3 +745,36 @@ async def _persist_collection(
     runtime.state.latest_collection_ref = alias
     runtime.state.latest_artifact_id = artifact.artifact_id
     return artifact
+
+
+def _infer_collection_geometry_type(collection: dict[str, Any]) -> str | None:
+    features = collection.get("features") or []
+    for feature in features:
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if isinstance(geometry, dict) and geometry.get("type"):
+            return str(geometry["type"])
+    return None
+
+
+def _result_with_collection_metadata(
+    *,
+    message: str,
+    artifact: ArtifactRef | None,
+    collection: dict[str, Any],
+    source: str,
+    used_query: str | None = None,
+    provenance: dict[str, Any] | None = None,
+    crs: dict[str, Any] | None = None,
+) -> ToolExecutionResult:
+    feature_count = len(collection.get("features", []))
+    return ToolExecutionResult(
+        message=message,
+        artifact=artifact,
+        payload={"feature_count": feature_count},
+        source=source,
+        used_query=used_query,
+        provenance=provenance or {},
+        crs=crs or {"input": "EPSG:4326", "output": "EPSG:4326"},
+        geometry_type=_infer_collection_geometry_type(collection),
+        feature_count=feature_count,
+    )

@@ -1,8 +1,30 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - Supervisor 默认配置
+#
+#   文件:       supervisor_config.py
+#
+#   日期:       2026年04月20日
+#   作者:       OpenAI Codex
+# --------------------------------------------------------------------------
+# 模块职责
+#
+# 定义运行时默认 supervisor、subagent、UI 与上下文窗口配置，并负责配置归一化合并。
 from __future__ import annotations
 
 from typing import Any
 
-from shared_types.schemas import AgentRuntimeConfig, RuntimeContextConfig, RuntimeSubAgentConfig, RuntimeUiConfig, SupervisorRuntimeConfig
+from shared_types.schemas import (
+    AgentRuntimeConfig,
+    RuntimeCatalogConfig,
+    RuntimeContextConfig,
+    RuntimeGeosearchConfig,
+    RuntimePlanningConfig,
+    RuntimePoiConfig,
+    RuntimeSubAgentConfig,
+    RuntimeUiConfig,
+    SupervisorRuntimeConfig,
+)
 
 
 LOOP_PHASES = {
@@ -23,10 +45,10 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
         supervisor=SupervisorRuntimeConfig(
             name="geo_agent_supervisor",
             system_prompt=(
-                "你是中文 GIS Deep Agent supervisor。"
-                "请先理解任务、再拆分待办、必要时调用 task() 委派给合适子智能体。"
-                "优先复用已有 GIS 工具，不要编造图层、SQL 或 shell 步骤。"
-                "所有最终输出都要用中文。"
+                "你是一个中文地理空间智能助手，擅长理解用户的空间分析需求。"
+                "收到问题后，先判断意图，再决定自己直接调用工具还是分派给子智能体协作。"
+                "优先使用已经就绪的 GIS 工具，基于真实数据给出答案，不凭空构造结果。"
+                "和用户交流时像一位耐心的分析师，用清晰的中文说明你的判断和下一步。"
             ),
             approval_interrupt_tools=["publish_to_qgis_project"],
         ),
@@ -37,8 +59,9 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 role="空间分析",
                 summary="负责边界、图层与空间分析。",
                 system_prompt=(
-                    "你是空间分析子智能体。"
-                    "优先使用 load_boundary、load_layer、buffer、intersect、clip、point_in_polygon、distance_query、publish_result_geojson 完成任务，并使用中文总结。"
+                    "你是空间分析子智能体，负责执行具体的 GIS 计算任务。"
+                    "你的工具箱里有边界加载、图层加载、缓冲区分析、相交分析、裁剪、点面判断、距离查询和结果导出。"
+                    "收到任务后直接动手执行，完成时用简洁的中文说明你做了什么、结果是什么。"
                 ),
                 tools=[
                     "list_available_layers",
@@ -46,6 +69,7 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                     "reverse_geocode",
                     "load_boundary",
                     "load_layer",
+                    "search_external_pois",
                     "buffer",
                     "intersect",
                     "clip",
@@ -60,7 +84,7 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 name="QGIS Operator",
                 role="QGIS 执行",
                 summary="负责 QGIS Processing / model 执行。",
-                system_prompt="你是 QGIS 子智能体。只在需要调用 QGIS 算法或模型时介入，并用中文简要说明执行结果。",
+                system_prompt="你是 QGIS 执行子智能体，负责运行 QGIS 处理算法和模型。收到调用指令后执行，完成时用中文简短汇报结果。",
                 tools=["run_qgis_model", "run_qgis_processing_algorithm"],
             ),
             RuntimeSubAgentConfig(
@@ -68,7 +92,7 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 name="Publisher",
                 role="发布交付",
                 summary="负责服务发布与交付整理。",
-                system_prompt="你是发布子智能体。只在用户明确要求发布、分享或服务交付时使用 publish_to_qgis_project。",
+                system_prompt="你是发布交付子智能体，在用户希望把分析结果发布为在线地图服务时介入，将 GeoJSON 成果推送到 QGIS Server。",
                 tools=["publish_to_qgis_project"],
             ),
         ],
@@ -77,6 +101,15 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
             show_internal_reasoning_labels=True,
             event_grouping_window_ms=1500,
         ),
+        catalog=RuntimeCatalogConfig(
+            allow_empty_catalog=True,
+            admin_enabled=True,
+        ),
+        planning=RuntimePlanningConfig(
+            max_plan_repair_rounds=2,
+            allow_text_only_delivery=True,
+            external_source_priority=["catalog", "external_poi", "geosearch"],
+        ),
         context=RuntimeContextConfig(
             memory_file_paths=["/AGENTS.md", "/THREAD_CONTEXT.md"],
             history_run_limit=4,
@@ -84,6 +117,22 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
             tool_call_window=8,
             artifact_window=6,
             warning_window=6,
+        ),
+        geosearch=RuntimeGeosearchConfig(
+            provider="nominatim",
+            enabled=True,
+            base_url="https://nominatim.openstreetmap.org",
+            user_agent="geo-agent-platform/0.1",
+            timeout_ms=8000,
+            max_candidates=5,
+        ),
+        external_poi=RuntimePoiConfig(
+            provider="overpass",
+            enabled=True,
+            base_url="https://overpass-api.de/api/interpreter",
+            user_agent="geo-agent-platform/0.1",
+            timeout_ms=8000,
+            max_results=200,
         ),
     )
 

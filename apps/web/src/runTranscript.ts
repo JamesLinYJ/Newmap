@@ -1,4 +1,16 @@
-import type { AgentRuntimeConfig, AgentState, AnalysisRun, ArtifactRef, RunEvent } from '@geo-agent-platform/shared-types'
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - 运行 Transcript 派生器
+//
+//   文件:       runTranscript.ts
+//
+//   日期:       2026年04月20日
+//   作者:       OpenAI Codex
+// --------------------------------------------------------------------------
+// 模块职责
+//
+// 把 run、agent state、events 和 artifacts 统一派生成前端 REPL 可直接渲染的记录列表。
+import type { AgentRuntimeConfig, AgentState, AnalysisRun, ArtifactRef, RunEvent, ToolDescriptor } from '@geo-agent-platform/shared-types'
 
 export type TranscriptEntryKind = 'user' | 'assistant' | 'supervisor' | 'subagent' | 'tool' | 'approval' | 'artifact' | 'error'
 export type TranscriptEntryStatus = 'idle' | 'running' | 'completed' | 'blocked' | 'failed'
@@ -20,17 +32,85 @@ export interface TranscriptEntry {
   details?: Record<string, unknown> | null
 }
 
+export interface ConversationCommand {
+  id: string
+  title: string
+  status: TranscriptEntryStatus
+  body: string
+  commandText?: string | null
+  toolName?: string | null
+  details?: Record<string, unknown> | null
+}
+
+export type ConversationEntryKind = 'message' | 'command_batch' | 'approval' | 'artifact' | 'error'
+
+export interface ConversationEntry {
+  id: string
+  kind: ConversationEntryKind
+  timestamp: string
+  title: string
+  body: string
+  status: TranscriptEntryStatus
+  role?: 'user' | 'assistant'
+  badge?: string | null
+  note?: string | null
+  commands?: ConversationCommand[]
+  artifactId?: string | null
+  approvalId?: string | null
+  recoveryNote?: string | null
+  details?: Record<string, unknown> | null
+}
+
 export function isActivityEntry(kind: TranscriptEntryKind) {
+  // 这些 kind 会在首页和 debug 页里显示为“过程节点”，而不是普通对话消息。
   return kind === 'supervisor' || kind === 'subagent' || kind === 'tool' || kind === 'approval' || kind === 'artifact'
 }
 
-interface DeriveRunTranscriptInput {
+export interface DeriveRunTranscriptInput {
   run?: AnalysisRun
   agentState?: AgentState
   events: RunEvent[]
   artifacts: ArtifactRef[]
   query?: string
   runtimeConfig?: AgentRuntimeConfig
+}
+
+export interface DeriveThreadTranscriptInput extends DeriveRunTranscriptInput {
+  threadRuns?: ReadonlyArray<AnalysisRun>
+}
+
+export function deriveThreadTranscript({
+  run,
+  agentState,
+  events,
+  artifacts,
+  query,
+  runtimeConfig,
+  threadRuns = [],
+}: DeriveThreadTranscriptInput): TranscriptEntry[] {
+  // 线程 transcript
+  //
+  // 首页需要看到同一 thread 里的连续对话，而不是每次只盯着最后一个 run。
+  // 这样澄清、补充和继续分析会自然插入原任务上下文，而不是视觉上跳成新任务。
+  const candidateRuns = dedupeRunsById([...(threadRuns ?? []), ...(run ? [run] : [])])
+  if (candidateRuns.length <= 1) {
+    return deriveRunTranscript({ run, agentState, events, artifacts, query, runtimeConfig })
+  }
+
+  const orderedRuns = [...candidateRuns].sort(compareRunCreatedAt)
+  const entries = orderedRuns.flatMap((item) =>
+    deriveRunTranscript({
+      run: item,
+      agentState: item.id === run?.id ? agentState ?? item.state : item.state,
+      events: item.id === run?.id ? events : [],
+      artifacts: item.id === run?.id ? artifacts : item.state.artifacts,
+      query: item.userQuery,
+      runtimeConfig,
+    }),
+  )
+
+  const maxEntries = Math.max(runtimeConfig?.ui?.transcriptMaxEntries ?? 40, 12)
+  return compactTranscriptEntries(entries).slice(-maxEntries)
 }
 
 export function deriveRunTranscript({
@@ -41,6 +121,10 @@ export function deriveRunTranscript({
   query,
   runtimeConfig,
 }: DeriveRunTranscriptInput): TranscriptEntry[] {
+  // transcript 派生层是前端唯一的“运行叙事编排器”。
+  //
+  // 它只消费事实源：run / state / events / artifacts，
+  // 不额外发明阶段文案，保证首页和 debug 页能共享同一套记录语义。
   const entries: TranscriptEntry[] = []
   const userQuery =
     run?.userQuery ??
@@ -52,7 +136,7 @@ export function deriveRunTranscript({
       kind: 'user',
       timestamp: run?.createdAt ?? events[0]?.timestamp ?? new Date().toISOString(),
       title: '用户问题',
-      body: userQuery,
+      body: normalizeTranscriptText(userQuery),
       status: 'completed',
     })
   }
@@ -64,7 +148,7 @@ export function deriveRunTranscript({
     }
   }
 
-  const finalSummary = agentState?.finalResponse?.summary?.trim()
+  const finalSummary = sanitizeUserFacingText(normalizeTranscriptText(agentState?.finalResponse?.summary))
   if (finalSummary && !entries.some((entry) => entry.kind === 'assistant' && entry.body === finalSummary)) {
     entries.push({
       id: `assistant:final:${run?.id ?? 'current'}`,
@@ -79,7 +163,7 @@ export function deriveRunTranscript({
   if (!entries.some((entry) => entry.kind === 'artifact') && artifacts.length) {
     for (const artifact of artifacts) {
       entries.push({
-        id: `artifact:fallback:${artifact.artifactId}`,
+        id: `artifact:store:${artifact.artifactId}`,
         kind: 'artifact',
         timestamp: run?.updatedAt ?? new Date().toISOString(),
         title: artifact.name,
@@ -95,6 +179,7 @@ export function deriveRunTranscript({
 }
 
 export function pickTranscriptHeadline(entries: TranscriptEntry[], runStatus?: string) {
+  // 首屏 headline 只是 transcript 的摘要视图，不单独维护另一套状态机。
   const latest = [...entries].reverse().find((entry) => entry.kind !== 'user') ?? entries.at(-1)
   if (latest) {
     return latest
@@ -109,7 +194,107 @@ export function pickTranscriptHeadline(entries: TranscriptEntry[], runStatus?: s
   }
 }
 
+export function deriveConversationEntries(
+  entries: ReadonlyArray<TranscriptEntry>,
+  runStatus?: string,
+  toolDescriptors: ReadonlyArray<ToolDescriptor> = [],
+): ConversationEntry[] {
+  const conversation: ConversationEntry[] = []
+  let pendingActivity: TranscriptEntry[] = []
+  const toolMetadataByName = new Map(toolDescriptors.map((tool) => [tool.name, tool] as const))
+
+  const flushPendingActivity = () => {
+    if (!pendingActivity.length) {
+      return
+    }
+    const narration = buildNarrationEntry(pendingActivity, runStatus, toolMetadataByName)
+    if (narration) {
+      conversation.push(narration)
+    }
+    const commandBatch = buildCommandBatchEntry(pendingActivity, toolMetadataByName)
+    if (commandBatch) {
+      conversation.push(commandBatch)
+    }
+    pendingActivity = []
+  }
+
+  for (const entry of entries) {
+    if (entry.kind === 'supervisor' || entry.kind === 'subagent' || entry.kind === 'tool') {
+      pendingActivity.push(entry)
+      continue
+    }
+
+    flushPendingActivity()
+
+    if (entry.kind === 'user' || entry.kind === 'assistant') {
+      conversation.push({
+        id: `message:${entry.id}`,
+        kind: 'message',
+        role: entry.kind === 'user' ? 'user' : 'assistant',
+        timestamp: entry.timestamp,
+        title: entry.title,
+        body: entry.body,
+        status: entry.status,
+        recoveryNote: entry.recoveryNote,
+        details: entry.details,
+      })
+      continue
+    }
+
+    if (entry.kind === 'approval') {
+      conversation.push({
+        id: `approval:${entry.id}`,
+        kind: 'approval',
+        timestamp: entry.timestamp,
+        title: entry.title,
+        body: entry.body,
+        status: entry.status,
+        approvalId: entry.approvalId,
+        artifactId: entry.artifactId,
+        badge: '待确认',
+        details: entry.details,
+      })
+      continue
+    }
+
+    if (entry.kind === 'artifact') {
+      conversation.push({
+        id: `message:artifact:${entry.id}`,
+        kind: 'message',
+        role: 'assistant',
+        timestamp: entry.timestamp,
+        title: '结果已生成',
+        body: `我已经生成结果“${sanitizeUserFacingText(entry.title)}”，现在可以在地图里继续查看。`,
+        status: entry.status,
+        artifactId: entry.artifactId,
+        note: '如果你想继续分析，我会直接基于这个结果往下处理。',
+        details: entry.details,
+      })
+      continue
+    }
+
+    conversation.push({
+      id: `error:${entry.id}`,
+      kind: 'error',
+      timestamp: entry.timestamp,
+      title: entry.title,
+      body: entry.body,
+      status: entry.status,
+      badge: entry.status === 'failed' ? '失败' : '提醒',
+      recoveryNote: entry.recoveryNote,
+      details: entry.details,
+    })
+  }
+
+  flushPendingActivity()
+  return conversation
+}
+
 function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): TranscriptEntry | null {
+  // 事件到 transcript 的映射必须保持稳定且可逆理解。
+  //
+  // 同一种 event 在首页和 debug 页都应落成同一种 kind，
+  // 否则用户会看到“同一条运行记录在不同页面像两回事”。
   const payload = event.payload ?? {}
   if (event.type === 'message.delta') {
     return {
@@ -117,14 +302,14 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
       kind: 'assistant',
       timestamp: event.timestamp,
       title: '助手回复',
-      body: event.message,
+      body: sanitizeUserFacingText(normalizeTranscriptText(event.message)),
       status: 'running',
       details: payload,
     }
   }
   if (event.type === 'loop.updated') {
-    const title = sanitizeUserFacingText(String(payload.title ?? '正在处理'))
-    const body = sanitizeUserFacingText(String(payload.description ?? event.message))
+    const title = sanitizeUserFacingText(normalizeTranscriptText(payload.title ?? '正在处理'))
+    const body = sanitizeUserFacingText(normalizeTranscriptText(payload.description ?? event.message))
     return {
       id: event.eventId,
       kind: 'supervisor',
@@ -141,7 +326,7 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
   if (event.type === 'subagent.created' || event.type === 'subagent.updated') {
     const status = normalizeTranscriptStatus(payload.status)
     const currentStepId = stringOrNull(payload.currentStepId)
-    const latestMessage = sanitizeUserFacingText(String(payload.latestMessage ?? payload.summary ?? event.message))
+    const latestMessage = sanitizeUserFacingText(normalizeTranscriptText(payload.latestMessage ?? payload.summary ?? event.message))
     if (status === 'idle' && !currentStepId) {
       return null
     }
@@ -179,8 +364,8 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
       id: event.eventId,
       kind: 'artifact',
       timestamp: event.timestamp,
-      title: String(payload.name ?? '新结果图层'),
-      body: sanitizeUserFacingText(event.message),
+      title: normalizeTranscriptText(payload.name ?? '新结果图层'),
+      body: sanitizeUserFacingText(normalizeTranscriptText(event.message)),
       status: 'completed',
       artifactId: stringOrNull(payload.artifactId),
       details: payload,
@@ -191,8 +376,8 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
       id: event.eventId,
       kind: 'approval',
       timestamp: event.timestamp,
-      title: sanitizeUserFacingText(String(payload.title ?? '等待审批')),
-      body: sanitizeUserFacingText(String(payload.description ?? event.message)),
+      title: sanitizeUserFacingText(normalizeTranscriptText(payload.title ?? '等待审批')),
+      body: sanitizeUserFacingText(normalizeTranscriptText(payload.description ?? event.message)),
       status: 'blocked',
       approvalId: stringOrNull(payload.approvalId),
       artifactId: stringOrNull(payload.artifactId),
@@ -218,7 +403,7 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
       kind: 'assistant',
       timestamp: event.timestamp,
       title: '最终结果',
-      body: sanitizeUserFacingText(String((payload.finalResponse as Record<string, unknown> | undefined)?.summary ?? event.message)),
+      body: sanitizeUserFacingText(normalizeTranscriptText((payload.finalResponse as Record<string, unknown> | undefined)?.summary ?? event.message)),
       status: payload.approvals ? 'blocked' : 'completed',
       details: payload,
     }
@@ -226,7 +411,152 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
   return null
 }
 
+function buildNarrationEntry(
+  activityEntries: TranscriptEntry[],
+  runStatus: string | undefined,
+  toolMetadataByName: ReadonlyMap<string, ToolDescriptor>,
+): ConversationEntry | null {
+  const toolEntries = activityEntries.filter((entry) => entry.kind === 'tool')
+  const runningTool = [...toolEntries].reverse().find((entry) => entry.status === 'running')
+  const latestTool = toolEntries.at(-1)
+  const latestSupervisor = [...activityEntries].reverse().find((entry) => entry.kind === 'supervisor')
+  const latestSubagent = [...activityEntries].reverse().find((entry) => entry.kind === 'subagent')
+  const latestEntry = activityEntries.at(-1)
+  if (!latestEntry) {
+    return null
+  }
+
+  const runtimeNarration = latestSupervisor?.body || latestSubagent?.body
+  if (runtimeNarration) {
+    return {
+      id: `narration:${latestEntry.id}`,
+      kind: 'message',
+      role: 'assistant',
+      timestamp: latestEntry.timestamp,
+      title: '',
+      body: `${stripTrailingPunctuation(sanitizeUserFacingText(runtimeNarration))}。`,
+      status: latestEntry.status,
+      note: buildNarrationNote(latestSupervisor, latestSubagent, runStatus, runtimeNarration),
+      details: latestSupervisor?.details ?? latestSubagent?.details ?? latestEntry.details,
+    }
+  }
+
+  if (runningTool) {
+    const body = buildRunningNarration(runningTool, toolMetadataByName)
+    return {
+      id: `narration:${latestEntry.id}`,
+      kind: 'message',
+      role: 'assistant',
+      timestamp: latestEntry.timestamp,
+      title: '',
+      body,
+      status: 'running',
+      note: buildNarrationNote(latestSupervisor, latestSubagent, runStatus),
+      details: latestSupervisor?.details ?? latestSubagent?.details ?? runningTool.details,
+    }
+  }
+
+  if (toolEntries.length) {
+    const labels = Array.from(new Set(toolEntries.map((entry) => humanizeToolLabel(entry.title, entry.toolName, toolMetadataByName)))).slice(0, 3)
+    const lead = labels.length === 1 ? `我先执行了“${labels[0]}”` : `我先连续处理了 ${labels.join('、')}`
+    const detailSource = latestSupervisor?.body || latestSubagent?.body || latestTool?.body || latestEntry.body
+    const detail = toNarrationDetail(detailSource, latestTool?.toolName ?? latestTool?.title, toolMetadataByName)
+    return {
+      id: `narration:${latestEntry.id}`,
+      kind: 'message',
+      role: 'assistant',
+      timestamp: latestEntry.timestamp,
+      title: '',
+      body: `${lead}，${detail}`,
+      status: latestEntry.status === 'failed' ? 'failed' : 'completed',
+      note: buildNarrationNote(latestSupervisor, latestSubagent, runStatus),
+      details: latestSupervisor?.details ?? latestSubagent?.details ?? latestTool?.details,
+    }
+  }
+
+  const detailSource = latestSupervisor?.body || latestSubagent?.body || latestEntry.body
+  return {
+    id: `narration:${latestEntry.id}`,
+    kind: 'message',
+    role: 'assistant',
+    timestamp: latestEntry.timestamp,
+    title: '',
+    body: `我正在整理这一步，${stripTrailingPunctuation(sanitizeUserFacingText(detailSource))}。`,
+    status: latestEntry.status,
+    note: buildNarrationNote(latestSupervisor, latestSubagent, runStatus),
+    details: latestEntry.details,
+  }
+}
+
+function buildCommandBatchEntry(activityEntries: TranscriptEntry[], toolMetadataByName: ReadonlyMap<string, ToolDescriptor>): ConversationEntry | null {
+  const toolEntries = activityEntries.filter((entry) => entry.kind === 'tool')
+  if (!toolEntries.length) {
+    return null
+  }
+  const commands = mergeConversationCommands(toolEntries, toolMetadataByName)
+  if (!commands.length) {
+    return null
+  }
+
+  const runningCount = commands.filter((command) => command.status === 'running').length
+  const failedCount = commands.filter((command) => command.status === 'failed').length
+  const completedCount = commands.filter((command) => command.status === 'completed').length
+  const status: TranscriptEntryStatus =
+    failedCount > 0 ? 'failed' : runningCount > 0 ? 'running' : completedCount > 0 ? 'completed' : 'idle'
+  const title =
+    failedCount > 0
+      ? `已运行 ${commands.length} 个命令，其中 ${failedCount} 个失败`
+      : runningCount > 0
+        ? `正在执行 ${commands.length} 个命令`
+        : `已运行 ${commands.length} 个命令`
+  const latest = commands.at(-1)
+
+  return {
+    id: `command-batch:${toolEntries.at(-1)?.id ?? 'current'}`,
+    kind: 'command_batch',
+    timestamp: toolEntries.at(-1)?.timestamp ?? new Date().toISOString(),
+    title,
+    body: latest ? latest.body : '当前命令批次已经整理完成。',
+    status,
+    badge: null,
+    commands,
+    details: latest?.details ?? null,
+  }
+}
+
+function mergeConversationCommands(toolEntries: TranscriptEntry[], toolMetadataByName: ReadonlyMap<string, ToolDescriptor>): ConversationCommand[] {
+  const commands: ConversationCommand[] = []
+  for (const entry of toolEntries) {
+    const previous = commands.at(-1)
+    if (
+      previous &&
+      previous.toolName === (entry.toolName ?? null) &&
+      previous.commandText === (entry.commandText ?? null)
+    ) {
+      commands[commands.length - 1] = {
+        ...previous,
+        status: entry.status,
+        body: entry.body,
+        details: entry.details ?? previous.details,
+      }
+      continue
+    }
+    commands.push({
+      id: entry.id,
+      title: humanizeToolLabel(entry.title, entry.toolName, toolMetadataByName),
+      status: entry.status,
+      body: entry.body,
+      commandText: entry.commandText,
+      toolName: entry.toolName,
+      details: entry.details,
+    })
+  }
+  return commands
+}
+
 function buildToolCommandText(toolName: string, args: unknown) {
+  // commandText 刻意控制得很短，只保留用户能看懂的工具名和关键参数，
+  // 不把整份 payload 直接抛给 UI。
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
     return `> ${toolName}`
   }
@@ -234,6 +564,20 @@ function buildToolCommandText(toolName: string, args: unknown) {
     .slice(0, 4)
     .map(([key, value]) => `${key}=${formatCommandValue(value)}`)
   return pairs.length ? `> ${toolName} ${pairs.join(' ')}` : `> ${toolName}`
+}
+
+function buildRunningNarration(
+  runningTool: TranscriptEntry,
+  toolMetadataByName: ReadonlyMap<string, ToolDescriptor>,
+) {
+  const label = humanizeToolLabel(runningTool.title, runningTool.toolName, toolMetadataByName)
+  if (runningTool.toolName === 'geocode_place') {
+    const query = extractArgumentValue(runningTool.details?.args, 'query')
+    return query
+      ? `我先确认“${query}”对应的实际位置，再继续往下做空间分析。`
+      : `我先确认“${label}”这一步对应的位置结果，再继续往下推进。`
+  }
+  return `我先处理“${label}”这一步，${describeToolIntent(runningTool.toolName ?? runningTool.title, toolMetadataByName)}`
 }
 
 function formatCommandValue(value: unknown) {
@@ -246,7 +590,85 @@ function formatCommandValue(value: unknown) {
   return JSON.stringify(value)
 }
 
+function describeToolIntent(toolName: string, toolMetadataByName: ReadonlyMap<string, ToolDescriptor>) {
+  if (toolName === 'geocode_place') {
+    return '先把地点文本解析成可以用于空间分析的坐标锚点。'
+  }
+  if (toolName === 'buffer') {
+    return '先围绕当前锚点生成空间范围，方便后续筛选结果。'
+  }
+  if (toolName === 'intersect') {
+    return '先把目标对象和分析范围叠加，筛出真正命中的结果。'
+  }
+  if (toolName === 'load_layer') {
+    return '先把这一步需要的图层装入运行上下文。'
+  }
+  const descriptor = toolMetadataByName.get(toolName)
+  if (descriptor?.description?.trim()) {
+    return `${stripTrailingPunctuation(sanitizeUserFacingText(descriptor.description))}。`
+  }
+  return '先整理当前步骤所需的空间结果。'
+}
+
+function buildNarrationNote(
+  supervisorEntry: TranscriptEntry | undefined,
+  subagentEntry: TranscriptEntry | undefined,
+  runStatus?: string,
+  currentBody?: string,
+) {
+  const source = supervisorEntry?.body || subagentEntry?.body
+  if (source && stripTrailingPunctuation(sanitizeUserFacingText(source)) !== stripTrailingPunctuation(sanitizeUserFacingText(currentBody ?? ''))) {
+    return `我接下来会继续围绕这一步往下推进：${stripTrailingPunctuation(sanitizeUserFacingText(source))}。`
+  }
+  if (runStatus === 'running') {
+    return '我会继续把这轮分析往下做，下面会同步补充实际运行的命令。'
+  }
+  return null
+}
+
+function toNarrationDetail(
+  detailSource: string,
+  toolName: string | undefined,
+  toolMetadataByName: ReadonlyMap<string, ToolDescriptor>,
+) {
+  if (toolName === 'geocode_place') {
+    const normalized = stripTrailingPunctuation(sanitizeUserFacingText(detailSource))
+    if (normalized.includes('已解析地点') || normalized.includes('地点')) {
+      return `${normalized}。`
+    }
+    return '地点已经解析完成，接下来可以基于这个锚点继续做范围分析。'
+  }
+  const normalized = stripTrailingPunctuation(sanitizeUserFacingText(detailSource))
+  if (!normalized || normalized.includes('正在调用工具')) {
+    return describeToolIntent(toolName ?? '', toolMetadataByName)
+  }
+  if (normalized.startsWith('已')) {
+    return `${normalized}。`
+  }
+  return `${normalized}。`
+}
+
+function stripTrailingPunctuation(value: string) {
+  return value.replace(/[。！!？?]+$/u, '').trim()
+}
+
+function humanizeToolLabel(label: string, toolName: string | null | undefined, toolMetadataByName: ReadonlyMap<string, ToolDescriptor>) {
+  const descriptor = toolName ? toolMetadataByName.get(toolName) : undefined
+  if (descriptor?.label?.trim()) {
+    return descriptor.label.trim()
+  }
+  const normalized = sanitizeUserFacingText(label)
+  if (normalized.includes('_')) {
+    return normalized
+      .split('_')
+      .filter(Boolean)
+      .join(' ')
+  }
+  return normalized
+}
+
 function deriveRecoveryNote(event: RunEvent, events: RunEvent[]) {
+  // 异常块不仅显示失败，还尝试告诉用户“系统后来有没有继续往前走”。
   const currentIndex = events.findIndex((item) => item.eventId === event.eventId)
   const nextMeaningfulEvent = events
     .slice(currentIndex + 1)
@@ -273,6 +695,8 @@ function deriveRecoveryNote(event: RunEvent, events: RunEvent[]) {
 }
 
 function compactTranscriptEntries(entries: TranscriptEntry[]) {
+  // 折叠连续重复的 supervisor / subagent / tool 记录，
+  // 避免高频事件把 REPL 列表刷成难以阅读的流水账。
   const compacted: TranscriptEntry[] = []
 
   for (const entry of entries) {
@@ -323,6 +747,8 @@ function shouldMergeTranscriptEntries(previous: TranscriptEntry, current: Transc
 }
 
 function findPreviousToolArgs(event: RunEvent, events: RunEvent[]) {
+  // tool.completed 经常只带 tool 名，不重复携带 args；
+  // 这里回看最近一次同 step 的 tool.started，把命令文本补完整。
   const currentIndex = events.findIndex((item) => item.eventId === event.eventId)
   if (currentIndex <= 0) {
     return null
@@ -341,6 +767,7 @@ function findPreviousToolArgs(event: RunEvent, events: RunEvent[]) {
 }
 
 function sanitizeUserFacingText(value: string) {
+  // 这里做的是用户态术语收口，不影响后端原始状态。
   return value
     .replaceAll('Spatial Analyst', '空间分析')
     .replaceAll('QGIS Operator', 'QGIS 执行')
@@ -350,12 +777,13 @@ function sanitizeUserFacingText(value: string) {
     .replaceAll('thread', '会话')
     .replaceAll('run', '任务')
     .replaceAll('deepagents', '系统')
+    .replaceAll('model_recovery', '模型恢复')
     .trim()
 }
 
 function humanizeWarningTitle(message: string, payload: Record<string, unknown>) {
-  if (payload.kind === 'model_fallback') {
-    return '模型调用已自动恢复'
+  if (payload.kind === 'model_recovery') {
+    return '模型服务已恢复'
   }
   if (message.includes('审批')) {
     return '需要你继续确认'
@@ -375,12 +803,13 @@ function humanizeFailureTitle(message: string, payload: Record<string, unknown>)
 }
 
 function humanizeFailureBody(message: string, payload: Record<string, unknown>) {
+  // 用户优先看到可交付的失败摘要，只有缺失时才退回原始消息。
   const summary = (payload.finalResponse as Record<string, unknown> | undefined)?.summary
   if (typeof summary === 'string' && summary.trim()) {
     return sanitizeUserFacingText(summary)
   }
-  if (payload.kind === 'model_fallback') {
-    return '模型调用暂时不稳定，系统已经自动切换到稳定路径继续处理。'
+  if (payload.kind === 'model_recovery') {
+    return '模型服务一度不可用，系统已经恢复并继续处理当前任务。'
   }
   return sanitizeUserFacingText(message)
 }
@@ -404,4 +833,68 @@ function normalizeTranscriptStatus(value: unknown): TranscriptEntryStatus {
 
 function stringOrNull(value: unknown) {
   return typeof value === 'string' ? value : null
+}
+
+function extractArgumentValue(args: unknown, key: string) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return null
+  }
+  const rawValue = (args as Record<string, unknown>)[key]
+  return typeof rawValue === 'string' && rawValue.trim() ? rawValue.trim() : null
+}
+
+function normalizeTranscriptText(value: unknown): string {
+  if (value == null) {
+    return ''
+  }
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeTranscriptText(item))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    const contentType = typeof record.type === 'string' ? record.type.trim().toLowerCase() : ''
+    if (contentType === 'text') {
+      return normalizeTranscriptText(record.text)
+    }
+    if ('content' in record) {
+      return normalizeTranscriptText(record.content)
+    }
+    if ('text' in record) {
+      return normalizeTranscriptText(record.text)
+    }
+    if ('message' in record) {
+      return normalizeTranscriptText(record.message)
+    }
+    return ''
+  }
+  return String(value).trim()
+}
+
+function dedupeRunsById(runs: ReadonlyArray<AnalysisRun>) {
+  const seen = new Set<string>()
+  const ordered: AnalysisRun[] = []
+  for (const item of runs) {
+    if (seen.has(item.id)) {
+      continue
+    }
+    seen.add(item.id)
+    ordered.push(item)
+  }
+  return ordered
+}
+
+function compareRunCreatedAt(left: AnalysisRun, right: AnalysisRun) {
+  const leftTime = new Date(left.createdAt).getTime()
+  const rightTime = new Date(right.createdAt).getTime()
+  if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+    return left.id.localeCompare(right.id)
+  }
+  return leftTime - rightTime
 }

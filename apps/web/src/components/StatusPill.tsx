@@ -8,6 +8,10 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
+// 模块职责
+//
+// 提供统一的状态标签渲染，复用在调试页、运行态和详情面板。
+
 interface StatusPillProps {
   label: string
   tone?: 'neutral' | 'success' | 'warning' | 'accent' | 'danger'

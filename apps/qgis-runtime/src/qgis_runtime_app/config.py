@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 集中管理 QGIS Runtime 服务的路径、二进制和运行目录配置。
+
 from __future__ import annotations
 
 from pathlib import Path

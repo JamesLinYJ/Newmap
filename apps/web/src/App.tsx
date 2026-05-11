@@ -8,13 +8,19 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
-import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useState } from 'react'
+// 模块职责
+//
+// 负责前端全局状态编排、API 调用、事件订阅、地图与 REPL 面板联动。
+
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { domAnimation, LazyMotion, m, MotionConfig, useReducedMotion } from 'framer-motion'
 import { Route, Routes, useLocation } from 'react-router-dom'
 
 import type {
   AgentRuntimeConfig,
   AgentState,
   AnalysisRun,
+  AgentThreadRecord,
   ArtifactRef,
   BasemapDescriptor,
   ExecutionPlan,
@@ -30,6 +36,8 @@ import type {
 
 import {
   createSession,
+  deleteLayer,
+  deleteThread,
   deleteToolCatalogEntry,
   getArtifactGeoJson,
   getArtifactMetadata,
@@ -37,9 +45,12 @@ import {
   getRuntimeConfig,
   getSession,
   getSystemComponents,
+  getThread,
+  importManagedLayer,
   listBasemaps,
   listLayers,
   listProviders,
+  listSessionThreads,
   listTools,
   listToolCatalogEntries,
   listSessionRuns,
@@ -51,22 +62,37 @@ import {
   runQgisProcess,
   runTool,
   startAnalysis,
+  startThreadRun,
+  updateLayer,
+  updateThread,
   upsertToolCatalogEntry,
   updateRuntimeConfig,
   uploadLayer,
 } from './api'
 import './App.css'
 import { pickArtifactPublishResult, pickPreferredArtifactId } from './artifactSelection'
-import { deriveRunTranscript, pickTranscriptHeadline } from './runTranscript'
+import { buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from './motion'
+import { deriveThreadTranscript, pickTranscriptHeadline } from './runTranscript'
 import { ChatPanel } from './components/ChatPanel'
 import { DetailPanel } from './components/DetailPanel'
 import { AppIcon, type AppIconName } from './components/AppIcon'
 import { MapCanvas } from './components/MapCanvas'
 import { TopBar } from './components/TopBar'
+import { buildWorkspaceShareUrl, readWorkspacePointer, syncCleanWorkspaceUrl } from './workspacePointer'
 
 type PrimaryNav = 'analysis' | 'layers' | 'history' | 'compute'
 type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config'
 type SidebarItemId = 'assistant' | 'query' | 'sources' | 'config' | 'export'
+type MapLayerPreference = { visible: boolean; opacity: number }
+
+interface MapRenderLayer {
+  artifact: ArtifactRef
+  data: GeoJSON.FeatureCollection
+  visible: boolean
+  opacity: number
+  featureCount: number
+  geometrySummary: string
+}
 
 const DebugPage = lazy(() => import('./components/DebugPage').then((module) => ({ default: module.DebugPage })))
 
@@ -79,9 +105,9 @@ const SIDEBAR_ITEMS: Array<{ id: SidebarItemId; icon: AppIconName; label: string
 ] as const
 
 const SAMPLE_QUERIES = [
-  '查询巴黎地铁站 1 公里范围内的医院',
-  '判断我上传的点是否落在柏林行政区内',
-  '查询叫 Springfield 的区域',
+  '巴黎地铁站 1 公里内有哪些医院',
+  '我上传的这些点，哪些在柏林市区里',
+  '帮我查一下 Springfield 在哪里',
 ] as const
 
 function formatUiError(error: unknown, fallback: string) {
@@ -117,9 +143,13 @@ function App() {
   const [toolCatalogEntries, setToolCatalogEntries] = useState<Array<Record<string, unknown>>>([])
   const [runtimeConfig, setRuntimeConfig] = useState<AgentRuntimeConfig>()
   const [sessionRuns, setSessionRuns] = useState<AnalysisRun[]>([])
+  const [sessionThreads, setSessionThreads] = useState<AgentThreadRecord[]>([])
+  const [threadRuns, setThreadRuns] = useState<AnalysisRun[]>([])
+  const [activeThreadId, setActiveThreadId] = useState<string>()
   const [artifacts, setArtifacts] = useState<ArtifactRef[]>([])
   const [artifactData, setArtifactData] = useState<Record<string, GeoJSON.FeatureCollection>>({})
   const [artifactMetadata, setArtifactMetadata] = useState<Record<string, Record<string, unknown>>>({})
+  const [mapLayerPreferences, setMapLayerPreferences] = useState<Record<string, MapLayerPreference>>({})
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [uploadedLayerName, setUploadedLayerName] = useState<string>()
   const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
@@ -127,17 +157,26 @@ function App() {
   const [isQgisSubmitting, setIsQgisSubmitting] = useState(false)
   const [isToolCatalogSubmitting, setIsToolCatalogSubmitting] = useState(false)
   const [uiError, setUiError] = useState<string>()
-  const [provider, setProvider] = useState('gemini')
+  const [provider, setProvider] = useState('openai_compatible')
   const [model, setModel] = useState('')
   const [selectedBasemapKey, setSelectedBasemapKey] = useState('osm')
   const [activeNav, setActiveNav] = useState<PrimaryNav>('analysis')
   const [panelMode, setPanelMode] = useState<PanelMode>('summary')
   const [activeSidebarItem, setActiveSidebarItem] = useState<SidebarItemId>('assistant')
   const deferredEvents = useDeferredValue(events)
+  const reducedMotion = useReducedMotion() ?? false
 
-  const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId)
-  const publishResult = pickArtifactPublishResult(selectedArtifactId, artifacts, artifactMetadata)
+  const selectedArtifact = useMemo(
+    () => artifacts.find((artifact) => artifact.artifactId === selectedArtifactId),
+    [artifacts, selectedArtifactId],
+  )
+  const publishResult = useMemo(
+    () => pickArtifactPublishResult(selectedArtifactId, artifacts, artifactMetadata),
+    [artifactMetadata, artifacts, selectedArtifactId],
+  )
   const providerLabel = providers.find((item) => item.provider === provider)?.displayName ?? provider
+  const currentThreadId = run?.threadId ?? agentState?.threadId ?? activeThreadId
+  const currentThreadTitle = sessionThreads.find((item) => item.id === currentThreadId)?.title
   const progressItems = buildProgressItems({
     runStatus: run?.status,
     intent,
@@ -145,17 +184,26 @@ function App() {
     artifacts,
     events: deferredEvents,
   })
-  const transcriptEntries = deriveRunTranscript({
-    run,
-    agentState,
-    events: deferredEvents,
-    artifacts,
-    query,
-    runtimeConfig,
-  })
+  const transcriptEntries = useMemo(
+    () => deriveThreadTranscript({
+      run,
+      threadRuns,
+      agentState,
+      events: deferredEvents,
+      artifacts,
+      query,
+      runtimeConfig,
+    }),
+    [deferredEvents, run, threadRuns, agentState, artifacts, query, runtimeConfig],
+  )
   const transcriptHeadline = pickTranscriptHeadline(transcriptEntries, run?.status)
-  const selectedBasemap = basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? FALLBACK_BASEMAP
+  const selectedBasemap = useMemo(
+    () => basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? FALLBACK_BASEMAP,
+    [basemaps, selectedBasemapKey],
+  )
   const primaryActionLabel = selectedArtifactId ? '发布结果' : '开始分析'
+  const workspaceListVariants = buildListVariants(reducedMotion, 0.04, 0.02)
+  const workspaceItemVariants = buildListItemVariants(reducedMotion, 16)
 
   const focusQueryInput = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -208,12 +256,51 @@ function App() {
     [],
   )
 
+  const refreshLayers = useCallback(async () => {
+    const layerList = await listLayers()
+    startTransition(() => {
+      setLayers(layerList)
+    })
+  }, [])
+
+  const clearActiveRunState = useCallback(() => {
+    // 当当前 thread 被删除或页面回到纯首页时，主动清空运行态，
+    // 避免上一条任务的 transcript、artifact 和审批块残留在界面上。
+    startTransition(() => {
+      setRun(undefined)
+      setAgentState(undefined)
+      setIntent(undefined)
+      setExecutionPlan(undefined)
+      setEvents([])
+      setArtifacts([])
+      setThreadRuns([])
+      setArtifactData({})
+      setArtifactMetadata({})
+      setSelectedArtifactId(undefined)
+      setToolRunResult(null)
+      setActiveThreadId(undefined)
+    })
+  }, [])
+
+  const refreshSessionHistory = useCallback(async (sessionId: string) => {
+    // 会话历史由 runs 和 threads 两条索引共同组成：
+    // runs 继续服务右侧结果历史，threads 服务主聊天面板的任务列表。
+    const [runs, threads] = await Promise.all([listSessionRuns(sessionId), listSessionThreads(sessionId)])
+    startTransition(() => {
+      setSessionRuns(runs)
+      setSessionThreads(threads)
+    })
+    return { runs, threads }
+  }, [])
+
   const hydrateRunState = useCallback(
     async (runId: string) => {
       // run 水合
       //
       // 当用户刷新页面、切换历史 run 或收到最终 SSE 事件时，
       // 都通过这一条路径把 run、intent、plan、artifacts 与历史记录重新对齐。
+      // 地址栏不再承载主工作台状态；这里只刷新本地 active 指针，
+      // 让刷新恢复当前对话但不把 session/thread/run 暴露给用户。
       const latestRun = await getRun(runId)
 
       startTransition(() => {
@@ -222,29 +309,43 @@ function App() {
         setIntent(latestRun.state.parsedIntent)
         setExecutionPlan(latestRun.state.executionPlan)
         setArtifacts(latestRun.state.artifacts)
-        setProvider(latestRun.modelProvider ?? 'gemini')
+        setActiveThreadId(latestRun.threadId ?? undefined)
+        setProvider(latestRun.modelProvider ?? 'openai_compatible')
         setModel(latestRun.modelName ?? '')
         const preferredArtifactId = pickPreferredArtifactId(latestRun.state.artifacts)
         setSelectedArtifactId(preferredArtifactId)
       })
+
+      if (latestRun.threadId) {
+        try {
+          const threadPayload = await getThread(latestRun.threadId)
+          startTransition(() => {
+            setThreadRuns(threadPayload.runs)
+          })
+        } catch {
+          startTransition(() => {
+            setThreadRuns([latestRun])
+          })
+        }
+      } else {
+        startTransition(() => {
+          setThreadRuns([latestRun])
+        })
+      }
 
       if (latestRun.state.artifacts.length > 0) {
         await applyArtifactPayload(latestRun.state.artifacts)
       }
 
       if (latestRun.sessionId) {
-        void listSessionRuns(latestRun.sessionId)
-          .then((runs) => {
-            startTransition(() => {
-              setSessionRuns(runs)
-            })
-          })
-          .catch(() => {})
+        void refreshSessionHistory(latestRun.sessionId).catch(() => {})
       }
+
+      syncUrl(latestRun.sessionId, latestRun.id, latestRun.threadId ?? undefined)
 
       return latestRun
     },
-    [applyArtifactPayload],
+    [applyArtifactPayload, refreshSessionHistory],
   )
 
   const handleNavChange = useCallback(
@@ -278,6 +379,7 @@ function App() {
 
   const handleSampleSelect = useCallback(
     (value: string) => {
+      // 模板问题会把界面重新切回主分析工作台，避免用户停留在别的侧栏上下文。
       setQuery(value)
       setActiveNav('analysis')
       setPanelMode('summary')
@@ -288,6 +390,7 @@ function App() {
   )
 
   const handleUseTemplate = useCallback(() => {
+    // 用轮换而不是随机，确保演示模板在录屏和联调时可复现。
     const currentIndex = SAMPLE_QUERIES.findIndex((item) => item === query)
     const nextQuery = SAMPLE_QUERIES[(currentIndex + 1 + SAMPLE_QUERIES.length) % SAMPLE_QUERIES.length]
     handleSampleSelect(nextQuery)
@@ -295,6 +398,10 @@ function App() {
 
   const handleSidebarItemClick = useCallback(
     (itemId: SidebarItemId) => {
+      // 侧边栏是“工作模式切换”，不只是视觉 tab。
+      //
+      // 每个入口都会同步主导航、右侧面板和输入聚焦位置，
+      // 避免页面看起来换了，但状态还停在上一种工作流里。
       setActiveSidebarItem(itemId)
 
       if (itemId === 'assistant') {
@@ -331,21 +438,33 @@ function App() {
   useEffect(() => {
     // 首次加载初始化
     //
-    // 优先恢复 URL 中的 session/run；如果没有则新建 session。
-    // 同时加载 basemap 和图层目录，保证首页第一次进入就有完整工作台骨架。
+    // URL 参数只作为“分享链接”读取一次；普通刷新恢复走 localStorage
+    // 里的 active thread 指针。读取完成后会立刻清理地址栏，避免内部
+    // session/thread/run 变成用户主界面的一部分。
     const searchParams = new URLSearchParams(window.location.search)
-    const sessionId = searchParams.get('session')
-    const runId = searchParams.get('run')
+    const workspacePointer = readWorkspacePointer()
+    const sharedSessionId = searchParams.get('session') ?? undefined
+    const sharedThreadId = searchParams.get('thread') ?? undefined
+    const sharedRunId = searchParams.get('run') ?? undefined
+    const sessionId = sharedSessionId ?? workspacePointer.sessionId
+    const threadId = sharedThreadId ?? workspacePointer.activeThreadId
+    const runId = sharedRunId ?? workspacePointer.activeRunId
 
     void (async () => {
       try {
+        const sessionPromise = retryAsync(
+          () => (sessionId ? getSession(sessionId).catch(() => createSession()) : createSession()),
+          2,
+          300,
+        )
         const [sessionRecord, basemapList] = await Promise.all([
-          sessionId ? getSession(sessionId) : createSession(),
-          listBasemaps(),
+          sessionPromise,
+          retryAsync(() => listBasemaps(), 2, 300),
         ])
 
         startTransition(() => {
           setSession(sessionRecord)
+          setUiError(undefined)
           const availableBasemaps = basemapList.filter((item) => item.available)
           if (availableBasemaps.length) {
             setBasemaps(availableBasemaps)
@@ -356,32 +475,56 @@ function App() {
           }
         })
 
-        void listSessionRuns(sessionRecord.id)
-          .then((runs) => {
-            startTransition(() => {
-              setSessionRuns(runs)
-            })
-          })
-          .catch(() => {})
+        void refreshSessionHistory(sessionRecord.id).catch(() => {})
 
-        if (runId) {
-          await hydrateRunState(runId)
+        const threadToRestore = threadId || undefined
+        const runToRestore = runId || undefined
+        if (threadToRestore) {
+          try {
+            const threadPayload = await getThread(threadToRestore)
+            startTransition(() => {
+              setActiveThreadId(threadPayload.thread.id)
+              setThreadRuns(threadPayload.runs)
+            })
+            const preferredRunId =
+              runToRestore && threadPayload.runs.some((item) => item.id === runToRestore)
+                ? runToRestore
+                : threadPayload.latestRun?.id
+            if (preferredRunId) {
+              await hydrateRunState(preferredRunId)
+            } else {
+              syncUrl(sessionRecord.id, undefined, threadPayload.thread.id)
+            }
+          } catch {
+            clearActiveRunState()
+            syncUrl(sessionRecord.id)
+          }
+        } else if (runToRestore) {
+          try {
+            await hydrateRunState(runToRestore)
+          } catch {
+            clearActiveRunState()
+            syncUrl(sessionRecord.id)
+          }
+        } else {
+          syncUrl(sessionRecord.id)
         }
       } catch (error) {
-        setUiError(formatUiError(error, '初始化页面失败。'))
+        setUiError(formatUiError(error, '页面加载遇到问题，请刷新重试。'))
       }
     })()
 
-    void listLayers()
+    void retryAsync(() => listLayers(), 2, 300)
       .then((layerList) => {
         startTransition(() => {
           setLayers(layerList)
+          setUiError(undefined)
         })
       })
       .catch((error) => {
-        setUiError(formatUiError(error, '图层目录加载失败。'))
+        setUiError(formatUiError(error, '图层目录暂时加载不了，请稍后重试。'))
       })
-  }, [hydrateRunState])
+  }, [clearActiveRunState, hydrateRunState, refreshSessionHistory])
 
   useEffect(() => {
     // 模型提供方初始化
@@ -392,7 +535,7 @@ function App() {
         startTransition(() => {
           setProviders(providerList)
           const preferred =
-            providerList.find((item) => item.provider === 'gemini' && item.configured) ??
+            providerList.find((item) => item.provider === 'openai_compatible' && item.configured) ??
             providerList.find((item) => item.configured) ??
             providerList[0]
 
@@ -410,6 +553,20 @@ function App() {
       .then((loadedRuntimeConfig) => {
         startTransition(() => {
           setRuntimeConfig(loadedRuntimeConfig)
+        })
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    // 工具目录预加载
+    //
+    // 首页的 REPL 摘要也需要使用工具目录元数据来生成更自然的中文文案，
+    // 因此这里提前加载，而不是只在 debug 页里按需获取。
+    void listTools()
+      .then((tools) => {
+        startTransition(() => {
+          setAvailableTools(tools)
         })
       })
       .catch(() => {})
@@ -435,11 +592,12 @@ function App() {
         })
       })
       .catch((error) => {
-        setUiError(formatUiError(error, '系统组件状态加载失败。'))
+        setUiError(formatUiError(error, '系统状态加载遇到问题，请稍后重试。'))
       })
   }, [location.pathname, panelMode])
 
   const refreshToolingState = useCallback(async () => {
+    // 调试页和 compute 面板共用这一条刷新路径，避免各自拉一套不同快照。
     const [components, modelList, tools, catalogEntries, loadedRuntimeConfig] = await Promise.all([
       getSystemComponents(),
       listQgisModels(),
@@ -461,13 +619,16 @@ function App() {
     //
     // 只要当前存在运行中的 run，就持续监听事件流，并在断开时按需重连。
     // 这里同时负责把 intent、plan 和 artifact.created 等事件增量回灌进状态树。
-    if (!run?.id) {
+    if (!run?.id || run.status !== 'running') {
       return
     }
 
     let source: EventSource | undefined
     let reconnectTimer: number | undefined
     let disposed = false
+    const seenEventIds = new Set<string>()
+    let reconnectAttempts = 0
+    const MAX_RECONNECT_ATTEMPTS = 10
 
     const connect = () => {
       if (disposed) {
@@ -477,13 +638,11 @@ function App() {
       source = openRunEventStream(
         run.id,
         (event) => {
+          reconnectAttempts = 0
+          if (seenEventIds.has(event.eventId)) return
+          seenEventIds.add(event.eventId)
           startTransition(() => {
-            setEvents((current) => {
-              if (current.some((item) => item.eventId === event.eventId)) {
-                return current
-              }
-              return [...current, event]
-            })
+            setEvents((current) => [...current, event])
           })
 
           if (event.type === 'intent.parsed') {
@@ -545,18 +704,20 @@ function App() {
           }
         },
         () => {
+          if (disposed || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return
+          reconnectAttempts += 1
+          const delay = Math.min(1500 * Math.pow(2, reconnectAttempts - 1), 30000)
           void getRun(run.id)
             .then((latestRun) => {
-              startTransition(() => {
-                setRun(latestRun)
-              })
+              if (disposed) return
+              startTransition(() => setRun(latestRun))
               if (!disposed && latestRun.status === 'running') {
-                reconnectTimer = window.setTimeout(connect, 1500)
+                reconnectTimer = window.setTimeout(connect, delay)
               }
             })
             .catch(() => {
               if (!disposed) {
-                reconnectTimer = window.setTimeout(connect, 1500)
+                reconnectTimer = window.setTimeout(connect, delay)
               }
             })
         },
@@ -572,56 +733,120 @@ function App() {
         window.clearTimeout(reconnectTimer)
       }
     }
-  }, [applyArtifactPayload, hydrateRunState, run?.id])
+  }, [applyArtifactPayload, hydrateRunState, run?.id, run?.status])
 
-  const handleSubmit = useCallback(async () => {
-    // 主分析提交流程
-    //
-    // 提交前会先清空上一个 run 的展示态，避免新旧结果叠在一起。
-    if (!session || !query.trim()) {
-      return
-    }
-
-    try {
-      const selectedProvider = providers.find((item) => item.provider === provider)
-      if (selectedProvider && !selectedProvider.configured) {
-        setUiError(`${selectedProvider.displayName} 尚未配置，当前不能提交分析。`)
+  const submitMessage = useCallback(
+    async ({
+      text,
+      clarificationOptionId,
+      forceNewThread = false,
+      updateComposer = false,
+    }: {
+      text?: string
+      clarificationOptionId?: string | null
+      forceNewThread?: boolean
+      updateComposer?: boolean
+    } = {}) => {
+      // 连续对话提交入口
+      //
+      // 同一聊天面板里的普通输入默认复用当前 thread；
+      // 只有显式新建对话或当前没有 thread 时，才让后端创建新 thread。
+      if (!session) {
         return
       }
-      setUiError(undefined)
-      setIsSubmitting(true)
-      setActiveNav('analysis')
-      setPanelMode('summary')
-      setActiveSidebarItem('assistant')
+      const submittedQuery = (text ?? query).trim()
+      if (!submittedQuery) {
+        return
+      }
+
+      const targetThreadId = forceNewThread ? undefined : currentThreadId
+
+      try {
+        const selectedProvider = providers.find((item) => item.provider === provider)
+        if (selectedProvider && !selectedProvider.configured) {
+          setUiError(`${selectedProvider.displayName} 还没配置好，暂时没法提交分析。`)
+          return
+        }
+        setUiError(undefined)
+        setIsSubmitting(true)
+        if (updateComposer) {
+          setQuery(submittedQuery)
+        }
+        setActiveNav('analysis')
+        setPanelMode('summary')
+        setActiveSidebarItem('assistant')
+        setEvents([])
+        setArtifacts([])
+        setArtifactData({})
+        setArtifactMetadata({})
+        setSelectedArtifactId(undefined)
+        setToolRunResult(null)
+
+        const createdRun = targetThreadId
+          ? await startThreadRun(targetThreadId, submittedQuery, provider, model || undefined, clarificationOptionId)
+          : await startAnalysis(session.id, submittedQuery, provider, model || undefined, clarificationOptionId)
+        const nextThreadId = createdRun.threadId ?? targetThreadId
+        startTransition(() => {
+          setRun(createdRun)
+          setAgentState(createdRun.state)
+          setIntent(createdRun.state.parsedIntent)
+          setExecutionPlan(createdRun.state.executionPlan)
+          setProvider(createdRun.modelProvider ?? provider)
+          setModel(createdRun.modelName ?? model)
+          setActiveThreadId(nextThreadId)
+          setThreadRuns((current) => (nextThreadId && !forceNewThread ? mergeThreadRuns(current, createdRun) : [createdRun]))
+        })
+        void refreshSessionHistory(session.id).catch(() => {})
+        syncUrl(session.id, createdRun.id, nextThreadId)
+      } catch (error) {
+        setUiError(formatUiError(error, clarificationOptionId ? '回复提交失败，请重试。' : '任务提交失败，请重试。'))
+        setIsSubmitting(false)
+      }
+    },
+    [currentThreadId, model, provider, providers, query, refreshSessionHistory, session],
+  )
+
+  const handleSubmit = useCallback(async () => {
+    if (!query.trim()) {
+      return
+    }
+    await submitMessage()
+  }, [query, submitMessage])
+
+  const handleClarificationSelect = useCallback(
+    async (value: string, optionId?: string | null) => {
+      await submitMessage({ text: value, clarificationOptionId: optionId, updateComposer: true })
+    },
+    [submitMessage],
+  )
+
+  const handleNewConversation = useCallback(() => {
+    // 显式新建对话只重置前端 active thread，不提前创建数据库记录。
+    //
+    // 下一次发送消息时因为没有 activeThreadId，会自然走 startAnalysis 创建新 thread。
+    startTransition(() => {
+      setQuery('')
+      setRun(undefined)
+      setAgentState(undefined)
+      setIntent(undefined)
+      setExecutionPlan(undefined)
       setEvents([])
       setArtifacts([])
+      setThreadRuns([])
       setArtifactData({})
       setArtifactMetadata({})
       setSelectedArtifactId(undefined)
       setToolRunResult(null)
-
-      const createdRun = await startAnalysis(session.id, query.trim(), provider, model || undefined)
-      startTransition(() => {
-        setRun(createdRun)
-        setAgentState(createdRun.state)
-        setIntent(createdRun.state.parsedIntent)
-        setExecutionPlan(createdRun.state.executionPlan)
-        setProvider(createdRun.modelProvider ?? provider)
-        setModel(createdRun.modelName ?? model)
-      })
-      void listSessionRuns(session.id)
-        .then((runs) => {
-          startTransition(() => {
-            setSessionRuns(runs)
-          })
-        })
-        .catch(() => {})
-      syncUrl(session.id, createdRun.id)
-    } catch (error) {
-      setUiError(formatUiError(error, '任务提交失败。'))
-      setIsSubmitting(false)
+      setActiveThreadId(undefined)
+      setActiveNav('analysis')
+      setPanelMode('summary')
+      setActiveSidebarItem('assistant')
+    })
+    if (session?.id) {
+      syncUrl(session.id)
     }
-  }, [model, provider, providers, query, session])
+    focusQueryInput()
+  }, [focusQueryInput, session?.id])
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -642,10 +867,52 @@ function App() {
         setSession(sessionRecord)
         setLayers(layerList)
       } catch (error) {
-        setUiError(formatUiError(error, '图层上传失败。'))
+        setUiError(formatUiError(error, '图层上传没成功，请再试一次。'))
       }
     },
     [session],
+  )
+
+  const handleImportManagedLayer = useCallback(
+    async (file: File) => {
+      try {
+        setUiError(undefined)
+        setActiveNav('layers')
+        setPanelMode('sources')
+        setActiveSidebarItem('sources')
+        await importManagedLayer(file)
+        await refreshLayers()
+      } catch (error) {
+        setUiError(formatUiError(error, '图层导入没成功，请再试一次。'))
+      }
+    },
+    [refreshLayers],
+  )
+
+  const handleToggleLayerStatus = useCallback(
+    async (layerKey: string, nextStatus: string) => {
+      try {
+        setUiError(undefined)
+        await updateLayer(layerKey, { status: nextStatus })
+        await refreshLayers()
+      } catch (error) {
+        setUiError(formatUiError(error, '图层状态更新失败，请再试一次。'))
+      }
+    },
+    [refreshLayers],
+  )
+
+  const handleDeleteLayer = useCallback(
+    async (layerKey: string) => {
+      try {
+        setUiError(undefined)
+        await deleteLayer(layerKey)
+        await refreshLayers()
+      } catch (error) {
+        setUiError(formatUiError(error, '图层删除失败，请再试一次。'))
+      }
+    },
+    [refreshLayers],
   )
 
   const handlePublish = useCallback(async (artifactId: string) => {
@@ -663,7 +930,7 @@ function App() {
       }))
       setSystemComponents(await getSystemComponents())
     } catch (error) {
-      setUiError(formatUiError(error, '发布失败。'))
+      setUiError(formatUiError(error, '发布没成功，请稍后重试。'))
     }
   }, [runtimeConfig?.defaultPublishProjectKey])
 
@@ -678,10 +945,98 @@ function App() {
         await resolveApproval(run.id, approvalId, approved)
         await hydrateRunState(run.id)
       } catch (error) {
-        setUiError(formatUiError(error, approved ? '审批通过失败。' : '审批拒绝失败。'))
+        setUiError(formatUiError(error, approved ? '审批操作没成功，请重试。' : '拒绝操作没成功，请重试。'))
       }
     },
     [hydrateRunState, run?.id],
+  )
+
+  const handleSelectThread = useCallback(
+    async (threadId: string) => {
+      // 主聊天面板按 thread 打开历史任务，保证同一轮澄清和续跑仍显示在一条对话里。
+      try {
+        setUiError(undefined)
+        const threadPayload = await getThread(threadId)
+        startTransition(() => {
+          setActiveThreadId(threadPayload.thread.id)
+          setThreadRuns(threadPayload.runs)
+        })
+        if (threadPayload.latestRun?.id) {
+          await hydrateRunState(threadPayload.latestRun.id)
+          if (session?.id) {
+            syncUrl(session.id, threadPayload.latestRun.id, threadPayload.thread.id)
+          }
+          return
+        }
+
+        startTransition(() => {
+          setRun(undefined)
+          setAgentState(undefined)
+          setIntent(undefined)
+          setExecutionPlan(undefined)
+          setEvents([])
+          setArtifacts([])
+          setArtifactData({})
+          setArtifactMetadata({})
+          setSelectedArtifactId(undefined)
+          setToolRunResult(null)
+          setActiveThreadId(threadPayload.thread.id)
+        })
+        if (session?.id) {
+          syncUrl(session.id, undefined, threadPayload.thread.id)
+        }
+      } catch (error) {
+        setUiError(formatUiError(error, '历史记录加载失败，请稍后重试。'))
+      }
+    },
+    [hydrateRunState, session?.id],
+  )
+
+  const handleRenameThread = useCallback(
+    async (threadId: string, title: string) => {
+      const nextTitle = title.trim()
+      if (!nextTitle) {
+        setUiError('任务标题不能为空。')
+        return
+      }
+
+      try {
+        setUiError(undefined)
+        const updated = await updateThread(threadId, nextTitle)
+        startTransition(() => {
+          setSessionThreads((current) => current.map((item) => (item.id === threadId ? updated : item)))
+        })
+      } catch (error) {
+        setUiError(formatUiError(error, '标题更新失败，请再试一次。'))
+      }
+    },
+    [],
+  )
+
+  const handleDeleteThread = useCallback(
+    async (threadId: string) => {
+      if (!session?.id) {
+        return
+      }
+
+      try {
+        setUiError(undefined)
+        await deleteThread(threadId)
+        const sessionRecord = await getSession(session.id)
+        await refreshSessionHistory(session.id)
+        startTransition(() => {
+          setSession(sessionRecord)
+        })
+
+        if (currentThreadId === threadId) {
+          clearActiveRunState()
+          syncUrl(session.id)
+        }
+      } catch (error) {
+        setUiError(formatUiError(error, '任务删除失败，请再试一次。'))
+      }
+    },
+    [clearActiveRunState, currentThreadId, refreshSessionHistory, session?.id],
   )
 
   const handleRunQgisProcess = useCallback(
@@ -709,7 +1064,7 @@ function App() {
         }
         await hydrateRunState(run.id)
       } catch (error) {
-        setUiError(formatUiError(error, 'QGIS 处理失败。'))
+        setUiError(formatUiError(error, 'QGIS 处理没成功，请检查参数后再试。'))
       } finally {
         setIsQgisSubmitting(false)
       }
@@ -751,7 +1106,7 @@ function App() {
         }
         await hydrateRunState(run.id)
       } catch (error) {
-        setUiError(formatUiError(error, 'QGIS 模型执行失败。'))
+        setUiError(formatUiError(error, 'QGIS 模型没跑通，请检查参数后再试。'))
       } finally {
         setIsQgisSubmitting(false)
       }
@@ -784,7 +1139,7 @@ function App() {
         if (nextRunId) {
           await hydrateRunState(nextRunId)
           if (session.id) {
-            syncUrl(session.id, nextRunId)
+            syncUrl(session.id, nextRunId, currentThreadId)
           }
         }
       } catch (error) {
@@ -793,7 +1148,7 @@ function App() {
         setIsQgisSubmitting(false)
       }
     },
-    [hydrateRunState, run?.id, session?.id],
+    [currentThreadId, hydrateRunState, run?.id, session?.id],
   )
 
   const handleUpsertToolCatalogEntry = useCallback(
@@ -841,21 +1196,16 @@ function App() {
   )
 
   const handleCopyShareLink = useCallback(async () => {
-    // 分享链接只编码 session/run 两个关键上下文，
-    // 这样页面恢复逻辑可以复用现有初始化路径，不需要额外的分享态协议。
+    // 分享链接是唯一显式编码 session/thread/run 的入口。
+    //
+    // 普通地址栏保持干净；只有用户主动复制时，才生成可恢复上下文的链接。
     try {
-      const url = new URL(window.location.href)
-      if (session?.id) {
-        url.searchParams.set('session', session.id)
-      }
-      if (run?.id) {
-        url.searchParams.set('run', run.id)
-      }
-      await navigator.clipboard.writeText(url.toString())
+      const url = buildWorkspaceShareUrl(window.location.origin, session?.id, run?.id, currentThreadId)
+      await navigator.clipboard.writeText(url)
     } catch {
       setUiError('复制分享链接失败，请稍后重试。')
     }
-  }, [run?.id, session?.id])
+  }, [currentThreadId, run?.id, session?.id])
 
   const handleProviderChange = useCallback(
     (value: string) => {
@@ -866,20 +1216,53 @@ function App() {
     [providers],
   )
 
-  const mapLayers = artifacts
-    .filter((artifact) => artifactData[artifact.artifactId])
-    .map((artifact) => ({
-      artifact,
-      data: artifactData[artifact.artifactId],
+  const handleToggleArtifactVisibility = useCallback((artifactId: string) => {
+    setMapLayerPreferences((current) => {
+      const existing = current[artifactId]
+      return {
+        ...current,
+        [artifactId]: {
+          visible: existing ? !existing.visible : false,
+          opacity: existing?.opacity ?? 0.9,
+        },
+      }
+    })
+  }, [])
+
+  const handleArtifactOpacityChange = useCallback((artifactId: string, opacity: number) => {
+    setMapLayerPreferences((current) => ({
+      ...current,
+      [artifactId]: {
+        visible: current[artifactId]?.visible ?? true,
+        opacity,
+      },
     }))
+  }, [])
+
+  const mapLayers: MapRenderLayer[] = useMemo(
+    () =>
+      artifacts
+        .filter((artifact) => artifactData[artifact.artifactId])
+        .map((artifact) => ({
+          artifact,
+          data: artifactData[artifact.artifactId],
+          visible: mapLayerPreferences[artifact.artifactId]?.visible ?? true,
+          opacity: mapLayerPreferences[artifact.artifactId]?.opacity ?? 0.9,
+          featureCount: artifactData[artifact.artifactId]?.features.length ?? 0,
+          geometrySummary: describeCollectionGeometry(artifactData[artifact.artifactId]),
+        })),
+    [artifactData, artifacts, mapLayerPreferences],
+  )
 
   return (
     <Suspense fallback={<div className="dc-route-loading">正在加载页面…</div>}>
-      <Routes>
+      <LazyMotion features={domAnimation}>
+        <MotionConfig reducedMotion="user">
+          <Routes>
         <Route
           path="/"
           element={
-            <div className="digital-cartographer">
+            <m.div className="digital-cartographer" {...buildFadeUpMotion(reducedMotion, 0, 10)}>
               <TopBar
                 activeNav={activeNav}
                 artifactCount={artifacts.length}
@@ -901,105 +1284,119 @@ function App() {
                 primaryActionLabel={primaryActionLabel}
               />
 
-              <div className="digital-cartographer__body">
-                <aside className="dc-sidebar" aria-label="工作空间导航">
-                  <div className="dc-sidebar__intro">
-                    <div className="dc-sidebar__eyebrow">Agent Workspace</div>
-                    <h2>工作空间</h2>
-                    <p>GIS 智能助手会把查询、空间分析、发布和审批统一组织在同一个工作台里。</p>
+              <div className="app-shell-grid grid min-h-screen grid-cols-[220px_minmax(0,1fr)] gap-0 pt-16">
+                <aside className="app-sidebar sticky top-16 flex h-[calc(100vh-64px)] flex-col gap-6 self-start border-r border-white/30 bg-white/40 p-5 backdrop-blur-md" aria-label="工作空间导航">
+                  <div className="app-sidebar-copy">
+                    <div className="detail-label">GeoCanvas</div>
+                    <h2 className="mt-1.5 text-xl font-bold text-slate-800 font-mono">工作空间</h2>
+                    <p className="mt-2 text-[13px] text-slate-500 leading-relaxed">GIS 智能助手统一组织查询、分析、发布和审批。</p>
                   </div>
-                  <nav className="dc-sidebar__nav">
+                  <nav className="app-sidebar-nav flex flex-col gap-1.5">
                     {SIDEBAR_ITEMS.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={activeSidebarItem === item.id ? 'dc-sidebar__item dc-sidebar__item--active' : 'dc-sidebar__item'}
-                        onClick={() => handleSidebarItemClick(item.id)}
-                      >
-                        <AppIcon name={item.icon} size={18} />
-                        <span className="dc-sidebar__label dc-sidebar__label--full">{item.label}</span>
-                        <span className="dc-sidebar__label dc-sidebar__label--compact">{item.shortLabel}</span>
+                      <button key={item.id} type="button"
+                        className={activeSidebarItem===item.id?'sidebar-btn sidebar-btn-active':'sidebar-btn'}
+                        onClick={()=>handleSidebarItemClick(item.id)}>
+                        <AppIcon name={item.icon} size={17}/>
+                        <span className="hidden sm:inline">{item.label}</span>
+                        <span className="sm:hidden text-[11px]">{item.shortLabel}</span>
                       </button>
                     ))}
                   </nav>
-                  <div className="dc-sidebar__metrics" aria-label="工作空间概览">
-                    <article className="dc-sidebar__metric-card">
-                      <span>运行状态</span>
-                      <strong>{formatTopBarRunStatus(run?.status)}</strong>
-                      <p>{run?.id ? `任务 ${run.id.slice(0, 8)}…` : '等待新的分析请求'}</p>
+                  <div className="app-sidebar-metrics mt-auto flex flex-col gap-2.5">
+                    <article className="glass-subtle p-3.5 rounded-2xl">
+                      <span className="detail-label">运行</span>
+                      <strong className="detail-value">{formatTopBarRunStatus(run?.status)}</strong>
+                      <p className="text-[11px] text-slate-400 mt-1">{run?.id?'当前对话继续中':'等待分析请求'}</p>
                     </article>
-                    <article className="dc-sidebar__metric-card">
-                      <span>数据与底图</span>
-                      <strong>
-                        {artifacts.length + layers.length} 个对象
-                      </strong>
-                      <p>{selectedBasemap.name} · {uploadedLayerName ?? '未上传自定义数据'}</p>
+                    <article className="glass-subtle p-3.5 rounded-2xl">
+                      <span className="detail-label">数据</span>
+                      <strong className="detail-value">{artifacts.length+layers.length}对象</strong>
+                      <p className="text-[11px] text-slate-400 mt-1">{selectedBasemap.name}·{uploadedLayerName??'无自定义数据'}</p>
                     </article>
                   </div>
                 </aside>
 
-                <main className="dc-main">
-                  <section className="dc-workspace-bar" aria-label="当前工作台概览">
-                    <article className="dc-workspace-bar__card">
-                      <span>当前模式</span>
-                      <strong>{formatPrimaryNav(activeNav)}</strong>
-                      <p>{formatPanelMode(panelMode)} 已准备好承接当前任务。</p>
-                    </article>
-                    <article className="dc-workspace-bar__card">
-                      <span>当前模型</span>
-                      <strong>{providerLabel}</strong>
-                      <p>{model || '使用默认模型'} · 正在处理当前分析任务</p>
-                    </article>
-                    <article className="dc-workspace-bar__card">
-                      <span>空间结果</span>
-                      <strong>{artifacts.length} 个产物</strong>
-                      <p>{selectedArtifact?.name ?? '当前还没有选中的结果图层'}</p>
-                    </article>
-                    <article className="dc-workspace-bar__card">
-                      <span>系统进度</span>
-                      <strong>{transcriptHeadline.title}</strong>
-                      <p>{transcriptHeadline.body}</p>
-                    </article>
-                  </section>
-                  <div className="dc-main__workspace">
-                    <div className="dc-main__assistant">
+                <main className="app-main min-w-0 p-5" role="main">
+                  <m.section className="workspace-overview mb-4 grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3.5" aria-label="工作台概览"
+                    variants={workspaceListVariants}
+                    initial="hidden"
+                    animate="visible"
+                  >
+                    <m.article className="glass-subtle p-3.5 rounded-2xl" layout variants={workspaceItemVariants}>
+                      <span className="detail-label">模式</span>
+                      <strong className="detail-value">{formatPrimaryNav(activeNav)}</strong>
+                      <p className="text-[11px] text-slate-400 mt-1">{formatPanelMode(panelMode)}就绪</p>
+                    </m.article>
+                    <m.article className="glass-subtle p-3.5 rounded-2xl" layout variants={workspaceItemVariants}>
+                      <span className="detail-label">模型</span>
+                      <strong className="detail-value">{providerLabel}</strong>
+                      <p className="text-[11px] text-slate-400 mt-1">{model||'默认'}·处理中</p>
+                    </m.article>
+                    <m.article className="glass-subtle p-3.5 rounded-2xl" layout variants={workspaceItemVariants}>
+                      <span className="detail-label">结果</span>
+                      <strong className="detail-value">{artifacts.length}产物</strong>
+                      <p className="text-[11px] text-slate-400 mt-1">{selectedArtifact?.name??'未选中图层'}</p>
+                    </m.article>
+                    <m.article className="glass-subtle p-3.5 rounded-2xl" layout variants={workspaceItemVariants}>
+                      <span className="detail-label">进度</span>
+                      <strong className="detail-value">{transcriptHeadline.title}</strong>
+                      <p className="text-[11px] text-slate-400 mt-1">{transcriptHeadline.body}</p>
+                    </m.article>
+                  </m.section>
+                  <m.div
+                    className="workspace-grid grid min-h-[calc(100vh-64px-44px)] grid-cols-[minmax(320px,0.82fr)_minmax(620px,1.85fr)_minmax(320px,0.92fr)] items-start gap-4"
+                    variants={workspaceListVariants}
+                    initial="hidden"
+                    animate="visible"
+                  >
+                    <m.div className="min-w-0" layout variants={workspaceItemVariants}>
                       <ChatPanel
                         artifactCount={artifacts.length}
                         runStatus={run?.status}
                         providerLabel={providerLabel}
                         query={query}
                         currentRunId={run?.id}
+                        currentThreadId={currentThreadId}
+                        currentThreadTitle={currentThreadTitle}
                         runCreatedAt={run?.createdAt}
                         isSubmitting={isSubmitting}
                         errorMessage={uiError}
                         uploadedLayerName={uploadedLayerName}
                         intent={intent}
-                        sessionRuns={sessionRuns}
+                        sessionThreads={sessionThreads}
                         transcriptEntries={transcriptEntries}
                         runtimeConfig={runtimeConfig}
+                        availableTools={availableTools}
                         onQueryChange={setQuery}
                         onSubmit={() => {
                           void handleSubmit()
                         }}
+                        onNewConversation={handleNewConversation}
                         onFillSample={handleSampleSelect}
+                        onSelectClarification={(value, optionId) => {
+                          void handleClarificationSelect(value, optionId)
+                        }}
                         onUseTemplate={handleUseTemplate}
                         onUpload={(file) => {
                           void handleUpload(file)
                         }}
                         onSelectArtifact={setSelectedArtifactId}
-                        onSelectTask={(runId) => {
-                          void hydrateRunState(runId)
-                          if (session?.id) {
-                            syncUrl(session.id, runId)
-                          }
+                        onSelectTask={(threadId) => {
+                          void handleSelectThread(threadId)
+                        }}
+                        onRenameTask={(threadId, title) => {
+                          void handleRenameThread(threadId, title)
+                        }}
+                        onDeleteTask={(threadId) => {
+                          void handleDeleteThread(threadId)
                         }}
                         onResolveApproval={(approvalId, approved) => {
                           void handleResolveApproval(approvalId, approved)
                         }}
                       />
-                    </div>
+                    </m.div>
 
-                    <div className="dc-main__map">
+                    <m.div className="min-w-0" layout variants={workspaceItemVariants}>
                       <MapCanvas
                         artifactCount={artifacts.length}
                         basemaps={basemaps}
@@ -1009,10 +1406,11 @@ function App() {
                         layers={mapLayers}
                         selectedArtifactId={selectedArtifactId}
                         selectedArtifactName={selectedArtifact?.name}
+                        onSelectArtifact={setSelectedArtifactId}
                       />
-                    </div>
+                    </m.div>
 
-                    <div className="dc-main__detail">
+                    <m.div className="min-w-0" layout variants={workspaceItemVariants} transition={motionSpring.gentle}>
                       <DetailPanel
                         panelMode={panelMode}
                         currentRunId={run?.id}
@@ -1020,6 +1418,7 @@ function App() {
                         agentState={agentState}
                         artifacts={artifacts}
                         artifactData={artifactData}
+                        mapLayers={mapLayers}
                         layers={layers}
                         events={deferredEvents}
                         sessionRuns={sessionRuns}
@@ -1035,11 +1434,10 @@ function App() {
                         qgisModels={qgisModels}
                         isQgisSubmitting={isQgisSubmitting}
                         onSelectArtifact={setSelectedArtifactId}
+                        onToggleArtifactVisibility={handleToggleArtifactVisibility}
+                        onChangeArtifactOpacity={handleArtifactOpacityChange}
                         onSelectHistoryRun={(runId) => {
                           void hydrateRunState(runId)
-                          if (session?.id) {
-                            syncUrl(session.id, runId)
-                          }
                           setPanelMode('history')
                           setActiveNav('history')
                         }}
@@ -1060,12 +1458,21 @@ function App() {
                         onResolveApproval={(approvalId, approved) => {
                           void handleResolveApproval(approvalId, approved)
                         }}
+                        onImportManagedLayer={(file) => {
+                          void handleImportManagedLayer(file)
+                        }}
+                        onToggleLayerStatus={(layerKey, nextStatus) => {
+                          void handleToggleLayerStatus(layerKey, nextStatus)
+                        }}
+                        onDeleteLayer={(layerKey) => {
+                          void handleDeleteLayer(layerKey)
+                        }}
                       />
-                    </div>
-                  </div>
+                    </m.div>
+                  </m.div>
                 </main>
               </div>
-            </div>
+            </m.div>
           }
         />
         <Route
@@ -1134,7 +1541,9 @@ function App() {
             />
           }
         />
-      </Routes>
+          </Routes>
+        </MotionConfig>
+      </LazyMotion>
     </Suspense>
   )
 }
@@ -1198,11 +1607,44 @@ function formatPanelMode(mode: PanelMode) {
   return '系统配置'
 }
 
-function syncUrl(sessionId: string, runId: string) {
-  const url = new URL(window.location.href)
-  url.searchParams.set('session', sessionId)
-  url.searchParams.set('run', runId)
-  window.history.replaceState({}, '', url)
+function syncUrl(sessionId: string, runId?: string, threadId?: string) {
+  syncCleanWorkspaceUrl(sessionId, runId, threadId)
+}
+
+function mergeThreadRuns(currentRuns: AnalysisRun[], incomingRun: AnalysisRun) {
+  // 线程运行合并
+  //
+  // 新 run 启动后先把它乐观并入当前 thread 视图，
+  // 这样首页在 SSE 继续推进前也能保持对话连续。
+  const byId = new Map<string, AnalysisRun>()
+  for (const item of currentRuns) {
+    byId.set(item.id, item)
+  }
+  byId.set(incomingRun.id, incomingRun)
+  return [...byId.values()].sort((left, right) => {
+    const leftTime = new Date(left.createdAt).getTime()
+    const rightTime = new Date(right.createdAt).getTime()
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return left.id.localeCompare(right.id)
+    }
+    return leftTime - rightTime
+  })
+}
+
+async function retryAsync<T>(task: () => Promise<T>, retries: number, delayMs: number): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await task()
+    } catch (error) {
+      lastError = error
+      if (attempt === retries) {
+        break
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, delayMs))
+    }
+  }
+  throw lastError
 }
 
 function buildProgressItems({
@@ -1224,13 +1666,13 @@ function buildProgressItems({
   return [
     {
       id: 'understand',
-      title: '正在识别地点',
+      title: '理解需求',
       description:
         intent?.clarificationRequired
           ? '系统已经识别出问题，但还需要补充确认。'
           : intent
-            ? '地点、对象和目标图层已经识别完成。'
-            : '等待输入问题后开始理解需求。',
+            ? '已识别本轮问题里的地点、对象和空间关系。'
+            : '等待输入问题后开始整理分析意图。',
       status:
         runStatus === 'clarification_needed'
           ? ('warning' as const)
@@ -1242,16 +1684,16 @@ function buildProgressItems({
     },
     {
       id: 'prepare',
-      title: '正在加载边界',
+      title: '准备数据',
       description:
         executionPlan?.steps.length
           ? `已经整理出 ${executionPlan.steps.length} 个分析步骤。`
-          : '系统会自动加载边界、参考图层和上传数据。',
+          : '会按当前目录、上传图层或外部来源准备数据。',
       status: executionPlan?.steps.length ? ('done' as const) : hasWorkStarted ? ('active' as const) : ('pending' as const),
     },
     {
       id: 'analyze',
-      title: '正在计算范围',
+      title: '执行分析',
       description:
         runStatus === 'running'
           ? friendlyEventMessage(latestEvent)
@@ -1259,7 +1701,7 @@ function buildProgressItems({
             ? '分析已经完成，系统正在等待你确认发布或执行敏感操作。'
           : artifacts.length
             ? '空间分析已经完成，结果正在整理。'
-            : '分析时会自动执行缓冲、相交、裁剪等操作。',
+            : '需要空间计算时，会基于真实工具执行。',
       status:
         runStatus === 'running' || runStatus === 'waiting_approval'
           ? ('active' as const)
@@ -1271,7 +1713,7 @@ function buildProgressItems({
     },
     {
       id: 'deliver',
-      title: '正在整理结果',
+      title: '交付结果',
       description:
         runStatus === 'completed'
           ? '结果图层、下载入口和服务链接已经生成。'
@@ -1314,6 +1756,23 @@ function friendlyEventMessage(event?: RunEvent) {
     return '分析没有顺利完成，请稍后重试。'
   }
   return event.message
+}
+
+function describeCollectionGeometry(collection?: GeoJSON.FeatureCollection) {
+  if (!collection?.features.length) {
+    return '空图层'
+  }
+  const geometryTypes = Array.from(
+    new Set(
+      collection.features
+        .map((feature) => feature.geometry?.type)
+        .filter((value): value is NonNullable<GeoJSON.Geometry['type']> => Boolean(value)),
+    ),
+  )
+  if (!geometryTypes.length) {
+    return '未知几何'
+  }
+  return geometryTypes.join(' / ')
 }
 
 const FALLBACK_BASEMAP: BasemapDescriptor = {

@@ -8,6 +8,10 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
+// 模块职责
+//
+// 作为 Web 客户端挂载入口，装配路由和全局样式资源。
+
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import 'maplibre-gl/dist/maplibre-gl.css'

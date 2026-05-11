@@ -1,62 +1,92 @@
-@import url('https://fonts.font.im/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+/* +-------------------------------------------------------------------------
+ *
+ *   地理智能平台 - Web 全局 Tailwind 基础层
+ *
+ *   文件:       index.css
+ *
+ *   日期:       2026年05月11日
+ *   作者:       JamesLinYJ
+ * -------------------------------------------------------------------------- */
+
 @import 'tailwindcss';
 
-:root {
-  --color-primary: #0f172a;
-  --color-secondary: #1e293b;
-  --color-accent: #2563eb;
-  --color-accent-strong: #1d4ed8;
-  --color-signal: #16a34a;
-  --color-background: #eef3f8;
-  --color-surface: #ffffff;
-  --color-panel: #f8fafc;
-  --color-text: #0f172a;
-  --color-muted: #475569;
-  --color-line: #d7e0ea;
-  --font-sans: 'Fira Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'Fira Code', 'IBM Plex Mono', 'JetBrains Mono', monospace;
-  color: var(--color-text);
-  background: var(--color-background);
-  font-family: var(--font-sans);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  line-height: 1.5;
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', 'SFMono-Regular', ui-monospace, 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --animate-fade-in: fade-in .35s both;
+  --animate-slide-up: slide-up .45s cubic-bezier(.16,1,.3,1) both;
+  --animate-scale-in: scale-in .35s cubic-bezier(.16,1,.3,1) both;
+  --animate-spring: spring .5s cubic-bezier(.16,1,.3,1) both;
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+@layer base {
+  html {
+    color-scheme: light;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply m-0 min-w-80 overflow-x-hidden bg-[#f2f2f7] font-sans text-[#1c1c1e] antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  textarea,
+  input,
+  select {
+    font: inherit;
+  }
+
+  button {
+    touch-action: manipulation;
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  :focus-visible {
+    @apply rounded-lg outline-2 outline-offset-4 outline-[#1c1c1e];
+  }
 }
 
-html,
-body,
-#root {
-  min-height: 100%;
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  overflow-x: hidden;
-  background: var(--color-background);
-  color: var(--color-text);
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-button,
-textarea,
-input,
-select {
-  font: inherit;
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-code {
-  font-family: var(--font-mono);
+@keyframes spring {
+  0% {
+    opacity: 0;
+    transform: scale(.9) translateY(8px);
+  }
+  60% {
+    transform: scale(1.02) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }

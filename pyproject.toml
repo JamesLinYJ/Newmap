@@ -34,19 +34,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = [
-  "apps/api/src",
-  "apps/qgis-runtime/src",
-  "apps/worker/src",
-  "packages/agent-core/src",
-  "packages/model-adapters/src",
-  "packages/tool-registry/src",
-  "packages/gis-postgis/src",
-  "packages/gis-qgis/src",
-  "packages/gis-common/src",
-  "packages/map-publisher/src",
-  "packages/shared-types/src"
-]
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]

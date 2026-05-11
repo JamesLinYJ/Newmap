@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 一键部署脚本
+#
+#   文件:       deploy.sh
+#
+#   日期:       2026年04月20日
+#   作者:       OpenAI Codex
+# --------------------------------------------------------------------------
+# 模块职责
+#
+# 提供面向服务器或本地环境的一键部署入口，统一组装环境变量、构建参数和容器启动流程。
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -150,8 +163,11 @@ QGIS_PUBLISH_DIR=./runtime/published
 QGIS_PROCESS_BIN=qgis_process
 QGIS_RUNTIME_BASE_URL=http://qgis-runtime:8090
 DATABASE_URL=postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
-DEFAULT_MODEL_PROVIDER=gemini
-DEFAULT_MODEL_NAME=gemini-2.5-flash
+DEFAULT_MODEL_PROVIDER=openai_compatible
+DEFAULT_MODEL_NAME=deepseek-v4-pro
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_API_KEY=${OPENAI_API_KEY}
+OPENAI_MODEL=deepseek-v4-pro
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 GEMINI_API_KEY=${GEMINI_API_KEY}
 GEMINI_MODEL=gemini-2.5-flash
@@ -173,7 +189,8 @@ QGIS_SERVER_BASE_URL="${QGIS_SERVER_BASE_URL:-${PUBLIC_BASE_URL%/}/qgis}"
 prompt_with_default APP_BASE_URL "请输入 API 地址" "${APP_BASE_URL}"
 prompt_with_default WEB_BASE_URL "请输入前端地址" "${WEB_BASE_URL}"
 prompt_with_default QGIS_SERVER_BASE_URL "请输入 QGIS 地址" "${QGIS_SERVER_BASE_URL}"
-prompt_with_default GEMINI_API_KEY "请输入 Gemini API Key" "${GEMINI_API_KEY:-}" 1
+prompt_with_default OPENAI_API_KEY "请输入 DeepSeek API Key" "${OPENAI_API_KEY:-}" 1
+prompt_with_default GEMINI_API_KEY "请输入 Gemini API Key（可选备用）" "${GEMINI_API_KEY:-}" 1
 prompt_with_default TIANDITU_API_KEY "请输入天地图 API Key" "${TIANDITU_API_KEY:-}" 1
 
 print_section "更新仓库代码"

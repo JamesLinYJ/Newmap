@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 封装 API 侧访问 QGIS Runtime 服务的 HTTP 客户端。
+
 from __future__ import annotations
 
 from pathlib import Path

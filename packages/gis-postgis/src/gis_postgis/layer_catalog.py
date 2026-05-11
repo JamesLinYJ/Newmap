@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 定义图层目录抽象与基于文件的基础图层管理能力。
+
 from __future__ import annotations
 
 import json
@@ -17,35 +21,21 @@ from typing import Any
 
 from shapely import from_wkb
 
+from ._gpkg_utils import validate_gpkg_identifier
 from gis_common.geojson import ensure_feature_collection, load_geojson, save_geojson
 from gis_common.ids import make_id
 from shared_types.schemas import LayerDescriptor
 
 
-SEMANTIC_LAYER_ALIASES = {
-    "医院": "hospitals",
-    "hospital": "hospitals",
-    "hospitals": "hospitals",
-    "poi": "candidate_sites",
-    "候选点": "candidate_sites",
-    "候选点位": "candidate_sites",
-    "地铁站": "metro_stations",
-    "metro": "metro_stations",
-    "metro_stations": "metro_stations",
-    "行政区": "admin_boundaries",
-    "边界": "admin_boundaries",
-}
-
-
 def resolve_catalog_layer_key(layer_key_or_name: str, available_keys: list[str] | None = None) -> str:
+    # catalog key 解析坚持“精确优先”。
+    #
+    # 当前仓库尚未发版，不再维护 demo 时代那套“语义别名 -> 旧前缀 key”
+    # 的隐式映射规则。agent 若要选层，应先从 catalog 里拿真实 layer_key，
+    # 再把精确 key 传进来。
     candidate = layer_key_or_name.strip()
     if not candidate:
         return candidate
-
-    normalized_aliases = {str(key).casefold(): value for key, value in SEMANTIC_LAYER_ALIASES.items()}
-    alias_match = normalized_aliases.get(candidate.casefold())
-    if alias_match:
-        return alias_match
 
     if not available_keys:
         return candidate
@@ -54,35 +44,7 @@ def resolve_catalog_layer_key(layer_key_or_name: str, available_keys: list[str] 
     exact = exact_matches.get(candidate.casefold())
     if exact:
         return exact
-
-    normalized_candidate = candidate.casefold().replace("-", "_").replace(" ", "_")
-    suffix_matches = [
-        item
-        for item in available_keys
-        if normalized_candidate == item.casefold()
-        or normalized_candidate.endswith(f"_{item.casefold()}")
-        or normalized_candidate.startswith(f"{item.casefold()}_")
-    ]
-    if len(suffix_matches) == 1:
-        return suffix_matches[0]
-
-    candidate_tokens = _layer_key_tokens(normalized_candidate)
-    token_matches = []
-    for item in available_keys:
-        item_tokens = _layer_key_tokens(item.casefold())
-        if item_tokens and set(item_tokens).issubset(candidate_tokens):
-            token_matches.append((len(item_tokens), len(item), item))
-    if not token_matches:
-        return candidate
-    token_matches.sort(reverse=True)
-    best = token_matches[0]
-    if len(token_matches) == 1 or token_matches[1][:2] != best[:2]:
-        return best[2]
     return candidate
-
-
-def _layer_key_tokens(value: str) -> tuple[str, ...]:
-    return tuple(token for token in value.replace("-", "_").split("_") if token)
 
 
 # LayerCatalog
@@ -138,13 +100,30 @@ class LayerCatalog:
 
     def search_boundaries(self, name: str) -> list[dict[str, Any]]:
         query = name.casefold()
-        boundaries = self.get_layer_collection("admin_boundaries")
         matches = []
-        for feature in boundaries["features"]:
-            props = feature["properties"]
-            haystacks = [props.get("name", ""), props.get("name_en", ""), props.get("disambiguation", "")]
-            if any(query in str(value).casefold() for value in haystacks):
-                matches.append(feature)
+        boundary_layers = [
+            descriptor.layer_key
+            for descriptor in self.list_layers()
+            if any(
+                token in " ".join(
+                    [
+                        descriptor.name.casefold(),
+                        descriptor.description.casefold(),
+                        descriptor.category.casefold(),
+                        *(item.casefold() for item in descriptor.tags),
+                        *(item.casefold() for item in descriptor.analysis_capabilities),
+                    ]
+                )
+                for token in ("boundary", "admin", "行政区", "边界")
+            )
+        ]
+        for layer_key in boundary_layers:
+            collection = self.get_layer_collection(layer_key)
+            for feature in collection["features"]:
+                props = feature["properties"]
+                haystacks = [props.get("name", ""), props.get("name_en", ""), props.get("disambiguation", "")]
+                if any(query in str(value).casefold() for value in haystacks):
+                    matches.append(feature)
         return matches
 
     def geocode(self, query: str) -> list[dict[str, Any]]:
@@ -214,8 +193,9 @@ class LayerCatalog:
             if row is None:
                 raise ValueError("GPKG 中没有可读取的要素图层。")
             table_name, geom_column = row
-            columns = [info[1] for info in conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()]
-            records = conn.execute(f"SELECT * FROM '{table_name}'").fetchall()
+            safe_name = validate_gpkg_identifier(table_name)
+            columns = [info[1] for info in conn.execute(f"PRAGMA table_info('{safe_name}')").fetchall()]
+            records = conn.execute(f"SELECT * FROM '{safe_name}'").fetchall()
             features = []
             geom_idx = columns.index(geom_column)
             for record in records:

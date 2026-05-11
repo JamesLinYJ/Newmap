@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 集中定义跨前后端共享的数据模型、事件类型和运行态结构。
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -56,15 +60,51 @@ class EventType(str, Enum):
 
 
 class ClarificationOption(CamelModel):
+    option_id: str | None = None
     label: str
     description: str
+    kind: str = "generic"
+    reason: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClarificationState(CamelModel):
+    clarification_id: str
+    kind: str = "generic"
+    reason: str = "generic"
+    question: str
+    options: list[ClarificationOption] = Field(default_factory=list)
+    selected_option_id: str | None = None
+    allow_free_text: bool = True
+
+
+class PlaceSearchCandidate(CamelModel):
+    label: str
+    display_name: str | None = None
+    country: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    boundingbox: list[str] | list[float] | None = None
+    source: str | None = None
+
+
+class PlaceResolution(CamelModel):
+    status: str = "unresolved"
+    query: str | None = None
+    provider: str | None = None
+    selected: PlaceSearchCandidate | None = None
+    candidates: list[PlaceSearchCandidate] = Field(default_factory=list)
+    error: str | None = None
 
 
 class UserIntent(CamelModel):
     area: str | None = None
+    place_query: str | None = None
+    anchor_type: str = "unknown"
     task_type: str | None = None
     distance_m: float | None = None
     publish_requested: bool = False
+    data_requirements: list[str] = Field(default_factory=list)
     target_layers: list[str] = Field(default_factory=list)
     spatial_constraints: list[str] = Field(default_factory=list)
     desired_outputs: list[str] = Field(default_factory=list)
@@ -94,6 +134,48 @@ class ToolCall(CamelModel):
     message: str
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    result_id: str | None = None
+    source: str | None = None
+    confidence: float | None = None
+    used_query: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    crs: dict[str, Any] = Field(default_factory=dict)
+    geometry_type: str | None = None
+    feature_count: int | None = None
+
+
+class ContextReference(CamelModel):
+    # 上下文引用候选
+    #
+    # 代码只负责列出当前 thread 中真实存在、可被工具引用的对象；
+    # 具体“这个”指哪个候选，由 Agent 选择后再交给 Validator 校验。
+    reference_id: str
+    kind: str
+    label: str
+    description: str = ""
+    source_run_id: str | None = None
+    artifact_id: str | None = None
+    collection_ref: str | None = None
+    layer_key: str | None = None
+    confidence: float | None = None
+    usable_as: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ContextResolution(CamelModel):
+    status: str = "unresolved"
+    query: str | None = None
+    selected_reference_id: str | None = None
+    selected_kind: str | None = None
+    source_run_id: str | None = None
+    reason: str | None = None
+    candidates: list[ContextReference] = Field(default_factory=list)
+
+
+class RunLifecycle(CamelModel):
+    status: str = "created"
+    reason: str | None = None
+    updated_at: datetime | None = None
 
 
 class TodoItem(CamelModel):
@@ -165,6 +247,11 @@ class RuntimeUiConfig(CamelModel):
     event_grouping_window_ms: int = 1500
 
 
+class RuntimeCatalogConfig(CamelModel):
+    allow_empty_catalog: bool = True
+    admin_enabled: bool = True
+
+
 class RuntimeContextConfig(CamelModel):
     memory_file_paths: list[str] = Field(default_factory=lambda: ["/AGENTS.md", "/THREAD_CONTEXT.md"])
     history_run_limit: int = 4
@@ -174,13 +261,41 @@ class RuntimeContextConfig(CamelModel):
     warning_window: int = 6
 
 
+class RuntimeGeosearchConfig(CamelModel):
+    provider: str = "nominatim"
+    enabled: bool = True
+    base_url: str = "https://nominatim.openstreetmap.org"
+    user_agent: str = "geo-agent-platform/0.1"
+    timeout_ms: int = 2500
+    max_candidates: int = 5
+
+
+class RuntimePoiConfig(CamelModel):
+    provider: str = "overpass"
+    enabled: bool = True
+    base_url: str = "https://overpass-api.de/api/interpreter"
+    user_agent: str = "geo-agent-platform/0.1"
+    timeout_ms: int = 8000
+    max_results: int = 200
+
+
+class RuntimePlanningConfig(CamelModel):
+    max_plan_repair_rounds: int = 2
+    allow_text_only_delivery: bool = True
+    external_source_priority: list[str] = Field(default_factory=lambda: ["catalog", "external_poi", "geosearch"])
+
+
 class AgentRuntimeConfig(CamelModel):
     default_publish_project_key: str = "geo-agent-workspace"
     loop_trace_limit: int = 80
     supervisor: SupervisorRuntimeConfig = Field(default_factory=SupervisorRuntimeConfig)
     sub_agents: list[RuntimeSubAgentConfig] = Field(default_factory=list)
     ui: RuntimeUiConfig = Field(default_factory=RuntimeUiConfig)
+    catalog: RuntimeCatalogConfig = Field(default_factory=RuntimeCatalogConfig)
+    planning: RuntimePlanningConfig = Field(default_factory=RuntimePlanningConfig)
     context: RuntimeContextConfig = Field(default_factory=RuntimeContextConfig)
+    geosearch: RuntimeGeosearchConfig = Field(default_factory=RuntimeGeosearchConfig)
+    external_poi: RuntimePoiConfig = Field(default_factory=RuntimePoiConfig)
 
 
 class LoopTraceEntry(CamelModel):
@@ -203,7 +318,12 @@ class LayerDescriptor(CamelModel):
     srid: int = 4326
     description: str
     feature_count: int | None = None
+    category: str = "general"
+    status: str = "active"
     tags: list[str] = Field(default_factory=list)
+    analysis_capabilities: list[str] = Field(default_factory=list)
+    source_config_summary: str | None = None
+    session_id: str | None = None
 
 
 class BasemapDescriptor(CamelModel):
@@ -253,6 +373,11 @@ class AgentStateModel(CamelModel):
     model_provider: str | None = None
     model_name: str | None = None
     parsed_intent: UserIntent | None = None
+    clarification: ClarificationState | None = None
+    place_resolution: PlaceResolution | None = None
+    context_references: list[ContextReference] = Field(default_factory=list)
+    context_resolution: ContextResolution | None = None
+    run_lifecycle: RunLifecycle = Field(default_factory=RunLifecycle)
     execution_plan: ExecutionPlan | None = None
     current_step: int = 0
     loop_iteration: int = 0
@@ -263,6 +388,9 @@ class AgentStateModel(CamelModel):
     approvals: list[ApprovalRequest] = Field(default_factory=list)
     tool_results: list[ToolCall] = Field(default_factory=list)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
+    selected_data_sources: list[str] = Field(default_factory=list)
+    plan_repair_attempts: int = 0
+    text_only_delivery: bool = False
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     failed_step_id: str | None = None
@@ -288,6 +416,13 @@ class AgentThreadRecord(CamelModel):
     created_at: datetime
     updated_at: datetime
     latest_run_id: str | None = None
+    latest_user_query: str | None = None
+    latest_assistant_summary: str | None = None
+    latest_run_status: str | None = None
+    latest_artifact_id: str | None = None
+    latest_artifact_name: str | None = None
+    history_preview: str | None = None
+    run_count: int = 0
 
 
 class AnalysisRunRecord(CamelModel):

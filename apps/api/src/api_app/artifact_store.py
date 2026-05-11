@@ -1,8 +1,24 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - Artifact 导出存储
+#
+#   文件:       artifact_store.py
+#
+#   日期:       2026年04月20日
+#   作者:       OpenAI Codex
+# --------------------------------------------------------------------------
+# 模块职责
+#
+# 负责将运行结果 artifact 导出到 runtime 目录，并维护 GeoJSON 文件与导出路径之间的稳定映射。
 from __future__ import annotations
 
 from pathlib import Path
 
 from gis_common.geojson import load_geojson, save_geojson
+
+
+class ArtifactPathError(ValueError):
+    """当相对路径试图逃逸 runtime_root 时抛出。"""
 
 
 class ArtifactExportStore:
@@ -23,5 +39,22 @@ class ArtifactExportStore:
 
     def resolve(self, relative_path: str) -> Path:
         candidate = (self.runtime_root / relative_path).resolve()
-        candidate.relative_to(self.runtime_root)
+        try:
+            candidate.relative_to(self.runtime_root)
+        except ValueError:
+            raise ArtifactPathError(f"路径逃逸被拒绝: {relative_path}") from None
         return candidate
+
+    def delete(self, relative_path: str) -> None:
+        # artifact 删除
+        #
+        # 删除 thread 时同步清理导出的 GeoJSON 文件，避免 runtime 目录残留孤儿结果。
+        target = self.resolve(relative_path)
+        target.unlink(missing_ok=True)
+        parent = target.parent
+        while parent != self.artifacts_dir and parent.is_dir():
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent

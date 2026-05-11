@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 定义工具元数据、执行结果与运行时上下文的基础数据结构。
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -28,6 +32,14 @@ class ToolExecutionResult:
     artifact: ArtifactRef | None = None
     payload: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    result_id: str | None = None
+    source: str | None = None
+    confidence: float | None = None
+    used_query: str | None = None
+    provenance: dict[str, Any] = field(default_factory=dict)
+    crs: dict[str, Any] = field(default_factory=dict)
+    geometry_type: str | None = None
+    feature_count: int | None = None
 
 
 @dataclass(frozen=True)

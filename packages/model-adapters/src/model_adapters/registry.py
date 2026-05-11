@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 装配不同模型 provider，并向运行时提供统一解析和能力查询入口。
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,12 +25,13 @@ from .base import BaseModelAdapter
 
 
 class OpenAICompatibleAdapter(BaseModelAdapter):
-    def __init__(self, *, base_url: str | None, api_key: str | None, default_model: str | None):
+    def __init__(self, *, base_url: str | None, api_key: str | None, default_model: str | None, subagent_model: str | None = None):
         super().__init__("openai_compatible")
         self.display_name = "OpenAI Compatible"
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key
         self.default_model = default_model
+        self.subagent_model_name = subagent_model
 
     def is_configured(self) -> bool:
         return bool(self.base_url and self.api_key and self.default_model)
@@ -190,6 +195,7 @@ class RegistrySettings:
     openai_base_url: str | None
     openai_api_key: str | None
     openai_model: str | None
+    openai_subagent_model: str | None
     anthropic_base_url: str
     anthropic_api_key: str | None
     anthropic_model: str | None
@@ -216,6 +222,7 @@ class ModelAdapterRegistry:
                 base_url=settings.openai_base_url,
                 api_key=settings.openai_api_key,
                 default_model=settings.openai_model or default_model_for("openai_compatible"),
+                subagent_model=settings.openai_subagent_model,
             )
         )
         self.register(
@@ -274,9 +281,7 @@ class ModelAdapterRegistry:
         return self._adapters[provider].is_configured()
 
     def supports_live_supervisor(self, provider: str | None) -> bool:
-        if not self.is_provider_configured(provider):
-            return False
-        return provider in {"openai_compatible", "anthropic", "gemini", "ollama"}
+        return self.is_provider_configured(provider)
 
     def descriptors(self) -> list[ModelProviderDescriptor]:
         return [

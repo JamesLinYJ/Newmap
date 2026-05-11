@@ -8,7 +8,12 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react'
+// 模块职责
+//
+// 组织调试页的运行诊断、工具工作台、runtime config 编辑和 loop 可视化。
+
+import { useMemo, useState } from 'react'
+import { m, useReducedMotion } from 'framer-motion'
 import { ArrowLeft, ExternalLink, LoaderCircle, Play, Save, Trash2, Upload, Wrench } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -30,7 +35,8 @@ import type {
 } from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../api'
-import { deriveRunTranscript, pickTranscriptHeadline } from '../runTranscript'
+import { buildFadeUpMotion, buildListItemVariants, buildListVariants, buildPressMotion } from '../motion'
+import { deriveConversationEntries, deriveRunTranscript, pickTranscriptHeadline } from '../runTranscript'
 import { StatusPill } from './StatusPill'
 
 // DebugPageProps
@@ -80,6 +86,15 @@ interface DebugPageProps {
   onSaveRuntimeConfig: (config: AgentRuntimeConfig) => void
 }
 
+// 空状态常量
+//
+// 调试页会把 agentState 中的多个数组字段下发到 useMemo。
+// 这里统一复用稳定常量，避免每次 render 都创建新的空数组引用。
+const EMPTY_TODOS: AgentState['todos'] = []
+const EMPTY_SUB_AGENTS: AgentState['subAgents'] = []
+const EMPTY_APPROVALS: AgentState['approvals'] = []
+const EMPTY_TOOL_RESULTS: AgentState['toolResults'] = []
+
 export function DebugPage({
   query,
   isSubmitting,
@@ -123,6 +138,7 @@ export function DebugPage({
   onDeleteToolCatalogEntry,
   onSaveRuntimeConfig,
 }: DebugPageProps) {
+  const reducedMotion = useReducedMotion() ?? false
   // 页面级派生状态
   //
   // 将 artifact 选择、工具表单默认值、概览指标、快速链接和 catalog 编辑态
@@ -136,12 +152,13 @@ export function DebugPage({
   const latestRuns = sessionRuns.slice(0, 5)
   const latestEvent = events.at(-1)
   const currentThreadId = agentState?.threadId ?? events.find((event) => event.threadId)?.threadId
-  const todoItems = agentState?.todos ?? []
-  const subAgents = agentState?.subAgents ?? []
-  const approvals = agentState?.approvals ?? []
-  const toolCalls = agentState?.toolResults ?? []
+  const todoItems = agentState?.todos ?? EMPTY_TODOS
+  const subAgents = agentState?.subAgents ?? EMPTY_SUB_AGENTS
+  const approvals = agentState?.approvals ?? EMPTY_APPROVALS
+  const toolCalls = agentState?.toolResults ?? EMPTY_TOOL_RESULTS
   const loopTrace = agentState?.loopTrace?.length ? agentState.loopTrace : deriveLoopTraceFromEvents(events)
   const latestLoopEntry = loopTrace.at(-1)
+  const placeResolution = agentState?.placeResolution
   const supervisorStages = useMemo(
     () =>
       buildSupervisorStages({
@@ -189,8 +206,46 @@ export function DebugPage({
     [agentState, artifacts, currentRun, events, query, runtimeConfig],
   )
   const transcriptHeadline = useMemo(() => pickTranscriptHeadline(transcriptEntries, runStatus), [runStatus, transcriptEntries])
-  const [runtimeConfigDraft, setRuntimeConfigDraft] = useState<AgentRuntimeConfig>()
-  const [runtimeConfigError, setRuntimeConfigError] = useState<string>()
+  const conversationEntries = useMemo(
+    () => deriveConversationEntries(transcriptEntries, runStatus, tools),
+    [runStatus, tools, transcriptEntries],
+  )
+  // 运行时配置编辑态
+  //
+  // 通过 seed 标识当前 props 版本，在 props 变化时按需重建编辑态，
+  // 避免 useEffect 中同步 setState 造成 ESLint 与交互抖动问题。
+  const runtimeConfigSeed = useMemo(() => JSON.stringify(runtimeConfig ?? null), [runtimeConfig])
+  const [runtimeConfigEditor, setRuntimeConfigEditorState] = useState<{
+    seed: string
+    draft?: AgentRuntimeConfig
+    error?: string
+  }>({
+    seed: JSON.stringify(runtimeConfig ?? null),
+    draft: runtimeConfig,
+    error: undefined,
+  })
+  const activeRuntimeConfigEditor =
+    runtimeConfigEditor.seed === runtimeConfigSeed
+      ? runtimeConfigEditor
+      : { seed: runtimeConfigSeed, draft: runtimeConfig, error: undefined }
+  const runtimeConfigDraft = activeRuntimeConfigEditor.draft
+  const runtimeConfigError = activeRuntimeConfigEditor.error
+  const setRuntimeConfigDraft = (nextDraft: AgentRuntimeConfig) => {
+    setRuntimeConfigEditorState({
+      seed: runtimeConfigSeed,
+      draft: nextDraft,
+      error: undefined,
+    })
+  }
+  const setRuntimeConfigError = (nextError: string | undefined) => {
+    setRuntimeConfigEditorState((current) => {
+      const synced =
+        current.seed === runtimeConfigSeed
+          ? current
+          : { seed: runtimeConfigSeed, draft: runtimeConfig, error: undefined }
+      return { ...synced, error: nextError }
+    })
+  }
   const publishLinks = buildQuickLinks({
     currentSessionId,
     currentRunId,
@@ -210,11 +265,9 @@ export function DebugPage({
   const toolFormValues = selectedTool ? toolFormsByName[selectedTool.name] ?? resolveToolDefaults(selectedTool) : {}
   const missingToolParameters = selectedTool ? getMissingRequiredParameters(selectedTool, toolFormValues) : []
   const qgisToolCount = tools.filter((tool) => tool.group === 'qgis').length
-
-  useEffect(() => {
-    setRuntimeConfigDraft(runtimeConfig)
-    setRuntimeConfigError(undefined)
-  }, [runtimeConfig])
+  const panelVariants = buildListItemVariants(reducedMotion, 18)
+  const overviewVariants = buildListVariants(reducedMotion, 0.05, 0.03)
+  const pressMotion = buildPressMotion(reducedMotion)
   const overviewItems: Array<{
     label: string
     value: string
@@ -254,8 +307,8 @@ export function DebugPage({
   ]
 
   return (
-    <div className="debug-shell">
-      <header className="debug-shell__header">
+    <m.div className="debug-shell" {...buildFadeUpMotion(reducedMotion, 0, 12)}>
+      <m.header className="debug-shell__header" layout {...buildFadeUpMotion(reducedMotion, 0.02, 12)}>
         <div>
           <div className="panel__eyebrow">内部调试页</div>
           <h1>运行诊断与数据管理台</h1>
@@ -263,28 +316,40 @@ export function DebugPage({
         </div>
         <div className="debug-shell__actions">
           <StatusPill label={formatRunStatus(runStatus)} tone={deriveTone(runStatus)} />
-          <Link to="/" className="toolbar-button toolbar-button--ghost">
-            <ArrowLeft size={16} aria-hidden="true" />
-            返回用户页面
-          </Link>
+          <m.div {...pressMotion}>
+            <Link to="/" className="toolbar-button toolbar-button--ghost">
+              <ArrowLeft size={16} aria-hidden="true" />
+              返回用户页面
+            </Link>
+          </m.div>
         </div>
-      </header>
+      </m.header>
 
-      <section className="debug-overview">
+      <m.section
+        className="debug-overview"
+        variants={overviewVariants}
+        initial="hidden"
+        animate="visible"
+      >
         {overviewItems.map((item) => (
-          <article key={item.label} className="overview-card">
+          <m.article key={item.label} className="overview-card" layout variants={panelVariants}>
             <div className="overview-card__label">{item.label}</div>
             <div className="overview-card__value">{item.value}</div>
             <div className="overview-card__footer">
               <StatusPill label={item.meta} tone={item.tone} />
             </div>
-          </article>
+          </m.article>
         ))}
-      </section>
+      </m.section>
 
-      <main className="debug-columns">
-        <div className="debug-column">
-          <section className="panel">
+      <m.main
+        className="debug-columns"
+        variants={overviewVariants}
+        initial="hidden"
+        animate="visible"
+      >
+        <m.div className="debug-column" layout variants={panelVariants}>
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">调试输入</div>
@@ -361,9 +426,9 @@ export function DebugPage({
               </div>
               {uploadedLayerName ? <p className="panel__muted">最近上传图层：{uploadedLayerName}</p> : null}
             </div>
-          </section>
+          </m.section>
 
-          <section className="panel">
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">数据管理</div>
@@ -431,9 +496,9 @@ export function DebugPage({
                 ))}
               </div>
             </div>
-          </section>
+          </m.section>
 
-          <section className="panel">
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">运行诊断</div>
@@ -454,9 +519,9 @@ export function DebugPage({
               {qgisModels?.error ? <div className="clarification-box clarification-box--error">{qgisModels.error}</div> : null}
               {latestEvent?.message ? <p className="panel__muted">{latestEvent.message}</p> : null}
             </div>
-          </section>
+          </m.section>
 
-          <section className="panel">
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">工具工作台</div>
@@ -528,14 +593,15 @@ export function DebugPage({
                   ) : null}
                   <div className="composer__actions">
                     <button
-                      className="toolbar-button toolbar-button--primary"
-                      type="button"
-                      disabled={!selectedTool.available || isQgisSubmitting || missingToolParameters.length > 0}
-                      onClick={() => onRunTool(selectedTool, buildToolArgs(selectedTool, toolFormValues))}
-                    >
-                      {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Wrench size={16} aria-hidden="true" />}
-                      运行工具
-                    </button>
+                    className="toolbar-button toolbar-button--primary"
+                    type="button"
+                    disabled={!selectedTool.available || isQgisSubmitting || missingToolParameters.length > 0}
+                    onClick={() => onRunTool(selectedTool, buildToolArgs(selectedTool, toolFormValues))}
+                    {...pressMotion}
+                  >
+                    {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Wrench size={16} aria-hidden="true" />}
+                    运行工具
+                  </button>
                   </div>
                 </div>
                 <div className="panel__section">
@@ -572,11 +638,11 @@ export function DebugPage({
                 <p className="panel__muted">这里只管理 Postgres 里的目录与展示配置，不会修改工具的实际执行逻辑。</p>
               </div>
             ) : null}
-          </section>
-        </div>
+          </m.section>
+        </m.div>
 
-        <div className="debug-column">
-          <section className="panel">
+        <m.div className="debug-column" layout variants={panelVariants}>
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">系统状态</div>
@@ -632,11 +698,11 @@ export function DebugPage({
                 )}
               </div>
             </div>
-          </section>
-        </div>
+          </m.section>
+        </m.div>
 
-        <div className="debug-column">
-          <section className="panel">
+        <m.div className="debug-column" layout variants={panelVariants}>
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">Deep Agents 运行态</div>
@@ -673,14 +739,14 @@ export function DebugPage({
             <div className="panel__section">
               <div className="panel__subheader">
                 <span>共享 REPL 记录流</span>
-                <span className="panel__muted">{transcriptEntries.length} 条记录 · {transcriptHeadline.title}</span>
+                <span className="panel__muted">{conversationEntries.length} 条对话轮次 · {transcriptHeadline.title}</span>
               </div>
-              {transcriptEntries.length ? (
+              {conversationEntries.length ? (
                 <div className="debug-transcript">
-                  {transcriptEntries.slice(-12).map((entry) => (
+                  {conversationEntries.slice(-12).map((entry) => (
                     <article key={entry.id} className={`debug-transcript__entry debug-transcript__entry--${entry.kind} debug-transcript__entry--${entry.status}`}>
                       <div className="debug-transcript__meta">
-                        <span>{entry.kind}</span>
+                        <span>{entry.kind === 'message' ? entry.role ?? entry.kind : entry.kind}</span>
                         <span>{entry.status}</span>
                         <time dateTime={entry.timestamp}>{new Date(entry.timestamp).toLocaleTimeString('zh-CN')}</time>
                       </div>
@@ -690,9 +756,9 @@ export function DebugPage({
                   ))}
                 </div>
               ) : (
-                <p className="panel__empty">当前还没有可渲染的 transcript。</p>
-              )}
-            </div>
+                  <p className="panel__empty">当前还没有可渲染的 transcript。</p>
+                )}
+              </div>
             <div className="panel__section">
               <div className="panel__subheader">
                 <span>运行时默认配置</span>
@@ -906,6 +972,88 @@ export function DebugPage({
                       }}
                     />
                   </label>
+                  <label className="tool-field">
+                    <span className="composer__label">地理检索 Provider</span>
+                    <input
+                      className="composer__input"
+                      value={runtimeConfigDraft.geosearch.provider}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          geosearch: { ...runtimeConfigDraft.geosearch, provider: event.target.value },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field">
+                    <span className="composer__label">检索服务地址</span>
+                    <input
+                      className="composer__input"
+                      value={runtimeConfigDraft.geosearch.baseUrl}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          geosearch: { ...runtimeConfigDraft.geosearch, baseUrl: event.target.value },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field">
+                    <span className="composer__label">请求超时(ms)</span>
+                    <input
+                      className="composer__input"
+                      type="number"
+                      min={100}
+                      value={runtimeConfigDraft.geosearch.timeoutMs}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          geosearch: { ...runtimeConfigDraft.geosearch, timeoutMs: Number(event.target.value) || 1000 },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field">
+                    <span className="composer__label">候选结果上限</span>
+                    <input
+                      className="composer__input"
+                      type="number"
+                      min={1}
+                      value={runtimeConfigDraft.geosearch.maxCandidates}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          geosearch: { ...runtimeConfigDraft.geosearch, maxCandidates: Number(event.target.value) || 1 },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field tool-field--full">
+                    <span className="composer__label">检索服务 User-Agent</span>
+                    <input
+                      className="composer__input"
+                      value={runtimeConfigDraft.geosearch.userAgent}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          geosearch: { ...runtimeConfigDraft.geosearch, userAgent: event.target.value },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field tool-field--checkbox">
+                    <span className="composer__label">启用远程地点检索</span>
+                    <input
+                      type="checkbox"
+                      checked={runtimeConfigDraft.geosearch.enabled}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          geosearch: { ...runtimeConfigDraft.geosearch, enabled: event.target.checked },
+                        })
+                      }}
+                    />
+                  </label>
                   <div className="tool-field tool-field--full">
                     <div className="panel__subheader">
                       <span>子智能体</span>
@@ -1079,6 +1227,42 @@ export function DebugPage({
             </div>
             <div className="panel__section">
               <div className="panel__subheader">
+                <span>地点解析状态</span>
+                <span className="panel__muted">{formatPlaceResolutionStatus(placeResolution?.status)}</span>
+              </div>
+              {placeResolution ? (
+                <div className="intent-block">
+                  <div className="intent-row">
+                    <span>查询词</span>
+                    <strong>{placeResolution.query || '未提供'}</strong>
+                  </div>
+                  <div className="intent-row">
+                    <span>Provider</span>
+                    <strong>{placeResolution.provider || '未记录'}</strong>
+                  </div>
+                  <div className="intent-row">
+                    <span>状态</span>
+                    <strong>{formatPlaceResolutionStatus(placeResolution.status)}</strong>
+                  </div>
+                  <div className="intent-row">
+                    <span>已选锚点</span>
+                    <strong>{placeResolution.selected?.displayName || placeResolution.selected?.label || '尚未确定'}</strong>
+                  </div>
+                  <div className="intent-row">
+                    <span>候选数量</span>
+                    <strong>{placeResolution.candidates?.length ?? 0}</strong>
+                  </div>
+                </div>
+              ) : (
+                <p className="panel__empty">当前运行还没有地点解析结果。</p>
+              )}
+              {placeResolution?.candidates?.length ? (
+                <pre className="debug-pre">{JSON.stringify(placeResolution.candidates, null, 2)}</pre>
+              ) : null}
+              {placeResolution?.error ? <div className="clarification-box clarification-box--error">{placeResolution.error}</div> : null}
+            </div>
+            <div className="panel__section">
+              <div className="panel__subheader">
                 <span>主智能体 Loop</span>
                 <span className="panel__muted">
                   iteration {agentState?.loopIteration || latestLoopEntry?.iteration || 0} ·{' '}
@@ -1243,9 +1427,9 @@ export function DebugPage({
                 </div>
               </div>
             </div>
-          </section>
+          </m.section>
 
-          <section className="panel">
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">原始状态</div>
@@ -1288,9 +1472,9 @@ export function DebugPage({
                 )}
               </ol>
             </div>
-          </section>
+          </m.section>
 
-          <section className="panel">
+          <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
                 <div className="panel__eyebrow">产物与发布</div>
@@ -1307,11 +1491,12 @@ export function DebugPage({
                   artifacts.map((artifact) => (
                     <button
                       key={artifact.artifactId}
-                      className={`artifact-list__item${
+                    className={`artifact-list__item${
                         artifact.artifactId === selectedArtifact?.artifactId ? ' artifact-list__item--active' : ''
                       }`}
                       type="button"
                       onClick={() => onSelectArtifact(artifact.artifactId)}
+                      {...pressMotion}
                     >
                       <div>
                         <strong>{artifact.name}</strong>
@@ -1360,6 +1545,7 @@ export function DebugPage({
                     type="button"
                     disabled={!selectedArtifact || isQgisSubmitting}
                     onClick={() => onRunQgisProcess('native:buffer', 1000)}
+                    {...pressMotion}
                   >
                     {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
                     运行 native:buffer
@@ -1371,6 +1557,7 @@ export function DebugPage({
                       type="button"
                       disabled={!selectedArtifact || isQgisSubmitting}
                       onClick={() => onRunQgisModel(modelName, overlayCandidates[0]?.artifactId)}
+                      {...pressMotion}
                     >
                       {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
                       运行模型：{modelName}
@@ -1396,10 +1583,10 @@ export function DebugPage({
               </div>
               <pre className="debug-pre">{agentState ? JSON.stringify(agentState, null, 2) : '暂无数据'}</pre>
             </div>
-          </section>
-        </div>
-      </main>
-    </div>
+          </m.section>
+        </m.div>
+      </m.main>
+    </m.div>
   )
 }
 
@@ -2037,27 +2224,27 @@ function formatApprovalStatus(status?: string) {
 
 function formatLoopPhase(phase?: string) {
   if (phase === 'observe') {
-    return 'Observe'
+    return '观察'
   }
   if (phase === 'decide') {
-    return 'Decide'
+    return '决策'
   }
   if (phase === 'act') {
-    return 'Act'
+    return '执行'
   }
   if (phase === 'observe_result') {
-    return 'Observe Result'
+    return '吸收结果'
   }
   if (phase === 'approval') {
-    return 'Approval'
+    return '审批'
   }
   if (phase === 'deliver') {
-    return 'Deliver'
+    return '交付'
   }
   if (phase === 'failed') {
-    return 'Failed'
+    return '失败'
   }
-  return 'Idle'
+  return '待命'
 }
 
 function deriveApprovalTone(status?: string): 'neutral' | 'success' | 'warning' | 'accent' | 'danger' {
@@ -2068,4 +2255,23 @@ function deriveApprovalTone(status?: string): 'neutral' | 'success' | 'warning' 
     return 'danger'
   }
   return 'warning'
+}
+
+function formatPlaceResolutionStatus(status?: string) {
+  if (status === 'resolved') {
+    return '已解析'
+  }
+  if (status === 'ambiguous') {
+    return '待澄清'
+  }
+  if (status === 'not_found') {
+    return '未找到'
+  }
+  if (status === 'failed') {
+    return '解析失败'
+  }
+  if (status === 'unresolved') {
+    return '未触发'
+  }
+  return '未知'
 }

@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 暴露 GIS 公共工具包的共享函数和数据处理能力。
+
 from .crs import choose_local_metric_epsg, feature_from_shape, shape_from_feature, transform_feature_collection
 from .geojson import ensure_feature_collection, load_geojson, save_geojson
 from .ids import make_id, now_utc

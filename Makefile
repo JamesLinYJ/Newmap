@@ -1,5 +1,3 @@
-PYTHONPATH_VALUE=apps/api/src:apps/worker/src:packages/agent-core/src:packages/model-adapters/src:packages/tool-registry/src:packages/gis-postgis/src:packages/gis-qgis/src:packages/gis-common/src:packages/map-publisher/src:packages/shared-types/src
-
 .PHONY: install install-py install-web dev-api dev-web test build-web deploy-prod deploy-remote
 
 install: install-py install-web
@@ -11,13 +9,13 @@ install-web:
 	npm install
 
 dev-api:
-	PYTHONPATH=$(PYTHONPATH_VALUE) python3 -m uvicorn api_app.main:app --reload --host 0.0.0.0 --port 8000
+	python3 -m uvicorn api_app.main:app --reload --host 0.0.0.0 --port 8000
 
 dev-web:
 	npm run dev --workspace apps/web
 
 test:
-	PYTHONPATH=$(PYTHONPATH_VALUE) pytest -q
+	pytest -q
 
 build-web:
 	npm run build --workspace apps/web

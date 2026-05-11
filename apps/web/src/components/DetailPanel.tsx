@@ -8,7 +8,11 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
-import { ExternalLink, Lightbulb, LoaderCircle, MapPin, Sparkles } from 'lucide-react'
+// 模块职责
+//
+// 展示当前结果对象、发布入口、运行摘要与系统状态等辅助信息。
+
+import { CloudUpload, ExternalLink, Eye, EyeOff, Lightbulb, LoaderCircle, LocateFixed, MapPin, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
 
 import type {
   AgentState,
@@ -40,6 +44,14 @@ interface DetailPanelProps {
   agentState?: AgentState
   artifacts: ArtifactRef[]
   artifactData: Record<string, GeoJSON.FeatureCollection>
+  mapLayers: Array<{
+    artifact: ArtifactRef
+    data: GeoJSON.FeatureCollection
+    visible: boolean
+    opacity: number
+    featureCount: number
+    geometrySummary: string
+  }>
   layers: LayerDescriptor[]
   events: RunEvent[]
   sessionRuns: AnalysisRun[]
@@ -55,6 +67,8 @@ interface DetailPanelProps {
   qgisModels?: QgisModelsResponse
   isQgisSubmitting: boolean
   onSelectArtifact: (artifactId: string) => void
+  onToggleArtifactVisibility: (artifactId: string) => void
+  onChangeArtifactOpacity: (artifactId: string, opacity: number) => void
   onSelectHistoryRun: (runId: string) => void
   onPublish: (artifactId: string) => void
   onRunQgisProcess: (algorithmId: string, distance?: number) => void
@@ -63,6 +77,9 @@ interface DetailPanelProps {
   onProviderChange: (value: string) => void
   onModelChange: (value: string) => void
   onResolveApproval: (approvalId: string, approved: boolean) => void
+  onImportManagedLayer: (file: File) => void
+  onToggleLayerStatus: (layerKey: string, nextStatus: string) => void
+  onDeleteLayer: (layerKey: string) => void
 }
 
 export function DetailPanel({
@@ -72,6 +89,7 @@ export function DetailPanel({
   agentState,
   artifacts,
   artifactData,
+  mapLayers,
   layers,
   events,
   sessionRuns,
@@ -87,6 +105,8 @@ export function DetailPanel({
   qgisModels,
   isQgisSubmitting,
   onSelectArtifact,
+  onToggleArtifactVisibility,
+  onChangeArtifactOpacity,
   onSelectHistoryRun,
   onPublish,
   onRunQgisProcess,
@@ -95,6 +115,9 @@ export function DetailPanel({
   onProviderChange,
   onModelChange,
   onResolveApproval,
+  onImportManagedLayer,
+  onToggleLayerStatus,
+  onDeleteLayer,
 }: DetailPanelProps) {
   // 右侧详情面板
   //
@@ -119,6 +142,8 @@ export function DetailPanel({
   const todoItems = agentState?.todos ?? []
   const subAgents = agentState?.subAgents ?? []
   const approvals = agentState?.approvals ?? []
+  const managedLayers = layers.filter((layer) => !layer.sourceType.startsWith('session_') && layer.sourceType !== 'upload')
+  const sessionUploadLayers = layers.filter((layer) => layer.sourceType.startsWith('session_') || layer.sourceType === 'upload')
   const availableModelName =
     qgisModels?.models.find((item) => item === 'buffer_and_intersect') ?? qgisModels?.models[0] ?? null
   const overlayCandidates = artifacts.filter((artifact) => artifact.artifactId !== selectedArtifact?.artifactId)
@@ -165,7 +190,7 @@ export function DetailPanel({
                     type="button"
                     onClick={() => onSelectArtifact(artifact.artifactId)}
                   >
-                    <div className={`dc-result-thumb dc-result-thumb--${index % 2 === 0 ? 'blue' : 'orange'}`} />
+                    <div className={`dc-result-thumb dc-result-thumb--${index % 2 === 0 ? 'graphite' : 'orange'}`} />
                     <div className="dc-result-item__copy">
                       <strong>{cardLabels[index]?.title ?? artifact.name}</strong>
                       <span>{cardLabels[index]?.subtitle ?? `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象已就绪`}</span>
@@ -325,21 +350,58 @@ export function DetailPanel({
 
           <div className="dc-panel-section">
             <div className="dc-panel-section__title">分析结果</div>
-            <div className="dc-panel-list">
-              {artifacts.length ? (
-                artifacts.map((artifact) => (
-                  <button
-                    key={artifact.artifactId}
-                    type="button"
-                    className={`dc-panel-item${artifact.artifactId === selectedArtifact?.artifactId ? ' dc-panel-item--active' : ''}`}
-                    onClick={() => onSelectArtifact(artifact.artifactId)}
+            <div className="dc-layer-manager">
+              {mapLayers.length ? (
+                mapLayers.map((layer) => (
+                  <article
+                    key={layer.artifact.artifactId}
+                    className={`dc-layer-manager__item${
+                      layer.artifact.artifactId === selectedArtifact?.artifactId ? ' dc-layer-manager__item--active' : ''
+                    }`}
                   >
-                    <div>
-                      <strong>{artifact.name}</strong>
-                      <span>{artifactData[artifact.artifactId]?.features.length ?? 0} 个对象</span>
+                    <div className="dc-layer-manager__top">
+                      <button type="button" className="dc-layer-manager__main" onClick={() => onSelectArtifact(layer.artifact.artifactId)}>
+                        <strong>{layer.artifact.name}</strong>
+                        <span>
+                          {layer.featureCount} 个对象 · {layer.geometrySummary}
+                        </span>
+                      </button>
+                      <div className="dc-layer-manager__actions">
+                        <button
+                          type="button"
+                          className="dc-layer-manager__icon"
+                          aria-label={layer.visible ? '隐藏图层' : '显示图层'}
+                          onClick={() => onToggleArtifactVisibility(layer.artifact.artifactId)}
+                        >
+                          {layer.visible ? <Eye size={15} /> : <EyeOff size={15} />}
+                        </button>
+                        <button
+                          type="button"
+                          className="dc-layer-manager__icon"
+                          aria-label="定位到图层"
+                          onClick={() => onSelectArtifact(layer.artifact.artifactId)}
+                        >
+                          <LocateFixed size={15} />
+                        </button>
+                      </div>
                     </div>
-                    <span className="dc-pill-meta">{artifact.artifactType}</span>
-                  </button>
+                    <div className="dc-layer-manager__meta">
+                      <span className="dc-pill-meta">{layer.artifact.artifactType}</span>
+                      <span className="dc-pill-meta">{layer.visible ? '显示中' : '已隐藏'}</span>
+                      <span className="dc-pill-meta">透明度 {Math.round(layer.opacity * 100)}%</span>
+                    </div>
+                    <label className="dc-layer-manager__slider">
+                      <span>图层透明度</span>
+                      <input
+                        type="range"
+                        min={20}
+                        max={100}
+                        step={5}
+                        value={Math.round(layer.opacity * 100)}
+                        onChange={(event) => onChangeArtifactOpacity(layer.artifact.artifactId, Number(event.target.value) / 100)}
+                      />
+                    </label>
+                  </article>
                 ))
               ) : (
                 <p className="dc-empty-copy">还没有生成结果图层，提交一次分析后这里会自动更新。</p>
@@ -349,17 +411,26 @@ export function DetailPanel({
 
           <div className="dc-panel-section">
             <div className="dc-panel-section__title">参考图层</div>
-            <div className="dc-panel-list">
+            <div className="dc-layer-reference-list">
               {layers.length ? (
                 layers.map((layer) => (
-                  <div key={layer.layerKey} className="dc-panel-item dc-panel-item--static">
-                    <div>
+                  <div key={layer.layerKey} className="dc-layer-reference">
+                    <div className="dc-layer-reference__top">
                       <strong>{layer.name}</strong>
                       <span>
                         {layer.geometryType} · {layer.featureCount ?? 0} 要素
                       </span>
                     </div>
-                    <span className="dc-pill-meta">{layer.sourceType}</span>
+                    <div className="dc-layer-reference__meta">
+                      <span className="dc-pill-meta">{layer.sourceType}</span>
+                      <span className="dc-pill-meta">SRID {layer.srid}</span>
+                      {(layer.tags ?? []).slice(0, 3).map((tag) => (
+                        <span key={tag} className="dc-pill-meta">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                    <p>{layer.description}</p>
                   </div>
                 ))
               ) : (
@@ -547,8 +618,8 @@ export function DetailPanel({
               <strong>{uploadedLayerName ?? '暂未上传'}</strong>
             </div>
             <div className="dc-keyvalue-row">
-              <span>内置图层</span>
-              <strong>{layers.length} 个</strong>
+              <span>后台 catalog</span>
+              <strong>{managedLayers.length} 个</strong>
             </div>
             <div className="dc-keyvalue-row">
               <span>当前底图</span>
@@ -561,20 +632,68 @@ export function DetailPanel({
           </div>
 
           <div className="dc-panel-section">
-            <div className="dc-panel-section__title">可用图层</div>
+            <div className="dc-panel-section__title">后台图层目录</div>
+            <label className="dc-link-button dc-link-button--primary dc-layer-import">
+              <CloudUpload size={14} aria-hidden="true" />
+              导入后台图层
+              <input
+                type="file"
+                accept=".geojson,.json,.gpkg"
+                hidden
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) {
+                    onImportManagedLayer(file)
+                  }
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
             <div className="dc-panel-list">
-              {layers.length ? (
-                layers.slice(0, 6).map((layer) => (
+              {managedLayers.length ? (
+                managedLayers.map((layer) => (
                   <div key={layer.layerKey} className="dc-panel-item dc-panel-item--static">
                     <div>
                       <strong>{layer.name}</strong>
-                      <span>{layer.description || `${layer.geometryType} 图层`}</span>
+                      <span>{layer.description || `${layer.geometryType} 图层`} · {layer.category} · {layer.status}</span>
+                    </div>
+                    <div className="dc-panel-item__actions">
+                      <span className="dc-pill-meta">{layer.layerKey}</span>
+                      <button
+                        type="button"
+                        className="dc-icon-button"
+                        title={layer.status === 'active' ? '停用图层' : '启用图层'}
+                        onClick={() => onToggleLayerStatus(layer.layerKey, layer.status === 'active' ? 'inactive' : 'active')}
+                      >
+                        {layer.status === 'active' ? <ToggleRight size={16} aria-hidden="true" /> : <ToggleLeft size={16} aria-hidden="true" />}
+                      </button>
+                      <button type="button" className="dc-icon-button dc-icon-button--danger" title="删除图层" onClick={() => onDeleteLayer(layer.layerKey)}>
+                        <Trash2 size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="dc-empty-copy">当前 catalog 为空。你可以先导入 GeoJSON / GPKG，或者直接让 Agent 使用外部地点与 POI 来源继续分析。</p>
+              )}
+            </div>
+          </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">会话上传</div>
+            <div className="dc-panel-list">
+              {sessionUploadLayers.length ? (
+                sessionUploadLayers.map((layer) => (
+                  <div key={layer.layerKey} className="dc-panel-item dc-panel-item--static">
+                    <div>
+                      <strong>{layer.name}</strong>
+                      <span>{layer.description || `${layer.geometryType} 图层`} · 当前会话</span>
                     </div>
                     <span className="dc-pill-meta">{layer.layerKey}</span>
                   </div>
                 ))
               ) : (
-                <p className="dc-empty-copy">系统图层目录暂时为空。</p>
+                <p className="dc-empty-copy">当前会话还没有临时上传图层。</p>
               )}
             </div>
           </div>

@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 导出 Python 侧共享 schema，供 API、runtime 和服务层共同引用。
+
 from .schemas import (
     AgentFinalResponse,
     AgentRuntimeConfig,
@@ -16,13 +20,17 @@ from .schemas import (
     ApprovalRequest,
     AnalysisRunRecord,
     ArtifactRef,
+    ClarificationState,
     ClarificationOption,
     ExecutionPlan,
     LayerDescriptor,
     ModelProviderDescriptor,
     PlanStep,
     PublishRequest,
+    RuntimeCatalogConfig,
     RuntimeContextConfig,
+    RuntimePlanningConfig,
+    RuntimePoiConfig,
     RuntimeUiConfig,
     RuntimeSubAgentConfig,
     RunEvent,
@@ -46,13 +54,17 @@ __all__ = [
     "ApprovalRequest",
     "AnalysisRunRecord",
     "ArtifactRef",
+    "ClarificationState",
     "ClarificationOption",
     "ExecutionPlan",
     "LayerDescriptor",
     "ModelProviderDescriptor",
     "PlanStep",
     "PublishRequest",
+    "RuntimeCatalogConfig",
     "RuntimeContextConfig",
+    "RuntimePlanningConfig",
+    "RuntimePoiConfig",
     "RuntimeUiConfig",
     "RuntimeSubAgentConfig",
     "RunEvent",

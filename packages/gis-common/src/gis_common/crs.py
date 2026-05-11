@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 封装 CRS 推断、几何投影和坐标系相关辅助逻辑。
+
 from __future__ import annotations
 
 from functools import partial

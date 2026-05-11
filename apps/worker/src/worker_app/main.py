@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 定义后台 worker 的启动逻辑、心跳与任务轮询行为。
+
 from __future__ import annotations
 
 import signal

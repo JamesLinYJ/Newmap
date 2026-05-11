@@ -8,6 +8,10 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
+// 模块职责
+//
+// 管理 Web 构建、开发服务器和打包切块配置。
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -21,6 +25,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    strictPort: true,
   },
   build: {
     rollupOptions: {

@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 统一导出 agent core 的运行时与解析能力，作为上层依赖入口。
+
 from .graph import GeoAgentRuntime
 
 __all__ = ["GeoAgentRuntime"]

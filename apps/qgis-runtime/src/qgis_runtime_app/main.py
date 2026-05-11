@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 提供 QGIS Runtime 的健康检查、算法执行和模型执行接口。
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager

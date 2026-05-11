@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 统一暴露模型适配器注册表和基础抽象。
+
 from .base import BaseModelAdapter
 from .registry import ModelAdapterRegistry
 

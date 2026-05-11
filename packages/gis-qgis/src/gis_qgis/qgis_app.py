@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 承载 QGIS Runtime 进程内部的算法发现与执行辅助逻辑。
+
 from __future__ import annotations
 
 import os

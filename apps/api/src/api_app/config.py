@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 统一管理 API 服务的环境变量、模型配置、路径解析和测试数据库优先级。
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,13 +37,15 @@ class Settings(BaseSettings):
     qgis_publish_dir: str = "./runtime/published"
     qgis_process_bin: str = "qgis_process"
     qgis_runtime_base_url: str | None = "http://localhost:8090"
+    test_database_url: str | None = None
     database_url: str | None = None
     tianditu_api_key: str | None = None
-    default_model_provider: str = "gemini"
+    default_model_provider: str = "openai_compatible"
     default_model_name: str | None = None
     openai_base_url: str | None = None
     openai_api_key: str | None = None
     openai_model: str | None = None
+    openai_subagent_model: str = "deepseek-v4-flash"
     anthropic_base_url: str = "https://api.anthropic.com/v1"
     anthropic_api_key: str | None = None
     anthropic_model: str | None = None
@@ -73,6 +79,12 @@ class Settings(BaseSettings):
     @property
     def resolved_qgis_publish_dir(self) -> Path:
         return self.resolve_path(self.qgis_publish_dir)
+
+    @property
+    def effective_database_url(self) -> str | None:
+        if self.app_env == "test":
+            return self.test_database_url or self.database_url
+        return self.database_url
 
 
 settings = Settings()

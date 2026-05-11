@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 集中管理运行时 ID 生成和时间戳辅助函数。
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 直接调用本地 QGIS Processing 与 model 执行命令。
+
 from __future__ import annotations
 
 import json

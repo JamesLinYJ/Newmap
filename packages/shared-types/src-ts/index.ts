@@ -8,6 +8,10 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
+// 模块职责
+//
+// 定义前端消费的共享类型，保持与 Python schemas 语义一致。
+
 // 共享前端类型定义
 //
 // 与 Python 侧 shared_types.schemas 保持语义一致，供 Web 端直接消费接口数据。
@@ -30,15 +34,51 @@ export type EventType =
   | 'run.failed'
 
 export interface ClarificationOption {
+  optionId?: string | null
   label: string
   description: string
+  kind?: string
+  reason?: string | null
+  payload?: Record<string, unknown>
+}
+
+export interface ClarificationState {
+  clarificationId: string
+  kind: string
+  reason: string
+  question: string
+  options: ClarificationOption[]
+  selectedOptionId?: string | null
+  allowFreeText: boolean
+}
+
+export interface PlaceSearchCandidate {
+  label: string
+  displayName?: string | null
+  country?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  boundingbox?: Array<string | number> | null
+  source?: string | null
+}
+
+export interface PlaceResolution {
+  status: 'unresolved' | 'resolved' | 'ambiguous' | 'not_found' | 'failed'
+  query?: string | null
+  provider?: string | null
+  selected?: PlaceSearchCandidate | null
+  candidates: PlaceSearchCandidate[]
+  error?: string | null
 }
 
 export interface UserIntent {
   area?: string | null
+  placeQuery?: string | null
+  anchorType: 'admin_area' | 'poi' | 'uploaded_layer' | 'unknown'
   taskType?: string | null
   distanceM?: number | null
   publishRequested: boolean
+  dataRequirements: string[]
   targetLayers: string[]
   spatialConstraints: string[]
   desiredOutputs: string[]
@@ -68,6 +108,44 @@ export interface ToolCall {
   message: string
   startedAt?: string
   completedAt?: string | null
+  resultId?: string | null
+  source?: string | null
+  confidence?: number | null
+  usedQuery?: string | null
+  provenance?: Record<string, unknown>
+  crs?: Record<string, unknown>
+  geometryType?: string | null
+  featureCount?: number | null
+}
+
+export interface ContextReference {
+  referenceId: string
+  kind: string
+  label: string
+  description: string
+  sourceRunId?: string | null
+  artifactId?: string | null
+  collectionRef?: string | null
+  layerKey?: string | null
+  confidence?: number | null
+  usableAs: string[]
+  metadata: Record<string, unknown>
+}
+
+export interface ContextResolution {
+  status: string
+  query?: string | null
+  selectedReferenceId?: string | null
+  selectedKind?: string | null
+  sourceRunId?: string | null
+  reason?: string | null
+  candidates: ContextReference[]
+}
+
+export interface RunLifecycle {
+  status: 'created' | 'running' | 'waiting_clarification' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled' | string
+  reason?: string | null
+  updatedAt?: string | null
 }
 
 export interface TodoItem {
@@ -133,6 +211,11 @@ export interface RuntimeUiConfig {
   eventGroupingWindowMs: number
 }
 
+export interface RuntimeCatalogConfig {
+  allowEmptyCatalog: boolean
+  adminEnabled: boolean
+}
+
 export interface RuntimeContextConfig {
   memoryFilePaths: string[]
   historyRunLimit: number
@@ -142,13 +225,41 @@ export interface RuntimeContextConfig {
   warningWindow: number
 }
 
+export interface RuntimeGeosearchConfig {
+  provider: string
+  enabled: boolean
+  baseUrl: string
+  userAgent: string
+  timeoutMs: number
+  maxCandidates: number
+}
+
+export interface RuntimePoiConfig {
+  provider: string
+  enabled: boolean
+  baseUrl: string
+  userAgent: string
+  timeoutMs: number
+  maxResults: number
+}
+
+export interface RuntimePlanningConfig {
+  maxPlanRepairRounds: number
+  allowTextOnlyDelivery: boolean
+  externalSourcePriority: string[]
+}
+
 export interface AgentRuntimeConfig {
   defaultPublishProjectKey: string
   loopTraceLimit: number
   supervisor: SupervisorRuntimeConfig
   subAgents: RuntimeSubAgentConfig[]
   ui: RuntimeUiConfig
+  catalog: RuntimeCatalogConfig
+  planning: RuntimePlanningConfig
   context: RuntimeContextConfig
+  geosearch: RuntimeGeosearchConfig
+  externalPoi: RuntimePoiConfig
 }
 
 export interface LoopTraceEntry {
@@ -181,7 +292,12 @@ export interface LayerDescriptor {
   srid: number
   description: string
   featureCount?: number
-  tags?: string[]
+  category: string
+  status: string
+  tags: string[]
+  analysisCapabilities: string[]
+  sourceConfigSummary?: string | null
+  sessionId?: string | null
 }
 
 export interface BasemapDescriptor {
@@ -207,6 +323,11 @@ export interface AgentState {
   modelProvider?: string | null
   modelName?: string | null
   parsedIntent?: UserIntent
+  clarification?: ClarificationState | null
+  placeResolution?: PlaceResolution | null
+  contextReferences?: ContextReference[]
+  contextResolution?: ContextResolution | null
+  runLifecycle?: RunLifecycle
   executionPlan?: ExecutionPlan
   currentStep: number
   loopIteration: number
@@ -217,6 +338,9 @@ export interface AgentState {
   approvals: ApprovalRequest[]
   toolResults: ToolCall[]
   artifacts: ArtifactRef[]
+  selectedDataSources: string[]
+  planRepairAttempts: number
+  textOnlyDelivery: boolean
   warnings: string[]
   errors: string[]
   failedStepId?: string | null
@@ -246,6 +370,13 @@ export interface AgentThreadRecord {
   createdAt: string
   updatedAt: string
   latestRunId?: string | null
+  latestUserQuery?: string | null
+  latestAssistantSummary?: string | null
+  latestRunStatus?: string | null
+  latestArtifactId?: string | null
+  latestArtifactName?: string | null
+  historyPreview?: string | null
+  runCount: number
 }
 
 export interface AnalysisRun {

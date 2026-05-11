@@ -1,438 +1,219 @@
 // +-------------------------------------------------------------------------
 //
-//   地理智能平台 - REPL 对话面板
+//   地理智能平台 - 智能对话面板
 //
 //   文件:       ChatPanel.tsx
 //
-//   日期:       2026年04月16日
-//   作者:       OpenAI Codex
+//   日期:       2026年05月09日
+//   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react'
-import { LoaderCircle } from 'lucide-react'
+// 模块职责
+//
+// 承接用户自然语言空间分析输入、任务历史、审批动作和运行 transcript。
+// 本文件的本地状态只管理编辑态、展开态和弹窗态，服务端运行事实来自 props。
 
-import type { AgentRuntimeConfig, AnalysisRun, UserIntent } from '@geo-agent-platform/shared-types'
-import { isActivityEntry, type TranscriptEntry } from '../runTranscript'
+import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'framer-motion'
+import { LoaderCircle, Pencil, Trash2 } from 'lucide-react'
+import type { AgentRuntimeConfig, AgentThreadRecord, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
+import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants } from '../motion'
+import { deriveConversationEntries, type TranscriptEntry } from '../runTranscript'
 import { AppIcon } from './AppIcon'
+import { Markdown } from './Markdown'
 
 interface ChatPanelProps {
-  artifactCount: number
-  currentRunId?: string
-  runCreatedAt?: string
-  providerLabel: string
-  runStatus?: string
-  query: string
-  isSubmitting: boolean
-  errorMessage?: string
-  uploadedLayerName?: string
-  intent?: UserIntent
-  sessionRuns: AnalysisRun[]
-  transcriptEntries: ReadonlyArray<TranscriptEntry>
-  runtimeConfig?: AgentRuntimeConfig
-  onQueryChange: (value: string) => void
-  onSubmit: () => void
-  onFillSample: (value: string) => void
-  onUseTemplate: () => void
-  onUpload: (file: File) => void
-  onSelectArtifact: (artifactId: string) => void
-  onSelectTask: (runId: string) => void
-  onResolveApproval: (approvalId: string, approved: boolean) => void
+  artifactCount:number; currentRunId?:string; currentThreadId?:string; currentThreadTitle?:string
+  runCreatedAt?:string; providerLabel:string; runStatus?:string; query:string; isSubmitting:boolean
+  errorMessage?:string; uploadedLayerName?:string; intent?:UserIntent
+  sessionThreads:AgentThreadRecord[]; transcriptEntries:ReadonlyArray<TranscriptEntry>
+  runtimeConfig?:AgentRuntimeConfig; availableTools?:ToolDescriptor[]
+  onQueryChange:(v:string)=>void; onSubmit:()=>void; onNewConversation:()=>void
+  onFillSample:(v:string)=>void; onSelectClarification:(v:string,id?:string|null)=>void
+  onUseTemplate:()=>void; onUpload:(f:File)=>void; onSelectArtifact:(id:string)=>void
+  onSelectTask:(id:string)=>void; onRenameTask:(id:string,t:string)=>void
+  onDeleteTask:(id:string)=>void; onResolveApproval:(id:string,ok:boolean)=>void
 }
+type TaskView='chat'|'summary'|'all'
+type TaskDialog={mode:'rename'|'delete';task:AgentThreadRecord}|null
+const SAMPLES=['巴黎地铁站 1 公里内有哪些医院','我上传的这些点，哪些在柏林市区里','帮我查一下 Springfield 在哪里']as const
 
-const SAMPLE_QUERIES = [
-  '查询巴黎地铁站 1 公里范围内的医院',
-  '判断我上传的点是否落在柏林行政区内',
-  '查询叫 Springfield 的区域',
-] as const
+export function ChatPanel(p:ChatPanelProps){
+  const{artifactCount,currentRunId,currentThreadId,currentThreadTitle,runCreatedAt,providerLabel,runStatus,query,isSubmitting,errorMessage,uploadedLayerName,intent,sessionThreads,transcriptEntries,runtimeConfig,availableTools=[],onQueryChange,onSubmit,onNewConversation,onFillSample,onSelectClarification,onUseTemplate,onUpload,onSelectArtifact,onSelectTask,onRenameTask,onDeleteTask,onResolveApproval}=p
+  const[taskVS,setTaskVS]=useState<{mode:TaskView;bound?:string}>({mode:'chat',bound:currentRunId})
+  const[expanded,setExpanded]=useState<string[]>([])
+  const[search,setSearch]=useState('')
+  const[dialog,setDialog]=useState<TaskDialog>(null)
+  const[titleDraft,setTitleDraft]=useState('')
+  const[composing,setComposing]=useState(false)
+  const triggerRef=useRef<HTMLElement|null>(null)
+  const submittingRef=useRef(false)
+  const rm=useReducedMotion()??false
+  const taskView=taskVS.bound===currentRunId?taskVS.mode:'chat'
+  const setTaskView=(m:TaskView)=>setTaskVS({mode:m,bound:currentRunId})
+  const toggle=(id:string)=>setExpanded(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id])
+  if (!isSubmitting) submittingRef.current = false
+  const conv=useMemo(()=>deriveConversationEntries(transcriptEntries,runStatus,availableTools),[availableTools,runStatus,transcriptEntries])
+  const hasConv=conv.length>0
+  const topic=query.trim()||'新对话'
+  const recent=useMemo(()=>sessionThreads.slice(0,4),[sessionThreads])
+  const filtered=useMemo(()=>{const kw=search.trim().toLowerCase();if(!kw)return sessionThreads;return sessionThreads.filter(t=>[t.title,t.latestUserQuery,t.historyPreview,t.id].filter(Boolean).some(v=>v!.toLowerCase().includes(kw)))},[sessionThreads,search])
+  const taskMode=taskView!=='chat';const showSamples=!isSubmitting&&!hasConv&&!taskMode
+  const tasks=taskView==='all'?filtered:recent
+  const feedV=buildListVariants(rm,.03,.01)
+  const entryV=buildListItemVariants(rm,10)
+  const openRename=(t:AgentThreadRecord)=>{triggerRef.current=document.activeElement as HTMLElement|null;setTitleDraft(t.title);setDialog({mode:'rename',task:t})}
+  const openDelete=(t:AgentThreadRecord)=>{triggerRef.current=document.activeElement as HTMLElement|null;setDialog({mode:'delete',task:t})}
+  const closeDialog=()=>{setDialog(null);setTitleDraft('');requestAnimationFrame(()=>{triggerRef.current?.focus();triggerRef.current=null})}
+  const submitRename=()=>{if(dialog?.mode==='rename'&&titleDraft.trim()&&titleDraft.trim()!==dialog.task.title)onRenameTask(dialog.task.id,titleDraft.trim());closeDialog()}
+  const submitDelete=()=>{if(dialog?.mode==='delete')onDeleteTask(dialog.task.id);closeDialog()}
+  const handleSubmit=(e?:FormEvent)=>{e?.preventDefault();if(submittingRef.current||isSubmitting||composing||!query.trim())return;submittingRef.current=true;onSubmit()}
+  const handleKey=(e:KeyboardEvent<HTMLInputElement>)=>{if(e.key==='Enter'&&!e.nativeEvent.isComposing&&!composing){e.preventDefault();handleSubmit()}}
 
-export function ChatPanel({
-  artifactCount,
-  currentRunId,
-  runCreatedAt,
-  providerLabel,
-  runStatus,
-  query,
-  isSubmitting,
-  errorMessage,
-  uploadedLayerName,
-  intent,
-  sessionRuns,
-  transcriptEntries,
-  runtimeConfig,
-  onQueryChange,
-  onSubmit,
-  onFillSample,
-  onUseTemplate,
-  onUpload,
-  onSelectArtifact,
-  onSelectTask,
-  onResolveApproval,
-}: ChatPanelProps) {
-  const [taskView, setTaskView] = useState<'chat' | 'summary' | 'all'>(currentRunId ? 'chat' : 'summary')
-  const [taskSearch, setTaskSearch] = useState('')
-  const hasTranscript = transcriptEntries.length > 1
-  const transcriptLabel =
-    runStatus === 'running'
-      ? '分析过程会实时写入。'
-    : runStatus === 'waiting_approval'
-        ? '当前停在待确认节点。'
-        : '新的空间分析任务会从这里开始。'
-  const workingLabel = runCreatedAt && runStatus === 'running' ? formatElapsedLabel(runCreatedAt) : null
-  const topicLabel = query.trim() || '新的空间分析任务'
-  const recordCount = transcriptEntries.filter((entry) => entry.kind !== 'user').length
-  const recentTasks = useMemo(() => sessionRuns.slice(0, 3), [sessionRuns])
-  const filteredTasks = useMemo(() => {
-    const keyword = taskSearch.trim().toLowerCase()
-    if (!keyword) {
-      return sessionRuns
-    }
-    return sessionRuns.filter((item) => item.userQuery.toLowerCase().includes(keyword) || item.id.toLowerCase().includes(keyword))
-  }, [sessionRuns, taskSearch])
-  const compactContextLabel = runtimeConfig?.context
-    ? `会延续最近 ${runtimeConfig.context.historyRunLimit} 轮任务与 ${runtimeConfig.context.eventWindow} 条记录`
-    : '会延续当前会话里的最近任务与结果'
-  const isTaskListMode = taskView !== 'chat'
-  const showSamples = !isSubmitting && transcriptEntries.length <= 1 && !isTaskListMode
-  const visibleTasks = taskView === 'all' ? filteredTasks : recentTasks
-  const taskPanelTitle = taskView === 'all' ? '任务' : '最近任务'
-
-  useEffect(() => {
-    if (currentRunId) {
-      setTaskView('chat')
-      return
-    }
-    setTaskView('summary')
-  }, [currentRunId])
-
-  return (
-    <div className="dc-chat-column">
-      <section className={isTaskListMode ? 'dc-chat-console dc-chat-console--tasks' : 'dc-chat-console dc-chat-console--conversation'}>
-        <header className="dc-chat-console__header">
-          <div className="dc-chat-console__tabs">
-            <span className="dc-chat-console__tab dc-chat-console__tab--active">聊天</span>
-            <span className="dc-chat-console__tab">{providerLabel}</span>
-          </div>
-          <div className="dc-chat-console__actions">
-            <span className="dc-chat-shell__status">{formatRunStatus(runStatus)}</span>
-            {currentRunId ? <span className="dc-chat-shell__status">任务 {currentRunId.slice(0, 8)}</span> : null}
-          </div>
-        </header>
-
-        {isTaskListMode ? (
-          <section className={taskView === 'all' ? 'dc-task-browser dc-task-browser--expanded' : 'dc-task-browser'} aria-label="任务列表">
-            <div className="dc-task-browser__header">
-              <div className="dc-task-browser__title-group">
-                {taskView === 'all' || currentRunId ? (
-                  <button
-                    type="button"
-                    className="dc-chat-console__back"
-                    onClick={() => {
-                      if (taskView === 'all') {
-                        setTaskView('summary')
-                        return
-                      }
-                      if (currentRunId) {
-                        setTaskView('chat')
-                      }
-                    }}
-                  >
-                    <AppIcon name="arrow_back" size={16} />
-                    返回
-                  </button>
-                ) : null}
-                <strong>{taskPanelTitle}</strong>
-              </div>
-              <span className="dc-task-browser__count">{sessionRuns.length} 条</span>
+  return(
+    <div className="flex flex-col gap-3">
+      <LayoutGroup id={currentRunId??currentThreadId??'home'}>
+        <m.section className="flex flex-col gap-3 min-h-[clamp(560px,calc(100svh-100px),820px)] p-4 rounded-[28px] glass-strong overflow-clip isolate" layout {...buildFadeUpMotion(rm,0,10)}>
+          {/* Header */}
+          <m.header className="flex items-center justify-between gap-2" layout>
+            <div className="flex items-center gap-1.5">
+              <span className="pill pill-active text-xs">聊天</span>
+              <span className="pill text-xs">{providerLabel}</span>
             </div>
-
-            {taskView === 'all' ? (
-              <div className="dc-task-browser__search">
-                <input
-                  value={taskSearch}
-                  onChange={(event) => setTaskSearch(event.target.value)}
-                  placeholder="搜索最近任务"
-                  aria-label="搜索最近任务"
-                />
-              </div>
-            ) : null}
-
-            <div className="dc-task-browser__list" role="list">
-              {visibleTasks.length ? (
-                visibleTasks.map((task) => (
-                  <button
-                    key={task.id}
-                    type="button"
-                    className={task.id === currentRunId ? 'dc-task-browser__item dc-task-browser__item--active' : 'dc-task-browser__item'}
-                    onClick={() => {
-                      onSelectTask(task.id)
-                      setTaskView('chat')
-                      setTaskSearch('')
-                    }}
-                  >
-                    <div className="dc-task-browser__item-main">
-                      <strong>{task.userQuery}</strong>
-                      <span>{task.id === currentRunId ? '当前任务' : formatRunStatus(task.status)}</span>
-                    </div>
-                    <time dateTime={task.createdAt}>{formatTaskAge(task.createdAt)}</time>
-                  </button>
-                ))
-              ) : (
-                <div className="dc-task-browser__empty">没有找到匹配的任务。</div>
-              )}
+            <div className="flex items-center gap-1.5">
+              {sessionThreads.length>0&&<button className="pill text-xs" onClick={()=>setTaskView(taskView==='chat'?'summary':'chat')}><AppIcon name="history" size={12}/>{taskView==='chat'?`${sessionThreads.length}`:'返回'}</button>}
+              <button className="pill text-xs gap-1" onClick={onUseTemplate}><AppIcon name="auto_awesome" size={12}/>模板</button>
+              <button className="pill text-xs gap-1" onClick={onNewConversation}><Pencil size={11}/>新建</button>
+              <span className={`badge ${runStatus==='running'?'badge-neutral':runStatus==='completed'?'badge-green':runStatus==='failed'?'badge-red':''}`}>{fmtS(runStatus)}</span>
             </div>
+          </m.header>
 
-            {taskView === 'summary' && sessionRuns.length > recentTasks.length ? (
-              <button type="button" className="dc-task-browser__view-all" onClick={() => setTaskView('all')}>
-                查看全部（{sessionRuns.length} 个）
-              </button>
-            ) : null}
-
-            <div className="dc-task-browser__placeholder" aria-hidden="true">
-              <AppIcon name="psychology" size={34} />
-            </div>
-          </section>
-        ) : (
-          <>
-            <div className="dc-chat-console__thread">
-              <div className="dc-chat-console__thread-main">
-                {sessionRuns.length ? (
-                  <button type="button" className="dc-chat-console__back" onClick={() => setTaskView('summary')}>
-                    <AppIcon name="arrow_back" size={16} />
-                    返回
-                  </button>
-                ) : null}
-                <span className="dc-chat-console__thread-path">{currentRunId ? topicLabel : '新的空间任务会从这里开始'}</span>
-                {!hasTranscript ? <p>{transcriptLabel}</p> : null}
-              </div>
-              <div className="dc-chat-console__thread-meta">
-                <span className="dc-chat-console__thread-chip">{artifactCount} 个结果</span>
-                <span className="dc-chat-console__thread-chip">{recordCount} 条记录</span>
-              </div>
-            </div>
-
-            {intent?.clarificationRequired ? (
-              <div className="dc-clarification">
-                <strong>{intent.clarificationQuestion}</strong>
-                <div className="dc-clarification__options">
-                  {intent.clarificationOptions?.map((option) => (
-                    <button key={option.label} type="button" className="dc-clarification__option" onClick={() => onFillSample(option.label)}>
-                      {option.label}
-                    </button>
-                  ))}
+          <AnimatePresence mode="wait" initial={false}>
+            {taskMode?(
+              <m.section key={`t-${taskView}`} className="flex flex-col flex-1 min-h-0 gap-3" aria-label="任务列表" layout {...buildFadeUpMotion(rm,0,18)}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {(taskView==='all'||currentRunId)&&<button className="text-[15px] font-medium text-[#1c1c1e] bg-transparent border-0 cursor-pointer flex items-center gap-1" onClick={()=>taskView==='all'?setTaskView('summary'):currentRunId&&setTaskView('chat')}><AppIcon name="arrow_back" size={15}/>{taskView==='all'?'最近':'关闭'}</button>}
+                    <span className="text-[17px] font-semibold text-[#1c1c1e]">{taskView==='all'?'全部任务':'最近'}</span>
+                  </div>
+                  <span className="text-[13px] text-[#8e8e93]">{sessionThreads.length}个</span>
                 </div>
-              </div>
-            ) : null}
-
-            {errorMessage ? <div className="dc-error-banner">{errorMessage}</div> : null}
-
-            <div className="dc-chat-console__feed" aria-label="Agent transcript">
-              {transcriptEntries.length ? (
-                transcriptEntries.map((entry) => (
-                  isActivityEntry(entry.kind) ? (
-                    <article
-                      key={entry.id}
-                      className={`dc-activity-card dc-activity-card--kind-${entry.kind} dc-activity-card--status-${entry.status}`}
-                    >
-                      <div className="dc-activity-card__rail" aria-hidden="true" />
-                      <div className="dc-activity-card__content">
-                        <div className="dc-activity-card__meta">
-                          <span className={`dc-chat-message__kind dc-chat-message__kind--${entry.kind}`}>{formatKind(entry.kind)}</span>
-                          <span className={`dc-chat-message__status dc-chat-message__status--${entry.status}`}>{formatEntryStatus(entry.status)}</span>
-                          <time dateTime={entry.timestamp}>{formatEventTime(entry.timestamp)}</time>
+                {taskView==='all'&&<input className="input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索"/>}
+                <m.div className="flex flex-col flex-1 overflow-auto" variants={feedV} initial="hidden" animate="visible" layout>
+                  {tasks.length?tasks.map(t=>(
+                    <div key={t.id}>
+                      <button className={`task-row ${t.id===currentThreadId?'task-row-active':''}`}
+                        onClick={()=>{onSelectTask(t.id);setTaskView('chat');setSearch('')}}>
+                        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                          <span className="text-[15px] font-medium text-[#1c1c1e] truncate">{t.title}</span>
+                          <span className="text-[13px] text-[#8e8e93] line-clamp-1">{t.historyPreview||t.latestUserQuery||'暂无摘要'}</span>
                         </div>
-                        <strong>{entry.title}</strong>
-                        <p>{entry.body}</p>
-                        {entry.commandText ? (
-                          <div className="dc-chat-message__command-block">
-                            <span className="dc-chat-message__section-label">执行命令</span>
-                            <pre className="dc-chat-message__command">{entry.commandText}</pre>
-                          </div>
-                        ) : null}
-                        {entry.details ? (
-                          <details className="dc-chat-message__details">
-                            <summary>{detailSummaryLabel(entry)}</summary>
-                            <pre>{JSON.stringify(entry.details, null, 2)}</pre>
-                          </details>
-                        ) : null}
-                        {entry.kind === 'artifact' && entry.artifactId ? (
-                          <div className="dc-chat-message__actions">
-                            <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onSelectArtifact(entry.artifactId!)}>
-                              在地图中查看
-                            </button>
-                          </div>
-                        ) : null}
-                        {entry.kind === 'approval' && entry.approvalId ? (
-                          <div className="dc-chat-message__actions">
-                            <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onResolveApproval(entry.approvalId!, true)}>
-                              批准
-                            </button>
-                            <button type="button" className="dc-link-button" onClick={() => onResolveApproval(entry.approvalId!, false)}>
-                              拒绝
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </article>
-                  ) : (
-                    <article
-                      key={entry.id}
-                      className={`dc-chat-message dc-chat-message--${entry.kind === 'user' ? 'user' : 'assistant'} dc-chat-message--kind-${entry.kind} dc-chat-message--status-${entry.status}`}
-                    >
-                      <div className="dc-chat-message__meta">
-                        <span className={`dc-chat-message__kind dc-chat-message__kind--${entry.kind}`}>{entry.kind === 'user' ? '你' : formatKind(entry.kind)}</span>
-                        <span className={`dc-chat-message__status dc-chat-message__status--${entry.status}`}>{formatEntryStatus(entry.status)}</span>
-                        <time dateTime={entry.timestamp}>{formatEventTime(entry.timestamp)}</time>
-                      </div>
-                      <strong>{entry.title}</strong>
-                      <p>{entry.body}</p>
-                      {entry.recoveryNote ? <p className="dc-chat-message__recovery">恢复说明：{entry.recoveryNote}</p> : null}
-                      {entry.details ? (
-                        <details className="dc-chat-message__details">
-                          <summary>{detailSummaryLabel(entry)}</summary>
-                          <pre>{JSON.stringify(entry.details, null, 2)}</pre>
-                        </details>
-                      ) : null}
-                    </article>
-                  )
-                ))
-              ) : (
-                <div className="dc-transcript-empty">
-                  <strong>等待第一条运行记录</strong>
-                  <p>提交空间问题后，这里会按真实顺序展示分析过程、工具调用、结果产物和待确认操作。</p>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button className="btn-icon w-7 h-7" aria-label="编辑" onClick={e=>{e.stopPropagation();openRename(t)}}><Pencil size={12}/></button>
+                          <button className="btn-icon w-7 h-7 text-[#ff3b30]" aria-label="删除" onClick={e=>{e.stopPropagation();openDelete(t)}}><Trash2 size={12}/></button>
+                        </div>
+                      </button>
+                      <div className="task-divider"/>
+                    </div>
+                  )):<div className="empty-state"><p>没有找到匹配的任务</p></div>}
+                </m.div>
+                {taskView==='summary'&&sessionThreads.length>recent.length&&<button className="text-[15px] text-[#1c1c1e] font-medium bg-transparent border-0 cursor-pointer py-1" onClick={()=>setTaskView('all')}>查看全部 {sessionThreads.length} 个</button>}
+              </m.section>
+            ):(
+              <m.div key={`c-${currentRunId??'idle'}`} className="flex flex-col flex-1 min-h-0" layout {...buildFadeMotion(rm)}>
+                {/* Thread info */}
+                <div className="flex items-center justify-between gap-2 pb-2 mb-1 border-b border-[#00000006]">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {sessionThreads.length>0&&<button className="text-[13px] text-[#3a3a3c] bg-transparent border-0 cursor-pointer flex items-center gap-1" onClick={()=>setTaskView('summary')}><AppIcon name="history" size={12}/>历史</button>}
+                    <span className="text-[13px] font-medium text-[#8e8e93] truncate">{currentThreadTitle ?? (currentRunId ? topic : '新对话')}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-[#8e8e93] font-mono"><span>{artifactCount}结果</span><span>{runtimeConfig?.supervisor.approvalInterruptTools.length?'审批':'直连'}</span><span>{conv.filter(e=>e.kind!=='message'||e.role!=='user').length}记录</span></div>
                 </div>
-              )}
-            </div>
-          </>
-        )}
 
-        <div className="dc-chat-console__footer">
-          {workingLabel ? <div className="dc-chat-console__footer-note">已运行 {workingLabel}</div> : null}
-          <div className="dc-chat-console__footer-hint">{uploadedLayerName ? `已接入数据：${uploadedLayerName}` : compactContextLabel}</div>
-        </div>
+                {/* Clarification */}
+                {intent?.clarificationRequired&&(
+                  <m.div className="mb-3 p-3.5 rounded-[18px] bg-[#ff950010] border border-[#ff950020]" layout {...buildFadeUpMotion(rm,0,8)}>
+                    <span className="text-[14px] font-medium text-[#ff9500]">{intent.clarificationQuestion}</span>
+                    <div className="flex flex-wrap gap-2 mt-2">{intent.clarificationOptions?.map(o=><button key={o.optionId??o.label} className="text-[13px] h-8 px-3.5 rounded-full font-medium cursor-pointer border-0 bg-[#ff950015] text-[#ff9500] transition-all duration-200 hover:bg-[#ff950025]" disabled={isSubmitting} onClick={()=>onSelectClarification(o.label,o.optionId)}>{o.label}</button>)}</div>
+                  </m.div>
+                )}
 
-        <div className="dc-composer dc-composer--repl">
-          <div className="dc-composer__field">
-            <AppIcon name="auto_awesome" size={18} />
-            <input
-              id="analysis-query-input"
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="描述您的空间分析需求，如：“分析地铁站周边的商业活力...”"
-            />
-            <button type="button" className="dc-composer__send" onClick={onSubmit} disabled={isSubmitting || !query.trim()}>
-              {isSubmitting ? <LoaderCircle size={20} className="spin" aria-hidden="true" /> : <AppIcon name="send" size={18} />}
+                {/* Error */}
+                {errorMessage&&<m.div className="error-bar mb-3" role="alert" layout {...buildFadeUpMotion(rm,0,6)}><span>{errorMessage}</span><button className="btn-ghost btn-sm h-8 text-[13px]" onClick={onSubmit}>重试</button></m.div>}
+
+                {/* Messages */}
+                <m.div className="flex flex-col gap-1.5 flex-1 overflow-auto pr-0.5 overscroll-contain scroll-smooth pb-2" aria-label="对话" aria-live="polite" variants={feedV} initial="hidden" animate="visible">
+                  {hasConv?<AnimatePresence initial={false}>{conv.map(entry=>entry.kind==='message'?(
+                    <m.div key={entry.id} className={`msg-row ${entry.role==='user'?'msg-user-row':'msg-bot-row'}`} layout variants={entryV} initial="hidden" animate="visible" exit="exit">
+                      {entry.role==='user'?<div className="msg-user">{entry.body}</div>:<div className="msg-bot"><Markdown>{entry.body}</Markdown></div>}
+                      <div className="msg-time">{entry.role==='user'&&<span className="mr-1.5 text-[#3a3a3c]">你</span>}{entry.status==='running'?<span className="badge badge-neutral mr-1">处理中</span>:entry.status==='failed'?<span className="badge badge-red mr-1">失败</span>:null}{fmtTime(entry.timestamp)}</div>
+                      {entry.artifactId&&<button className="pill text-xs mt-0.5" onClick={()=>onSelectArtifact(entry.artifactId!)}>在地图中查看</button>}
+                    </m.div>
+                  ):entry.kind==='command_batch'?(
+                    <m.div key={entry.id} className="msg-row msg-bot-row w-full" layout variants={entryV} initial="hidden" animate="visible" exit="exit">
+                      <button className="flex items-start gap-3 w-full p-3 rounded-[18px] glass-subtle text-left cursor-pointer border-0" onClick={()=>toggle(entry.id)}>
+                        <div className="flex-1 min-w-0"><div className="flex items-center gap-2 text-[11px] text-[#8e8e93] font-mono"><span>{entry.title}</span><span className={`badge ${entry.status==='running'?'badge-neutral':entry.status==='completed'?'badge-green':'badge-red'}`}>{fmtTS(entry.status)}</span></div><p className="text-[14px] text-[#3a3a3c] mt-1">{entry.body}</p></div>
+                        <span className={`text-[#8e8e93] transition-transform duration-200 ${expanded.includes(entry.id)?'rotate-90':''}`}><AppIcon name="arrow_back" size={14}/></span>
+                      </button>
+                      {expanded.includes(entry.id)&&entry.commands&&<m.div className="flex flex-col gap-2 mt-2 ml-4 pl-3 border-l-2 border-[#00000008]" layout {...buildFadeMotion(rm)}>{entry.commands.map(cmd=><div key={cmd.id} className="p-2.5 rounded-[14px] bg-[#00000002]"><div className="flex items-center gap-2 text-[11px] font-mono"><span className="text-[#1c1c1e]">{cmd.title}</span><span className={`badge ${cmd.status==='running'?'badge-neutral':cmd.status==='completed'?'badge-green':'badge-red'}`}>{fmtTS(cmd.status)}</span></div>{cmd.commandText&&<pre className="mt-1.5 p-2.5 rounded-[10px] bg-[#1c1c1e] text-[#34c759] text-[11px] font-mono overflow-auto">{cmd.commandText}</pre>}<Markdown>{cmd.body}</Markdown></div>)}</m.div>}
+                    </m.div>
+                  ):(
+                    <m.div key={entry.id} className="msg-row msg-bot-row w-full" layout variants={entryV} initial="hidden" animate="visible" exit="exit">
+                      <div className="msg-bot"><div className="flex items-center gap-2 text-[11px] text-[#8e8e93] font-mono mb-1.5"><span className={`badge ${entry.kind==='approval'?'badge-amber':entry.kind==='error'?'badge-red':'badge-neutral'}`}>{fmtKind(entry.kind)}</span><span className={`badge ${entry.status==='blocked'?'badge-amber':entry.status==='failed'?'badge-red':''}`}>{entry.badge||fmtTS(entry.status)}</span></div><strong className="text-[15px] font-semibold text-[#1c1c1e]">{entry.title}</strong><Markdown>{entry.body}</Markdown>{entry.recoveryNote&&<p className="mt-2 text-[13px] text-[#ff9500] font-medium">恢复说明：{entry.recoveryNote}</p>}</div>
+                      {entry.kind==='artifact'&&entry.artifactId&&<button className="pill text-xs mt-1" onClick={()=>onSelectArtifact(entry.artifactId!)}>在地图中查看</button>}
+                      {entry.kind==='approval'&&entry.approvalId&&<div className="flex gap-2 mt-1.5"><button className="btn btn-primary btn-sm" onClick={()=>onResolveApproval(entry.approvalId!,true)}>批准</button><button className="btn btn-ghost btn-sm" onClick={()=>onResolveApproval(entry.approvalId!,false)}>拒绝</button></div>}
+                    </m.div>
+                  ))}</AnimatePresence>:isSubmitting?(
+                    <div className="flex items-center gap-3 py-4 px-1"><div className="msg-bot"><div className="typing-dots"><div className="typing-dot"/><div className="typing-dot"/><div className="typing-dot"/></div></div></div>
+                  ):(
+                    <m.div className="empty-state flex-1" layout {...buildFadeUpMotion(rm,0,12)}>
+                      <div className="empty-state-icon"><AppIcon name="auto_awesome" size={24}/></div>
+                      <h3>准备开始</h3><p>描述想查的区域、对象或空间关系</p>
+                    </m.div>
+                  )}
+                </m.div>
+              </m.div>
+            )}
+          </AnimatePresence>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between text-[11px] text-[#8e8e93] font-mono">{runCreatedAt&&runStatus==='running'&&<span>运行中 {fmtElapsed(runCreatedAt)}</span>}<span className="ml-auto">{uploadedLayerName?`已接入：${uploadedLayerName}`:'描述你的空间分析需求，按回车发送'}</span></div>
+
+          {/* Composer (iMessage-style) */}
+          <m.form className="composer-bar" layout onSubmit={handleSubmit} {...buildFadeUpMotion(rm,.02,10)}>
+            <label className="btn-icon shrink-0" htmlFor="fu"><AppIcon name="attach_file" size={20}/></label>
+            <input id="fu" type="file" hidden accept=".geojson,.json,.gpkg" onChange={e=>{const f=e.target.files?.[0];if(f)onUpload(f);e.target.value=''}}/>
+            <input id="qi" className="composer-input" value={query} onChange={e=>onQueryChange(e.target.value)}
+              onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)}
+              onKeyDown={handleKey} placeholder="描述空间分析需求…" autoComplete="off"/>
+            <button type="submit" className="send-btn" disabled={isSubmitting||!query.trim()} aria-label="发送">
+              {isSubmitting?<LoaderCircle size={18} className="animate-spin"/>:<AppIcon name="send" size={17}/>}
             </button>
-          </div>
+          </m.form>
+        </m.section>
+      </LayoutGroup>
 
-          <div className="dc-composer__footer">
-            <label className="dc-utility" htmlFor="layer-upload">
-              <AppIcon name="attach_file" size={16} />
-              添加数据集
-            </label>
-            <input
-              id="layer-upload"
-              type="file"
-              hidden
-              accept=".geojson,.json,.gpkg"
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) {
-                  onUpload(file)
-                }
-                event.target.value = ''
-              }}
-            />
+      {/* Samples */}
+      {showSamples&&<m.div className="flex flex-wrap gap-2 p-3 rounded-[22px] glass-subtle" {...buildFadeUpMotion(rm,.06,8)}>{SAMPLES.map(s=><button key={s} className="pill text-xs" onClick={()=>onFillSample(s)}>{s}</button>)}</m.div>}
 
-            <button type="button" className="dc-utility dc-utility--button" onClick={onUseTemplate}>
-              <AppIcon name="history_edu" size={16} />
-              使用模板
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {showSamples ? (
-        <div className="dc-sample-row" aria-label="推荐问题">
-          {SAMPLE_QUERIES.map((sample) => (
-            <button key={sample} type="button" className="dc-sample-pill" onClick={() => onFillSample(sample)}>
-              {sample}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {/* Dialog (iOS Alert) */}
+      <AnimatePresence>{dialog&&<m.div className="alert-overlay" onClick={closeDialog} {...buildFadeMotion(rm)}>
+        <m.div className="alert" onClick={e=>e.stopPropagation()} onKeyDown={e=>e.key==='Escape'&&closeDialog()} tabIndex={-1} role="dialog" aria-modal="true" {...buildFadeUpMotion(rm,0,12)}>
+          {dialog.mode==='rename'?<>
+            <div><h2>编辑标题</h2><p>修改后在历史列表中更易识别。</p></div>
+            <input className="input" value={titleDraft} onChange={e=>setTitleDraft(e.target.value)} autoFocus placeholder="新标题"/>
+            <div className="alert-actions"><button className="alert-btn" onClick={closeDialog}>取消</button><button className="alert-btn" onClick={submitRename} disabled={!titleDraft.trim()}>保存</button></div>
+          </>:<>
+            <div><h2>确认删除</h2><p>「{dialog.task.title}」及其运行记录将被移除。</p></div>
+            <div className="alert-actions"><button className="alert-btn" onClick={closeDialog}>取消</button><button className="alert-btn alert-btn-destructive" onClick={submitDelete}>删除</button></div>
+          </>}
+        </m.div>
+      </m.div>}</AnimatePresence>
     </div>
   )
 }
-
-function formatKind(kind: TranscriptEntry['kind']) {
-  if (kind === 'user') return '用户'
-  if (kind === 'assistant') return '助手'
-  if (kind === 'supervisor') return '主智能体'
-  if (kind === 'subagent') return '子智能体'
-  if (kind === 'tool') return '工具调用'
-  if (kind === 'approval') return '审批'
-  if (kind === 'artifact') return '结果产物'
-  return '错误'
-}
-
-function detailSummaryLabel(entry: TranscriptEntry) {
-  if (entry.kind === 'tool') return '展开工具参数与返回'
-  if (entry.kind === 'approval') return '展开审批上下文'
-  if (entry.kind === 'artifact') return '展开结果元数据'
-  if (entry.kind === 'error') return '展开错误详情'
-  if (entry.kind === 'supervisor' || entry.kind === 'subagent') return '展开运行细节'
-  return '展开详细记录'
-}
-
-function formatEntryStatus(status: TranscriptEntry['status']) {
-  if (status === 'running') return '进行中'
-  if (status === 'completed') return '已完成'
-  if (status === 'blocked') return '待处理'
-  if (status === 'failed') return '失败'
-  return '待命'
-}
-
-function formatRunStatus(status?: string) {
-  if (status === 'running') return '执行中'
-  if (status === 'waiting_approval') return '待审批'
-  if (status === 'completed') return '已完成'
-  if (status === 'failed') return '失败'
-  if (status === 'clarification_needed') return '待澄清'
-  if (status === 'cancelled') return '已取消'
-  return '准备就绪'
-}
-
-function formatEventTime(value: string) {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '--:--:--' : date.toLocaleTimeString('zh-CN')
-}
-
-function formatElapsedLabel(value: string) {
-  const started = new Date(value).getTime()
-  if (Number.isNaN(started)) {
-    return '--'
-  }
-  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - started) / 1000))
-  if (elapsedSeconds < 60) {
-    return `${elapsedSeconds} 秒`
-  }
-  const minutes = Math.floor(elapsedSeconds / 60)
-  const seconds = elapsedSeconds % 60
-  return `${minutes} 分 ${seconds} 秒`
-}
-
-function formatTaskAge(value: string) {
-  const created = new Date(value).getTime()
-  if (Number.isNaN(created)) {
-    return '刚刚'
-  }
-  const diffMinutes = Math.max(0, Math.floor((Date.now() - created) / 60000))
-  if (diffMinutes < 1) return '刚刚'
-  if (diffMinutes < 60) return `${diffMinutes} 分钟前`
-  const diffHours = Math.floor(diffMinutes / 60)
-  if (diffHours < 24) return `${diffHours} 小时前`
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays < 7) return `${diffDays} 天前`
-  const diffWeeks = Math.floor(diffDays / 7)
-  return `${diffWeeks} 周前`
-}
+function fmtS(s?:string){if(s==='running')return'执行中';if(s==='waiting_approval')return'待审批';if(s==='completed')return'已完成';if(s==='failed')return'失败';if(s==='cancelled')return'已取消';return'就绪'}
+function fmtTS(s:string){if(s==='running')return'进行中';if(s==='completed')return'已完成';if(s==='blocked')return'待处理';if(s==='failed')return'失败';return'待命'}
+function fmtKind(k:string){if(k==='approval')return'审批';if(k==='error')return'异常';return'消息'}
+function fmtTime(v:string){const d=new Date(v);return isNaN(d.getTime())?'--:--:--':d.toLocaleTimeString('zh-CN')}
+function fmtElapsed(v:string){const s=Math.max(0,Math.floor((Date.now()-new Date(v).getTime())/1000));return s<60?`${s}秒`:`${Math.floor(s/60)}分${s%60}秒`}

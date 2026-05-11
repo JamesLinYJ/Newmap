@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 实现基于 PostGIS 的图层目录、空间查询和结果图层落库逻辑。
+
 from __future__ import annotations
 
 import json
@@ -38,80 +42,52 @@ class PostGISLayerCatalog(LayerCatalog):
     def ensure_schema(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS layers_metadata (
-                    layer_key TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    source_type TEXT NOT NULL,
-                    geometry_type TEXT NOT NULL,
-                    srid INTEGER NOT NULL DEFAULT 4326,
-                    table_name TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    feature_count INTEGER,
-                    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-                    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )
-                """
-            )
+            self._create_metadata_table(cur)
 
-    def bootstrap_builtin_layers(self, force: bool = False) -> None:
-        # 内置图层灌库。
-        catalog = json.loads((self.catalog_dir / "catalog.json").read_text(encoding="utf-8"))
+    def list_layers(self, *, include_inactive: bool = True) -> list[LayerDescriptor]:
         with self._connect() as conn, conn.cursor() as cur:
-            for entry in catalog["layers"]:
-                layer_key = entry["layer_key"]
-                table_name = self._table_name_for(layer_key, prefix="layer")
-                exists = self._metadata_exists(cur, layer_key)
-                if exists and not force:
-                    continue
-                collection = load_geojson(self.catalog_dir / f"{layer_key}.geojson")
-                self._replace_table_collection(cur, table_name, collection)
-                descriptor = LayerDescriptor(
-                    **entry,
-                    feature_count=len(collection["features"]),
-                    tags=["builtin", "postgis"],
-                )
-                self._upsert_metadata(cur, descriptor, table_name)
-
-    def list_layers(self) -> list[LayerDescriptor]:
-        with self._connect() as conn, conn.cursor() as cur:
+            # layers_metadata 是所有图层描述的主索引表。
+            #
+            # 开发环境里即使数据库刚初始化、seed layers 还未来得及灌入，
+            # 这里也必须先确保根表存在，避免任何只读查询因为基础表缺失直接报错。
+            self._create_metadata_table(cur)
+            where_sql = ""
+            params: tuple[Any, ...] = ()
+            if not include_inactive:
+                where_sql = "WHERE coalesce(metadata_json->>'status', 'active') = 'active'"
             cur.execute(
-                """
-                SELECT layer_key, name, source_type, geometry_type, srid, description, feature_count, tags
+                f"""
+                SELECT layer_key, name, source_type, geometry_type, srid, description, feature_count, tags, metadata_json
                 FROM layers_metadata
-                ORDER BY CASE source_type WHEN 'builtin' THEN 0 WHEN 'upload' THEN 1 ELSE 2 END, name
-                """
+                {where_sql}
+                ORDER BY
+                    CASE coalesce(metadata_json->>'status', 'active') WHEN 'active' THEN 0 ELSE 1 END,
+                    CASE source_type WHEN 'managed' THEN 0 WHEN 'managed_import' THEN 1 WHEN 'session_upload' THEN 2 WHEN 'upload' THEN 3 ELSE 4 END,
+                    name
+                """,
+                params,
             )
             rows = cur.fetchall()
-        return [
-            LayerDescriptor(
-                layer_key=row[0],
-                name=row[1],
-                source_type=row[2],
-                geometry_type=row[3],
-                srid=row[4],
-                description=row[5],
-                feature_count=row[6],
-                tags=row[7] or [],
-            )
-            for row in rows
-        ]
+        return [self._descriptor_from_row(row) for row in rows]
+
+    def list_active_layers(self) -> list[LayerDescriptor]:
+        # agent 规划与 load_layer 默认只面向 active catalog。
+        return self.list_layers(include_inactive=False)
 
     def get_layer_collection(self, layer_key: str) -> dict[str, Any]:
         resolved = self.resolve_layer_key(layer_key)
+        self.get_layer_descriptor(resolved, allow_inactive=False)
         table_name = self._lookup_table_name(resolved)
         with self._connect() as conn, conn.cursor() as cur:
             return self._feature_collection_from_query(cur, self._select_feature_collection_sql(table_name))
 
-    def get_layer_descriptor(self, layer_key: str) -> LayerDescriptor:
+    def get_layer_descriptor(self, layer_key: str, *, allow_inactive: bool = True) -> LayerDescriptor:
         resolved = self.resolve_layer_key(layer_key)
         with self._connect() as conn, conn.cursor() as cur:
+            self._create_metadata_table(cur)
             cur.execute(
                 """
-                SELECT layer_key, name, source_type, geometry_type, srid, description, feature_count, tags
+                SELECT layer_key, name, source_type, geometry_type, srid, description, feature_count, tags, metadata_json
                 FROM layers_metadata
                 WHERE layer_key = %s
                 """,
@@ -120,31 +96,35 @@ class PostGISLayerCatalog(LayerCatalog):
             row = cur.fetchone()
         if row is None:
             raise KeyError(f"Layer descriptor '{layer_key}' was not found.")
-        return LayerDescriptor(
-            layer_key=row[0],
-            name=row[1],
-            source_type=row[2],
-            geometry_type=row[3],
-            srid=row[4],
-            description=row[5],
-            feature_count=row[6],
-            tags=row[7] or [],
-        )
+        descriptor = self._descriptor_from_row(row)
+        if not allow_inactive and descriptor.status != "active":
+            raise KeyError(f"Layer '{layer_key}' is not active.")
+        return descriptor
 
     def search_boundaries(self, name: str) -> list[dict[str, Any]]:
         query = f"%{name.casefold()}%"
-        table_name = self._lookup_table_name("admin_boundaries")
+        boundary_layers = [
+            layer
+            for layer in self.list_active_layers()
+            if layer.category == "admin_boundary" or "admin_boundary" in layer.tags or "boundary" in layer.analysis_capabilities
+        ]
+        if not boundary_layers:
+            return []
+
+        matches: list[dict[str, Any]] = []
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                self._feature_list_sql(table_name, where_sql="""
-                    lower(coalesce(properties->>'name', '')) LIKE %s
-                    OR lower(coalesce(properties->>'name_en', '')) LIKE %s
-                    OR lower(coalesce(properties->>'disambiguation', '')) LIKE %s
-                """),
-                (query, query, query),
-            )
-            rows = cur.fetchall()
-        return [row[0] for row in rows]
+            for layer in boundary_layers:
+                table_name = self._lookup_table_name(layer.layer_key)
+                cur.execute(
+                    self._feature_list_sql(table_name, where_sql="""
+                        lower(coalesce(properties->>'name', '')) LIKE %s
+                        OR lower(coalesce(properties->>'name_en', '')) LIKE %s
+                        OR lower(coalesce(properties->>'disambiguation', '')) LIKE %s
+                    """),
+                    (query, query, query),
+                )
+                matches.extend(row[0] for row in cur.fetchall())
+        return matches
 
     def geocode(self, query: str) -> list[dict[str, Any]]:
         matches = self.search_boundaries(query)
@@ -183,6 +163,11 @@ class PostGISLayerCatalog(LayerCatalog):
             tags=["result", run_id, "postgis"],
         )
         with self._connect() as conn, conn.cursor() as cur:
+            # 结果图层可能发生在独立开发数据库或刚初始化的本地环境里。
+            #
+            # 这里在写结果前再次确保 metadata 表存在，避免地点定位这类轻量查询
+            # 明明已经解析成功，却在最终落盘阶段被基础 catalog 表缺失打断。
+            self._create_metadata_table(cur)
             self._replace_table_collection(cur, table_name, collection)
             self._upsert_metadata(cur, descriptor, table_name)
         return descriptor
@@ -433,11 +418,13 @@ class PostGISLayerCatalog(LayerCatalog):
             ) from exc
 
     def _metadata_exists(self, cur, layer_key: str) -> bool:
+        self._create_metadata_table(cur)
         cur.execute("SELECT 1 FROM layers_metadata WHERE layer_key = %s", (layer_key,))
         return cur.fetchone() is not None
 
     def _lookup_table_name(self, layer_key: str) -> str:
         with self._connect() as conn, conn.cursor() as cur:
+            self._create_metadata_table(cur)
             cur.execute("SELECT table_name FROM layers_metadata WHERE layer_key = %s", (layer_key,))
             row = cur.fetchone()
         if row is None:
@@ -450,16 +437,21 @@ class PostGISLayerCatalog(LayerCatalog):
         self._insert_collection(cur, table_name, collection)
 
     def _create_feature_table(self, cur, table_name: str, temporary: bool = False) -> None:
+        # 图层表按当前主 schema 直接创建。
+        #
+        # 这里不维护旧残留修复逻辑；测试和开发环境都应先通过显式清理
+        # 保证 schema 干净，再由主路径幂等建表。
+        index_name = f"idx_{table_name}_geom"
         temp_prefix = sql.SQL("TEMP ") if temporary else sql.SQL("")
         cur.execute(
             sql.SQL(
-                """
-                CREATE {temp_prefix}TABLE IF NOT EXISTS {table_name} (
-                    feature_id BIGSERIAL PRIMARY KEY,
-                    properties JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                    geom geometry(Geometry, 4326)
-                )
-                """
+            """
+            CREATE {temp_prefix}TABLE IF NOT EXISTS {table_name} (
+                feature_id BIGSERIAL PRIMARY KEY,
+                properties JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                geom geometry(Geometry, 4326)
+            )
+            """
             ).format(
                 temp_prefix=temp_prefix,
                 table_name=sql.Identifier(table_name),
@@ -468,10 +460,49 @@ class PostGISLayerCatalog(LayerCatalog):
         if not temporary:
             cur.execute(
                 sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} USING GIST (geom)").format(
-                    sql.Identifier(f"idx_{table_name}_geom"),
-                    sql.Identifier(table_name),
-                )
+                sql.Identifier(index_name),
+                sql.Identifier(table_name),
             )
+                )
+
+    def _create_metadata_table(self, cur) -> None:
+        # metadata 根表是整个 catalog 的唯一事实索引。
+        #
+        # 这里显式加事务级 advisory lock，并在建表前清理可能由中断 DDL 留下的
+        # 同名孤儿 composite type，保证测试和本地热重载都只走一条稳定主路径。
+        cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("layers_metadata_schema",))
+        if self._relation_exists(cur, "layers_metadata"):
+            return
+        if self._type_exists(cur, "layers_metadata"):
+            cur.execute("DROP TYPE IF EXISTS layers_metadata CASCADE")
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS layers_metadata (
+                layer_key TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                geometry_type TEXT NOT NULL,
+                srid INTEGER NOT NULL DEFAULT 4326,
+                table_name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                feature_count INTEGER,
+                tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+                metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+
+    def _relation_exists(self, cur, relation_name: str) -> bool:
+        cur.execute("SELECT to_regclass(%s)", (relation_name,))
+        row = cur.fetchone()
+        return bool(row and row[0])
+
+    def _type_exists(self, cur, type_name: str) -> bool:
+        cur.execute("SELECT to_regtype(%s)", (type_name,))
+        row = cur.fetchone()
+        return bool(row and row[0])
 
     def _insert_collection(self, cur, table_name: str, collection: dict[str, Any]) -> None:
         rows = [
@@ -491,6 +522,15 @@ class PostGISLayerCatalog(LayerCatalog):
         )
 
     def _upsert_metadata(self, cur, descriptor: LayerDescriptor, table_name: str) -> None:
+        self._create_metadata_table(cur)
+        metadata_payload = {
+            "table_name": table_name,
+            "category": descriptor.category,
+            "status": descriptor.status,
+            "analysis_capabilities": descriptor.analysis_capabilities,
+            "source_config_summary": descriptor.source_config_summary,
+            "session_id": descriptor.session_id,
+        }
         cur.execute(
             """
             INSERT INTO layers_metadata (
@@ -518,8 +558,48 @@ class PostGISLayerCatalog(LayerCatalog):
                 descriptor.description,
                 descriptor.feature_count,
                 json.dumps(descriptor.tags, ensure_ascii=False),
-                json.dumps({"table_name": table_name}, ensure_ascii=False),
+                json.dumps(metadata_payload, ensure_ascii=False),
             ),
+        )
+
+    def delete_layer(self, layer_key: str) -> bool:
+        resolved = self.resolve_layer_key(layer_key)
+        with self._connect() as conn, conn.cursor() as cur:
+            self._create_metadata_table(cur)
+            cur.execute("SELECT table_name FROM layers_metadata WHERE layer_key = %s", (resolved,))
+            row = cur.fetchone()
+            if row is None:
+                return False
+            table_name = row[0]
+            cur.execute(sql.SQL("DELETE FROM layers_metadata WHERE layer_key = %s"), (resolved,))
+            cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(table_name)))
+        return True
+
+    def update_layer_descriptor(self, layer_key: str, **fields: Any) -> LayerDescriptor:
+        current = self.get_layer_descriptor(layer_key)
+        updated = current.model_copy(update=fields)
+        table_name = self._lookup_table_name(updated.layer_key)
+        with self._connect() as conn, conn.cursor() as cur:
+            self._create_metadata_table(cur)
+            self._upsert_metadata(cur, updated, table_name)
+        return updated
+
+    def _descriptor_from_row(self, row: tuple[Any, ...]) -> LayerDescriptor:
+        metadata = row[8] or {}
+        return LayerDescriptor(
+            layer_key=row[0],
+            name=row[1],
+            source_type=row[2],
+            geometry_type=row[3],
+            srid=row[4],
+            description=row[5],
+            feature_count=row[6],
+            tags=row[7] or [],
+            category=str(metadata.get("category") or "general"),
+            status=str(metadata.get("status") or "active"),
+            analysis_capabilities=[str(item) for item in metadata.get("analysis_capabilities", [])],
+            source_config_summary=str(metadata.get("source_config_summary")) if metadata.get("source_config_summary") else None,
+            session_id=str(metadata.get("session_id")) if metadata.get("session_id") else None,
         )
 
     def _select_feature_collection_sql(self, table_name: str, where_sql: str | None = None):

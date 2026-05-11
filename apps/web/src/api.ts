@@ -8,6 +8,10 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
+// 模块职责
+//
+// 封装前端对后端 REST 接口的请求入口与统一错误处理。
+
 import type {
   AgentRuntimeConfig,
   AnalysisRun,
@@ -23,7 +27,31 @@ import type {
   SystemComponentsStatus,
   ToolDescriptor,
 } from '@geo-agent-platform/shared-types'
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+
+// API 地址解析
+//
+// 优先尊重显式的 VITE_API_BASE_URL；
+// 未配置时自动跟随当前页面主机名，只把端口收口到 API 默认端口。
+export function deriveApiBaseUrl(envBaseUrl?: string, locationLike?: Pick<Location, 'origin' | 'protocol' | 'hostname' | 'port'>) {
+  if (envBaseUrl?.trim()) {
+    return envBaseUrl.trim().replace(/\/+$/u, '')
+  }
+
+  if (!locationLike || !locationLike.hostname || locationLike.protocol === 'file:') {
+    return 'http://localhost:8000'
+  }
+
+  if (locationLike.port === '8000') {
+    return locationLike.origin.replace(/\/+$/u, '')
+  }
+
+  return `${locationLike.protocol}//${locationLike.hostname}:8000`
+}
+
+const API_BASE_URL = deriveApiBaseUrl(
+  import.meta.env.VITE_API_BASE_URL,
+  typeof window !== 'undefined' ? window.location : undefined,
+)
 
 export const apiBaseUrl = API_BASE_URL
 
@@ -60,16 +88,17 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   // 通用 JSON 请求入口。
   let response: Response
   try {
+    const headers = new Headers(init?.headers ?? {})
+    if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init?.headers ?? {}),
-      },
+      headers,
     })
   } catch (error) {
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-    throw new Error(formatApiErrorMessage('暂时无法连接分析服务，请确认本地 API 或部署环境已经启动', detail))
+    throw new Error(formatApiErrorMessage(`暂时无法连接分析服务，请确认本地 API 或部署环境已经启动（接口：${path}，当前地址：${API_BASE_URL}）`, detail))
   }
 
   if (!response.ok) {
@@ -80,6 +109,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function createSession() {
+  // 会话是工作台的最外层容器，首页首次进入先拿到它。
   return requestJson<SessionRecord>('/api/v1/sessions', {
     method: 'POST',
   })
@@ -89,7 +119,13 @@ export function getSession(sessionId: string) {
   return requestJson<SessionRecord>(`/api/v1/sessions/${sessionId}`)
 }
 
+export function listSessionThreads(sessionId: string) {
+  // 任务历史现在以 thread 作为主索引，而不是把每次 run 都当成独立任务。
+  return requestJson<AgentThreadRecord[]>(`/api/v1/sessions/${sessionId}/threads`)
+}
+
 export function createThread(sessionId: string, title?: string) {
+  // v2 thread/run 模型下，thread 负责承接多轮上下文与历史恢复。
   return requestJson<AgentThreadRecord>('/api/v2/threads', {
     method: 'POST',
     body: JSON.stringify({ sessionId, title }),
@@ -100,12 +136,45 @@ export function getThread(threadId: string) {
   return requestJson<{ thread: AgentThreadRecord; runs: AnalysisRun[]; latestRun?: AnalysisRun | null }>(`/api/v2/threads/${threadId}`)
 }
 
+export function updateThread(threadId: string, title: string) {
+  return requestJson<AgentThreadRecord>(`/api/v2/threads/${threadId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  })
+}
+
+export function deleteThread(threadId: string) {
+  return requestJson<{ deleted: boolean; threadId: string }>(`/api/v2/threads/${threadId}`, {
+    method: 'DELETE',
+  })
+}
+
 export function listSessionRuns(sessionId: string) {
   return requestJson<AnalysisRun[]>(`/api/v1/sessions/${sessionId}/runs`)
 }
 
 export function listLayers() {
-  return requestJson<LayerDescriptor[]>('/api/v1/layers')
+  return requestJson<LayerDescriptor[]>('/api/v1/layers?includeInactive=true')
+}
+
+export function createLayer(payload: Record<string, unknown>) {
+  return requestJson<LayerDescriptor>('/api/v1/layers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateLayer(layerKey: string, payload: Record<string, unknown>) {
+  return requestJson<LayerDescriptor>(`/api/v1/layers/${encodeURIComponent(layerKey)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteLayer(layerKey: string) {
+  return requestJson<{ deleted: boolean; layerKey: string }>(`/api/v1/layers/${encodeURIComponent(layerKey)}`, {
+    method: 'DELETE',
+  })
 }
 
 export function listBasemaps() {
@@ -138,10 +207,12 @@ export function listToolCatalogEntries() {
 }
 
 export function getRuntimeConfig() {
+  // runtime config 来自后端持久化配置，而不是前端硬编码默认值。
   return requestJson<AgentRuntimeConfig>('/api/v1/runtime/config')
 }
 
 export function updateRuntimeConfig(payload: AgentRuntimeConfig) {
+  // 调试页保存配置后，前后端都应立即切到同一份结构化配置。
   return requestJson<AgentRuntimeConfig>('/api/v1/runtime/config', {
     method: 'PUT',
     body: JSON.stringify(payload),
@@ -161,21 +232,24 @@ export function deleteToolCatalogEntry(toolKind: string, toolName: string) {
   })
 }
 
-export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string) {
+export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null) {
+  // v1 仍保留作主工作台入口，内部会启动一次完整 run。
   return requestJson<AnalysisRun>('/api/v1/chat', {
     method: 'POST',
-    body: JSON.stringify({ sessionId, query, provider, model }),
+    body: JSON.stringify({ sessionId, query, provider, model, clarificationOptionId }),
   })
 }
 
-export function startThreadRun(threadId: string, query: string, provider?: string, model?: string) {
+export function startThreadRun(threadId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null) {
+  // v2 明确把“线程”和“运行”拆开，便于任务历史与上下文管理。
   return requestJson<AnalysisRun>(`/api/v2/threads/${threadId}/runs`, {
     method: 'POST',
-    body: JSON.stringify({ query, provider, model }),
+    body: JSON.stringify({ query, provider, model, clarificationOptionId }),
   })
 }
 
 export function getRun(runId: string) {
+  // 首页和 SSE 断线恢复都依赖这条接口回收最终快照。
   return requestJson<AnalysisRun>(`/api/v1/analysis/${runId}`)
 }
 
@@ -196,6 +270,7 @@ export function getArtifactMetadata(artifactId: string) {
 }
 
 export function publishArtifact(artifactId: string, payload: PublishRequest) {
+  // 发布仍走显式接口，保持审批边界和结果交付边界清晰分开。
   return requestJson<Record<string, unknown>>(`/api/v1/results/${artifactId}/publish`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -203,6 +278,7 @@ export function publishArtifact(artifactId: string, payload: PublishRequest) {
 }
 
 export function resolveApproval(runId: string, approvalId: string, approved: boolean) {
+  // 审批动作恢复的是被中断的 run，而不是单独起一个新任务。
   return requestJson<AnalysisRun>(`/api/v2/runs/${runId}/approvals/${approvalId}`, {
     method: 'POST',
     body: JSON.stringify({ approved }),
@@ -254,15 +330,82 @@ export async function uploadLayer(sessionId: string, file: File) {
   return (await response.json()) as LayerDescriptor
 }
 
+export async function importManagedLayer(
+  file: File,
+  options?: {
+    name?: string
+    description?: string
+    category?: string
+    tags?: string[]
+    status?: string
+    analysisCapabilities?: string[]
+    sourceConfigSummary?: string
+  },
+) {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (options?.name) {
+    formData.append('name', options.name)
+  }
+  if (options?.description) {
+    formData.append('description', options.description)
+  }
+  if (options?.category) {
+    formData.append('category', options.category)
+  }
+  if (options?.tags?.length) {
+    formData.append('tags', options.tags.join(','))
+  }
+  if (options?.status) {
+    formData.append('status', options.status)
+  }
+  if (options?.analysisCapabilities?.length) {
+    formData.append('analysisCapabilities', options.analysisCapabilities.join(','))
+  }
+  if (options?.sourceConfigSummary) {
+    formData.append('sourceConfigSummary', options.sourceConfigSummary)
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/layers/import`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!response.ok) {
+    throw new Error(await extractErrorDetail(response))
+  }
+  return (await response.json()) as LayerDescriptor
+}
+
+export async function replaceManagedLayer(layerKey: string, file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/layers/${encodeURIComponent(layerKey)}/replace`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!response.ok) {
+    throw new Error(await extractErrorDetail(response))
+  }
+  return (await response.json()) as LayerDescriptor
+}
+
 export function openRunEventStream(
   runId: string,
   onEvent: (event: RunEvent) => void,
   onError: (error: Event) => void,
 ) {
   // SSE 事件流订阅。
+  //
+  // 浏览器端只负责连接与转发事件对象；
+  // 重连策略和状态吸收由上层组件统一决定，避免这里隐式维护第二套状态。
   const source = new EventSource(`${API_BASE_URL}/api/v1/analysis/${runId}/events`)
   source.onmessage = (message) => {
-    onEvent(JSON.parse(message.data) as RunEvent)
+    try {
+      onEvent(JSON.parse(message.data) as RunEvent)
+    } catch {
+      // 后端返回畸形 JSON 时静默丢弃本条消息，不中断事件流
+    }
   }
   source.onerror = onError
   return source

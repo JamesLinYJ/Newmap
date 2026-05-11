@@ -8,6 +8,10 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
+# 模块职责
+#
+# 负责把结果图层发布为 QGIS Server 可访问的项目与服务链接。
+
 from __future__ import annotations
 
 import json
