@@ -142,7 +142,7 @@ export function MapCanvas({
   }, [measureMode])
 
   useEffect(() => {
-    // 地图拖拽兜底
+    // 地图拖拽边界
     //
     // 液体玻璃层与 Framer Motion 会让视觉层级更复杂，因此拖拽不只依赖
     // MapLibre 内建 handler；这里在地图舞台捕获 pointer 事件，直接平移地图。
@@ -315,7 +315,7 @@ export function MapCanvas({
       })
 
       map.scrollZoom.enable()
-      map.dragPan.disable()
+      map.dragPan.enable()
       map.doubleClickZoom.enable()
       map.boxZoom.enable()
       map.keyboard.enable()
@@ -435,9 +435,19 @@ export function MapCanvas({
 
     const syncLayers = () => {
       const bounds = syncArtifactLayers(map, layers, selectedArtifactId)
+      const prevBounds = boundsRef.current
       boundsRef.current = bounds
 
-      if (bounds && !bounds.isEmpty()) {
+      // 仅在选中 artifact 变化或 bounds 真正改变时才飞行，避免每次图层刷新都跳动
+      const boundsChanged =
+        bounds && !bounds.isEmpty() &&
+        (!prevBounds || !prevBounds.isEmpty() &&
+          (Math.abs(bounds.getWest() - prevBounds.getWest()) > 1e-7 ||
+           Math.abs(bounds.getSouth() - prevBounds.getSouth()) > 1e-7 ||
+           Math.abs(bounds.getEast() - prevBounds.getEast()) > 1e-7 ||
+           Math.abs(bounds.getNorth() - prevBounds.getNorth()) > 1e-7))
+
+      if (boundsChanged) {
         map.fitBounds(bounds, { padding: 120, duration: 900, maxZoom: 14 })
       }
     }

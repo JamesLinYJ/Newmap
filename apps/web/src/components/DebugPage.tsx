@@ -12,7 +12,7 @@
 //
 // 组织调试页的运行诊断、工具工作台、runtime config 编辑和 loop 可视化。
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { m, useReducedMotion } from 'framer-motion'
 import { ArrowLeft, ExternalLink, LoaderCircle, Play, Save, Trash2, Upload, Wrench } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -230,22 +230,19 @@ export function DebugPage({
       : { seed: runtimeConfigSeed, draft: runtimeConfig, error: undefined }
   const runtimeConfigDraft = activeRuntimeConfigEditor.draft
   const runtimeConfigError = activeRuntimeConfigEditor.error
-  const setRuntimeConfigDraft = (nextDraft: AgentRuntimeConfig) => {
-    setRuntimeConfigEditorState({
-      seed: runtimeConfigSeed,
+  const setRuntimeConfigDraft = useCallback((nextDraft: AgentRuntimeConfig) => {
+    setRuntimeConfigEditorState((current) => ({
+      ...current,
       draft: nextDraft,
       error: undefined,
-    })
-  }
-  const setRuntimeConfigError = (nextError: string | undefined) => {
-    setRuntimeConfigEditorState((current) => {
-      const synced =
-        current.seed === runtimeConfigSeed
-          ? current
-          : { seed: runtimeConfigSeed, draft: runtimeConfig, error: undefined }
-      return { ...synced, error: nextError }
-    })
-  }
+    }))
+  }, [])
+  const setRuntimeConfigError = useCallback((nextError: string | undefined) => {
+    setRuntimeConfigEditorState((current) => ({
+      ...current,
+      error: nextError,
+    }))
+  }, [])
   const publishLinks = buildQuickLinks({
     currentSessionId,
     currentRunId,
@@ -954,7 +951,7 @@ export function DebugPage({
                     />
                   </label>
                   <label className="tool-field tool-field--full">
-                    <span className="composer__label">deepagents 记忆文件</span>
+                    <span className="composer__label">Agent SDK 记忆文件</span>
                     <input
                       className="composer__input"
                       value={runtimeConfigDraft.context.memoryFilePaths.join(', ')}
@@ -1296,7 +1293,7 @@ export function DebugPage({
             <div className="panel__section">
               <div className="panel__subheader">
                 <span>主智能体阶段</span>
-                <span className="panel__muted">按 deepagents thread/run 状态展开</span>
+                <span className="panel__muted">按 Agent SDK thread/run 状态展开</span>
               </div>
               <div className="agent-stage-list">
                 {supervisorStages.map((stage) => (

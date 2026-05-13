@@ -24,6 +24,7 @@ export type EventType =
   | 'subagent.created'
   | 'subagent.updated'
   | 'message.delta'
+  | 'thinking.delta'
   | 'loop.updated'
   | 'todo.updated'
   | 'tool.started'

@@ -19,6 +19,7 @@ from json import JSONDecodeError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
+from shared_types.exceptions import NotFoundError
 from shared_types.schemas import ToolDescriptor
 from ..dependencies import get_store
 from ..models import ToolCatalogEntryUpsertRequest, ToolRunRequest
@@ -103,6 +104,9 @@ async def run_tool(payload: ToolRunRequest, request: Request, store: PostgresPla
             "payload": result.payload,
             "warnings": result.warnings,
         }
+    except NotFoundError as exc:
+        _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, exc=Exception(str(exc)))
+        raise
     except HTTPException as exc:
         _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, exc=Exception(str(exc.detail)))
         raise

@@ -15,9 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
-from fastapi import HTTPException
+from shared_types.exceptions import NotFoundError
 
 from shared_types.schemas import AgentRuntimeConfig, AgentStateModel, AgentThreadRecord, AnalysisRunRecord, ArtifactRef, RunEvent, RunLifecycle, SessionRecord
 from gis_common.ids import make_id, now_utc
@@ -158,7 +159,7 @@ class PostgresPlatformStore:
             cur.execute("SELECT payload_json FROM platform_sessions WHERE session_id = %s", (session_id,))
             row = cur.fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="会话不存在。")
+            raise NotFoundError("会话不存在。")
         return SessionRecord.model_validate(row[0])
 
     def update_session(self, session_id: str, **fields: Any) -> SessionRecord:
@@ -217,7 +218,7 @@ class PostgresPlatformStore:
             cur.execute("SELECT payload_json FROM platform_threads WHERE thread_id = %s", (thread_id,))
             row = cur.fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="线程不存在。")
+            raise NotFoundError("线程不存在。")
         return AgentThreadRecord.model_validate(row[0])
 
     def get_or_create_thread_for_session(self, session_id: str, *, title: str | None = None) -> AgentThreadRecord:
@@ -225,7 +226,7 @@ class PostgresPlatformStore:
         if session.latest_thread_id:
             try:
                 return self.get_thread(session.latest_thread_id)
-            except HTTPException:
+            except NotFoundError:
                 pass
         return self.create_thread(session_id, title=title)
 
@@ -269,10 +270,10 @@ class PostgresPlatformStore:
         for artifact_id in artifact_ids:
             try:
                 self.artifact_store.delete(self._artifact_relative_path(artifact_id))
-            except HTTPException:
+            except NotFoundError:
                 pass
 
-        with self._connect() as conn, conn.cursor() as cur:
+        with self.transaction() as conn, conn.cursor() as cur:
             if artifact_ids:
                 cur.execute("DELETE FROM platform_artifacts WHERE artifact_id = ANY(%s)", (artifact_ids,))
             if run_ids:
@@ -337,7 +338,7 @@ class PostgresPlatformStore:
             cur.execute("SELECT payload_json FROM platform_runs WHERE run_id = %s", (run_id,))
             row = cur.fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="分析任务不存在。")
+            raise NotFoundError("分析任务不存在。")
         return AnalysisRunRecord.model_validate(row[0])
 
     def save_run(self, run: AnalysisRunRecord) -> None:
@@ -433,7 +434,7 @@ class PostgresPlatformStore:
                     history_preview=self._build_thread_history_preview(run),
                     updated_at=now_utc(),
                 )
-        except HTTPException:
+        except NotFoundError:
             pass
         for queue in self._subscribers.get(run_id, []):
             queue.put_nowait(event)
@@ -502,6 +503,8 @@ class PostgresPlatformStore:
         subscribers = self._subscribers.get(run_id, [])
         if queue in subscribers:
             subscribers.remove(queue)
+        if not subscribers:
+            self._subscribers.pop(run_id, None)
 
     def get_runtime_config(self) -> AgentRuntimeConfig:
         # runtime config 以数据库为唯一事实源。
@@ -597,7 +600,7 @@ class PostgresPlatformStore:
             )
             row = cur.fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="结果对象不存在。")
+            raise NotFoundError("结果对象不存在。")
         return ArtifactRef(
             artifact_id=artifact_id,
             run_id=row[0],
@@ -667,8 +670,20 @@ class PostgresPlatformStore:
             )
             row = cur.fetchone()
         if row is None:
-            raise HTTPException(status_code=404, detail="结果对象不存在。")
+            raise NotFoundError("结果对象不存在。")
         return str(row[0])
+
+    @contextmanager
+    def transaction(self) -> Iterator[Any]:
+        """多语句事务上下文：临时关闭 autocommit，统一提交或回滚。"""
+        with self._connect() as conn:
+            conn.autocommit = False
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
     def _connect(self):
         # 统一通过同一连接工厂接入 Postgres，方便后续测试覆盖与配置收口。
@@ -677,7 +692,7 @@ class PostgresPlatformStore:
     def _build_thread_history_snapshot(self, run: AnalysisRunRecord) -> dict[str, Any]:
         # 线程快照是历史恢复的数据库锚点。
         #
-        # 前端刷新、切换任务和 deepagents 上下文恢复都优先依赖 thread 快照，
+        # 前端刷新、切换任务和 Agent SDK 上下文恢复都优先依赖 thread 快照，
         # 而不是每次先遍历全量事件再猜“最近聊到了哪”。
         latest_artifact = run.state.artifacts[-1] if run.state.artifacts else None
         return {

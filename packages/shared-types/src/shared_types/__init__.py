@@ -79,3 +79,7 @@ __all__ = [
     "ToolParameterOption",
     "UserIntent",
 ]
+
+from .exceptions import ConflictError, NotFoundError  # noqa: E402
+
+__all__ += ["ConflictError", "NotFoundError"]

@@ -25,9 +25,9 @@ from .base import BaseModelAdapter
 
 
 class OpenAICompatibleAdapter(BaseModelAdapter):
-    def __init__(self, *, base_url: str | None, api_key: str | None, default_model: str | None, subagent_model: str | None = None):
+    def __init__(self, *, base_url: str | None, api_key: str | None, default_model: str | None, subagent_model: str | None = None, display_name: str = "OpenAI Compatible"):
         super().__init__("openai_compatible")
-        self.display_name = "OpenAI Compatible"
+        self.display_name = display_name
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key
         self.default_model = default_model
@@ -281,6 +281,8 @@ class ModelAdapterRegistry:
         return self._adapters[provider].is_configured()
 
     def supports_live_supervisor(self, provider: str | None) -> bool:
+        if provider != "openai_compatible":
+            return False
         return self.is_provider_configured(provider)
 
     def descriptors(self) -> list[ModelProviderDescriptor]:

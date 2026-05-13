@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
@@ -44,17 +45,19 @@ class PostGISLayerCatalog(LayerCatalog):
             cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
             self._create_metadata_table(cur)
 
-    def list_layers(self, *, include_inactive: bool = True) -> list[LayerDescriptor]:
+    def list_layers(self, *, include_inactive: bool = True, session_id: str | None = None) -> list[LayerDescriptor]:
         with self._connect() as conn, conn.cursor() as cur:
-            # layers_metadata 是所有图层描述的主索引表。
-            #
-            # 开发环境里即使数据库刚初始化、seed layers 还未来得及灌入，
-            # 这里也必须先确保根表存在，避免任何只读查询因为基础表缺失直接报错。
             self._create_metadata_table(cur)
-            where_sql = ""
-            params: tuple[Any, ...] = ()
+            conditions: list[str] = []
+            params: list[Any] = []
             if not include_inactive:
-                where_sql = "WHERE coalesce(metadata_json->>'status', 'active') = 'active'"
+                conditions.append("coalesce(metadata_json->>'status', 'active') = 'active'")
+            if session_id is not None:
+                conditions.append(
+                    "(metadata_json->>'session_id' = %s OR source_type IN ('managed', 'managed_import'))"
+                )
+                params.append(session_id)
+            where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
             cur.execute(
                 f"""
                 SELECT layer_key, name, source_type, geometry_type, srid, description, feature_count, tags, metadata_json
@@ -65,7 +68,7 @@ class PostGISLayerCatalog(LayerCatalog):
                     CASE source_type WHEN 'managed' THEN 0 WHEN 'managed_import' THEN 1 WHEN 'session_upload' THEN 2 WHEN 'upload' THEN 3 ELSE 4 END,
                     name
                 """,
-                params,
+                tuple(params),
             )
             rows = cur.fetchall()
         return [self._descriptor_from_row(row) for row in rows]
@@ -143,7 +146,7 @@ class PostGISLayerCatalog(LayerCatalog):
         descriptor = super().register_upload(session_id, filename, payload)
         collection = load_geojson(self.upload_dir / f"{descriptor.layer_key}.geojson")
         table_name = self._table_name_for(descriptor.layer_key, prefix="upload")
-        with self._connect() as conn, conn.cursor() as cur:
+        with self.transaction() as conn, conn.cursor() as cur:
             self._replace_table_collection(cur, table_name, collection)
             self._upsert_metadata(cur, descriptor, table_name)
         return descriptor.model_copy(update={"tags": [*descriptor.tags, "postgis"]})
@@ -162,7 +165,7 @@ class PostGISLayerCatalog(LayerCatalog):
             feature_count=len(collection["features"]),
             tags=["result", run_id, "postgis"],
         )
-        with self._connect() as conn, conn.cursor() as cur:
+        with self.transaction() as conn, conn.cursor() as cur:
             # 结果图层可能发生在独立开发数据库或刚初始化的本地环境里。
             #
             # 这里在写结果前再次确保 metadata 表存在，避免地点定位这类轻量查询
@@ -406,6 +409,18 @@ class PostGISLayerCatalog(LayerCatalog):
                 ).format(source_table=sql.Identifier(source_table), target_table=sql.Identifier(target_table)),
                 (distance_m,),
             )
+
+    @contextmanager
+    def transaction(self) -> Iterator[Any]:
+        """多语句事务上下文：临时关闭 autocommit，统一提交或回滚。"""
+        with self._connect() as conn:
+            conn.autocommit = False
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
     def _connect(self):
         # 数据库连接。

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 class AnalysisRequest(BaseModel):
     session_id: str = Field(..., alias="sessionId")
-    query: str
+    query: str = Field(..., min_length=2, max_length=4000)
     provider: str | None = None
     model: str | None = None
     clarification_option_id: str | None = Field(default=None, alias="clarificationOptionId")
@@ -31,7 +31,7 @@ class ThreadCreateRequest(BaseModel):
 
 
 class ThreadRunRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=2, max_length=4000)
     provider: str | None = None
     model: str | None = None
     clarification_option_id: str | None = Field(default=None, alias="clarificationOptionId")

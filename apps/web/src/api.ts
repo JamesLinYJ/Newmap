@@ -84,9 +84,11 @@ async function extractErrorDetail(response: Response): Promise<string> {
   return text.trim() || response.statusText || `HTTP ${response.status}`
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 30_000): Promise<T> {
   // 通用 JSON 请求入口。
   let response: Response
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const headers = new Headers(init?.headers ?? {})
     if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -95,10 +97,16 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       headers,
+      signal: controller.signal,
     })
   } catch (error) {
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(formatApiErrorMessage(`请求超时（${path}），请检查 API 服务是否响应正常。`, detail))
+    }
     throw new Error(formatApiErrorMessage(`暂时无法连接分析服务，请确认本地 API 或部署环境已经启动（接口：${path}，当前地址：${API_BASE_URL}）`, detail))
+  } finally {
+    clearTimeout(timer)
   }
 
   if (!response.ok) {

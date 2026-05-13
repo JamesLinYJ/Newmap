@@ -23,6 +23,7 @@ from pathlib import Path
 import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
+from shared_types.exceptions import NotFoundError
 
 from gis_common.geojson import load_geojson, save_geojson
 from gis_common.ids import make_id, now_utc
@@ -142,7 +143,7 @@ def _resolve_qgis_inputs(
         try:
             resolved[key] = _to_qgis_runtime_path(store.get_artifact_geojson_path(value))
             continue
-        except HTTPException:
+        except (HTTPException, NotFoundError):
             pass
         if _looks_like_local_path(value):
             resolved[key] = value

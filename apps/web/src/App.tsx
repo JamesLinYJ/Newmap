@@ -12,13 +12,12 @@
 //
 // 负责前端全局状态编排、API 调用、事件订阅、地图与 REPL 面板联动。
 
-import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { domAnimation, LazyMotion, m, MotionConfig, useReducedMotion } from 'framer-motion'
 import { Route, Routes, useLocation } from 'react-router-dom'
 
 import type {
   AgentRuntimeConfig,
-  AgentState,
   AnalysisRun,
   AgentThreadRecord,
   ArtifactRef,
@@ -41,7 +40,6 @@ import {
   deleteToolCatalogEntry,
   getArtifactGeoJson,
   getArtifactMetadata,
-  getRun,
   getRuntimeConfig,
   getSession,
   getSystemComponents,
@@ -55,7 +53,6 @@ import {
   listToolCatalogEntries,
   listSessionRuns,
   listQgisModels,
-  openRunEventStream,
   publishArtifact,
   resolveApproval,
   runQgisModel,
@@ -73,6 +70,7 @@ import './App.css'
 import { pickArtifactPublishResult, pickPreferredArtifactId } from './artifactSelection'
 import { buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from './motion'
 import { deriveThreadTranscript, pickTranscriptHeadline } from './runTranscript'
+import { useRunState } from './hooks/useRunState'
 import { ChatPanel } from './components/ChatPanel'
 import { DetailPanel } from './components/DetailPanel'
 import { AppIcon, type AppIconName } from './components/AppIcon'
@@ -120,6 +118,14 @@ function formatUiError(error: unknown, fallback: string) {
   return fallback
 }
 
+function useStableVoid<Args extends unknown[]>(fn: (...args: Args) => Promise<void>): (...args: Args) => void {
+  const ref = useRef(fn)
+  useEffect(() => {
+    ref.current = fn
+  }, [fn])
+  return useCallback((...args: Args) => { void ref.current(...args) }, [])
+}
+
 function App() {
   // 主应用壳
   //
@@ -129,11 +135,6 @@ function App() {
   const location = useLocation()
   const [query, setQuery] = useState('')
   const [session, setSession] = useState<SessionRecord>()
-  const [run, setRun] = useState<AnalysisRun>()
-  const [intent, setIntent] = useState<UserIntent>()
-  const [executionPlan, setExecutionPlan] = useState<ExecutionPlan>()
-  const [agentState, setAgentState] = useState<AgentState>()
-  const [events, setEvents] = useState<RunEvent[]>([])
   const [layers, setLayers] = useState<LayerDescriptor[]>([])
   const [basemaps, setBasemaps] = useState<BasemapDescriptor[]>([FALLBACK_BASEMAP])
   const [providers, setProviders] = useState<ModelProviderDescriptor[]>([])
@@ -146,23 +147,31 @@ function App() {
   const [sessionThreads, setSessionThreads] = useState<AgentThreadRecord[]>([])
   const [threadRuns, setThreadRuns] = useState<AnalysisRun[]>([])
   const [activeThreadId, setActiveThreadId] = useState<string>()
-  const [artifacts, setArtifacts] = useState<ArtifactRef[]>([])
   const [artifactData, setArtifactData] = useState<Record<string, GeoJSON.FeatureCollection>>({})
   const [artifactMetadata, setArtifactMetadata] = useState<Record<string, Record<string, unknown>>>({})
   const [mapLayerPreferences, setMapLayerPreferences] = useState<Record<string, MapLayerPreference>>({})
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [uploadedLayerName, setUploadedLayerName] = useState<string>()
   const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [isQgisSubmitting, setIsQgisSubmitting] = useState(false)
   const [isToolCatalogSubmitting, setIsToolCatalogSubmitting] = useState(false)
-  const [uiError, setUiError] = useState<string>()
   const [provider, setProvider] = useState('openai_compatible')
   const [model, setModel] = useState('')
   const [selectedBasemapKey, setSelectedBasemapKey] = useState('osm')
   const [activeNav, setActiveNav] = useState<PrimaryNav>('analysis')
   const [panelMode, setPanelMode] = useState<PanelMode>('summary')
   const [activeSidebarItem, setActiveSidebarItem] = useState<SidebarItemId>('assistant')
+
+  const {
+    run, agentState, intent, executionPlan,
+    events, artifacts, isSubmitting, uiError,
+    clearRun,
+    hydrateRun,
+    acceptRun,
+    startRun,
+    stopSubmitting,
+    setError: setUiError,
+  } = useRunState()
   const deferredEvents = useDeferredValue(events)
   const reducedMotion = useReducedMotion() ?? false
 
@@ -259,20 +268,13 @@ function App() {
   const refreshLayers = useCallback(async () => {
     const layerList = await listLayers()
     startTransition(() => {
-      setLayers(layerList)
+      setLayers(layerList ?? [])
     })
   }, [])
 
   const clearActiveRunState = useCallback(() => {
-    // 当当前 thread 被删除或页面回到纯首页时，主动清空运行态，
-    // 避免上一条任务的 transcript、artifact 和审批块残留在界面上。
+    clearRun()
     startTransition(() => {
-      setRun(undefined)
-      setAgentState(undefined)
-      setIntent(undefined)
-      setExecutionPlan(undefined)
-      setEvents([])
-      setArtifacts([])
       setThreadRuns([])
       setArtifactData({})
       setArtifactMetadata({})
@@ -280,35 +282,22 @@ function App() {
       setToolRunResult(null)
       setActiveThreadId(undefined)
     })
-  }, [])
+  }, [clearRun])
 
   const refreshSessionHistory = useCallback(async (sessionId: string) => {
-    // 会话历史由 runs 和 threads 两条索引共同组成：
-    // runs 继续服务右侧结果历史，threads 服务主聊天面板的任务列表。
     const [runs, threads] = await Promise.all([listSessionRuns(sessionId), listSessionThreads(sessionId)])
     startTransition(() => {
-      setSessionRuns(runs)
-      setSessionThreads(threads)
+      setSessionRuns(runs ?? [])
+      setSessionThreads(threads ?? [])
     })
     return { runs, threads }
   }, [])
 
   const hydrateRunState = useCallback(
     async (runId: string) => {
-      // run 水合
-      //
-      // 当用户刷新页面、切换历史 run 或收到最终 SSE 事件时，
-      // 都通过这一条路径把 run、intent、plan、artifacts 与历史记录重新对齐。
-      // 地址栏不再承载主工作台状态；这里只刷新本地 active 指针，
-      // 让刷新恢复当前对话但不把 session/thread/run 暴露给用户。
-      const latestRun = await getRun(runId)
+      const latestRun = await hydrateRun(runId)
 
       startTransition(() => {
-        setRun(latestRun)
-        setAgentState(latestRun.state)
-        setIntent(latestRun.state.parsedIntent)
-        setExecutionPlan(latestRun.state.executionPlan)
-        setArtifacts(latestRun.state.artifacts)
         setActiveThreadId(latestRun.threadId ?? undefined)
         setProvider(latestRun.modelProvider ?? 'openai_compatible')
         setModel(latestRun.modelName ?? '')
@@ -319,18 +308,12 @@ function App() {
       if (latestRun.threadId) {
         try {
           const threadPayload = await getThread(latestRun.threadId)
-          startTransition(() => {
-            setThreadRuns(threadPayload.runs)
-          })
+          startTransition(() => setThreadRuns(threadPayload.runs ?? []))
         } catch {
-          startTransition(() => {
-            setThreadRuns([latestRun])
-          })
+          startTransition(() => setThreadRuns([latestRun]))
         }
       } else {
-        startTransition(() => {
-          setThreadRuns([latestRun])
-        })
+        startTransition(() => setThreadRuns([latestRun]))
       }
 
       if (latestRun.state.artifacts.length > 0) {
@@ -345,7 +328,7 @@ function App() {
 
       return latestRun
     },
-    [applyArtifactPayload, refreshSessionHistory],
+    [applyArtifactPayload, hydrateRun, refreshSessionHistory],
   )
 
   const handleNavChange = useCallback(
@@ -484,7 +467,7 @@ function App() {
             const threadPayload = await getThread(threadToRestore)
             startTransition(() => {
               setActiveThreadId(threadPayload.thread.id)
-              setThreadRuns(threadPayload.runs)
+              setThreadRuns(threadPayload.runs ?? [])
             })
             const preferredRunId =
               runToRestore && threadPayload.runs.some((item) => item.id === runToRestore)
@@ -517,14 +500,14 @@ function App() {
     void retryAsync(() => listLayers(), 2, 300)
       .then((layerList) => {
         startTransition(() => {
-          setLayers(layerList)
+          setLayers(layerList ?? [])
           setUiError(undefined)
         })
       })
       .catch((error) => {
         setUiError(formatUiError(error, '图层目录暂时加载不了，请稍后重试。'))
       })
-  }, [clearActiveRunState, hydrateRunState, refreshSessionHistory])
+  }, [clearActiveRunState, hydrateRunState, refreshSessionHistory, setUiError])
 
   useEffect(() => {
     // 模型提供方初始化
@@ -533,7 +516,7 @@ function App() {
     void listProviders()
       .then((providerList) => {
         startTransition(() => {
-          setProviders(providerList)
+          setProviders(providerList ?? [])
           const preferred =
             providerList.find((item) => item.provider === 'openai_compatible' && item.configured) ??
             providerList.find((item) => item.configured) ??
@@ -566,7 +549,7 @@ function App() {
     void listTools()
       .then((tools) => {
         startTransition(() => {
-          setAvailableTools(tools)
+          setAvailableTools(tools ?? [])
         })
       })
       .catch(() => {})
@@ -586,15 +569,15 @@ function App() {
         startTransition(() => {
           setSystemComponents(components)
           setQgisModels(modelList)
-          setAvailableTools(tools)
-          setToolCatalogEntries(catalogEntries)
+          setAvailableTools(tools ?? [])
+          setToolCatalogEntries(catalogEntries ?? [])
           setRuntimeConfig(loadedRuntimeConfig)
         })
       })
       .catch((error) => {
         setUiError(formatUiError(error, '系统状态加载遇到问题，请稍后重试。'))
       })
-  }, [location.pathname, panelMode])
+  }, [location.pathname, panelMode, setUiError])
 
   const refreshToolingState = useCallback(async () => {
     // 调试页和 compute 面板共用这一条刷新路径，避免各自拉一套不同快照。
@@ -608,132 +591,49 @@ function App() {
     startTransition(() => {
       setSystemComponents(components)
       setQgisModels(modelList)
-      setAvailableTools(tools)
-      setToolCatalogEntries(catalogEntries)
+      setAvailableTools(tools ?? [])
+      setToolCatalogEntries(catalogEntries ?? [])
       setRuntimeConfig(loadedRuntimeConfig)
     })
   }, [])
 
+  // SSE 事件流由 useRunState 内部管理。
+  // artifact.created / run.completed 的副作用（GeoJSON 加载、publish metadata）
+  // 通过监听 events 的最后一个事件来处理。
   useEffect(() => {
-    // SSE 事件订阅
-    //
-    // 只要当前存在运行中的 run，就持续监听事件流，并在断开时按需重连。
-    // 这里同时负责把 intent、plan 和 artifact.created 等事件增量回灌进状态树。
-    if (!run?.id || run.status !== 'running') {
-      return
-    }
+    const last = events.at(-1)
+    if (!last) return
 
-    let source: EventSource | undefined
-    let reconnectTimer: number | undefined
-    let disposed = false
-    const seenEventIds = new Set<string>()
-    let reconnectAttempts = 0
-    const MAX_RECONNECT_ATTEMPTS = 10
-
-    const connect = () => {
-      if (disposed) {
-        return
-      }
-
-      source = openRunEventStream(
-        run.id,
-        (event) => {
-          reconnectAttempts = 0
-          if (seenEventIds.has(event.eventId)) return
-          seenEventIds.add(event.eventId)
+    if (last.type === 'artifact.created' && last.payload) {
+      const artifact = last.payload as unknown as ArtifactRef
+      if (artifact?.artifactId) {
+        void applyArtifactPayload([artifact]).then(() => {
           startTransition(() => {
-            setEvents((current) => [...current, event])
+            setSelectedArtifactId(artifact.artifactId)
           })
-
-          if (event.type === 'intent.parsed') {
-            startTransition(() => {
-              setIntent(event.payload as unknown as UserIntent)
-            })
-          }
-
-          if (event.type === 'plan.ready') {
-            startTransition(() => {
-              setExecutionPlan(event.payload as unknown as ExecutionPlan)
-            })
-          }
-
-          if (event.type === 'artifact.created' && event.payload) {
-            const artifact = event.payload as unknown as ArtifactRef
-            if (!artifact?.artifactId) {
-              return
-            }
-
-            void applyArtifactPayload([artifact]).then(() => {
-              startTransition(() => {
-                setArtifacts((current) =>
-                  current.some((item) => item.artifactId === artifact.artifactId) ? current : [...current, artifact],
-                )
-                setSelectedArtifactId(artifact.artifactId)
-              })
-            })
-          }
-
-          if (event.type === 'warning.raised') {
-            setUiError(undefined)
-          }
-
-          if (event.type === 'run.completed' || event.type === 'run.failed') {
-            const payload = event.payload as Record<string, unknown> | undefined
-            if (payload?.published && typeof payload.published === 'object' && payload.published !== null) {
-              const published = payload.published as Record<string, unknown>
-              const publishedArtifactId = typeof published.artifactId === 'string' ? published.artifactId : undefined
-              if (publishedArtifactId) {
-                startTransition(() => {
-                  setArtifactMetadata((current) => ({
-                    ...current,
-                    [publishedArtifactId]: {
-                      ...current[publishedArtifactId],
-                      publishResult: published,
-                    },
-                  }))
-                })
-              }
-            }
-            if (event.type === 'run.failed') {
-              startTransition(() => {
-                setUiError(String((payload?.errors as string[] | undefined)?.join('；') || event.message))
-              })
-            }
-            void hydrateRunState(run.id)
-            setIsSubmitting(false)
-          }
-        },
-        () => {
-          if (disposed || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return
-          reconnectAttempts += 1
-          const delay = Math.min(1500 * Math.pow(2, reconnectAttempts - 1), 30000)
-          void getRun(run.id)
-            .then((latestRun) => {
-              if (disposed) return
-              startTransition(() => setRun(latestRun))
-              if (!disposed && latestRun.status === 'running') {
-                reconnectTimer = window.setTimeout(connect, delay)
-              }
-            })
-            .catch(() => {
-              if (!disposed) {
-                reconnectTimer = window.setTimeout(connect, delay)
-              }
-            })
-        },
-      )
-    }
-
-    connect()
-
-    return () => {
-      disposed = true
-      source?.close()
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer)
+        })
       }
     }
-  }, [applyArtifactPayload, hydrateRunState, run?.id, run?.status])
+
+    if (last.type === 'run.completed' || last.type === 'run.failed') {
+      const payload = last.payload as Record<string, unknown> | undefined
+      if (payload?.published && typeof payload.published === 'object' && payload.published !== null) {
+        const published = payload.published as Record<string, unknown>
+        const publishedArtifactId = typeof published.artifactId === 'string' ? published.artifactId : undefined
+        if (publishedArtifactId) {
+          startTransition(() => {
+            setArtifactMetadata((current) => ({
+              ...current,
+              [publishedArtifactId]: {
+                ...current[publishedArtifactId],
+                publishResult: published,
+              },
+            }))
+          })
+        }
+      }
+    }
+  }, [events, applyArtifactPayload])
 
   const submitMessage = useCallback(
     async ({
@@ -768,15 +668,13 @@ function App() {
           return
         }
         setUiError(undefined)
-        setIsSubmitting(true)
+        startRun()
         if (updateComposer) {
           setQuery(submittedQuery)
         }
         setActiveNav('analysis')
         setPanelMode('summary')
         setActiveSidebarItem('assistant')
-        setEvents([])
-        setArtifacts([])
         setArtifactData({})
         setArtifactMetadata({})
         setSelectedArtifactId(undefined)
@@ -787,10 +685,7 @@ function App() {
           : await startAnalysis(session.id, submittedQuery, provider, model || undefined, clarificationOptionId)
         const nextThreadId = createdRun.threadId ?? targetThreadId
         startTransition(() => {
-          setRun(createdRun)
-          setAgentState(createdRun.state)
-          setIntent(createdRun.state.parsedIntent)
-          setExecutionPlan(createdRun.state.executionPlan)
+          acceptRun(createdRun)
           setProvider(createdRun.modelProvider ?? provider)
           setModel(createdRun.modelName ?? model)
           setActiveThreadId(nextThreadId)
@@ -800,10 +695,10 @@ function App() {
         syncUrl(session.id, createdRun.id, nextThreadId)
       } catch (error) {
         setUiError(formatUiError(error, clarificationOptionId ? '回复提交失败，请重试。' : '任务提交失败，请重试。'))
-        setIsSubmitting(false)
+        stopSubmitting()
       }
     },
-    [currentThreadId, model, provider, providers, query, refreshSessionHistory, session],
+    [acceptRun, currentThreadId, model, provider, providers, query, refreshSessionHistory, session, setUiError, startRun, stopSubmitting],
   )
 
   const handleSubmit = useCallback(async () => {
@@ -826,12 +721,7 @@ function App() {
     // 下一次发送消息时因为没有 activeThreadId，会自然走 startAnalysis 创建新 thread。
     startTransition(() => {
       setQuery('')
-      setRun(undefined)
-      setAgentState(undefined)
-      setIntent(undefined)
-      setExecutionPlan(undefined)
-      setEvents([])
-      setArtifacts([])
+      clearActiveRunState()
       setThreadRuns([])
       setArtifactData({})
       setArtifactMetadata({})
@@ -846,7 +736,7 @@ function App() {
       syncUrl(session.id)
     }
     focusQueryInput()
-  }, [focusQueryInput, session?.id])
+  }, [clearActiveRunState, focusQueryInput, session?.id])
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -865,12 +755,12 @@ function App() {
         setActiveSidebarItem('sources')
         const [sessionRecord, layerList] = await Promise.all([getSession(session.id), listLayers()])
         setSession(sessionRecord)
-        setLayers(layerList)
+        setLayers(layerList ?? [])
       } catch (error) {
         setUiError(formatUiError(error, '图层上传没成功，请再试一次。'))
       }
     },
-    [session],
+    [session, setUiError],
   )
 
   const handleImportManagedLayer = useCallback(
@@ -886,7 +776,7 @@ function App() {
         setUiError(formatUiError(error, '图层导入没成功，请再试一次。'))
       }
     },
-    [refreshLayers],
+    [refreshLayers, setUiError],
   )
 
   const handleToggleLayerStatus = useCallback(
@@ -899,7 +789,7 @@ function App() {
         setUiError(formatUiError(error, '图层状态更新失败，请再试一次。'))
       }
     },
-    [refreshLayers],
+    [refreshLayers, setUiError],
   )
 
   const handleDeleteLayer = useCallback(
@@ -912,7 +802,7 @@ function App() {
         setUiError(formatUiError(error, '图层删除失败，请再试一次。'))
       }
     },
-    [refreshLayers],
+    [refreshLayers, setUiError],
   )
 
   const handlePublish = useCallback(async (artifactId: string) => {
@@ -932,7 +822,7 @@ function App() {
     } catch (error) {
       setUiError(formatUiError(error, '发布没成功，请稍后重试。'))
     }
-  }, [runtimeConfig?.defaultPublishProjectKey])
+  }, [runtimeConfig?.defaultPublishProjectKey, setUiError])
 
   const handleResolveApproval = useCallback(
     async (approvalId: string, approved: boolean) => {
@@ -948,7 +838,7 @@ function App() {
         setUiError(formatUiError(error, approved ? '审批操作没成功，请重试。' : '拒绝操作没成功，请重试。'))
       }
     },
-    [hydrateRunState, run?.id],
+    [hydrateRunState, run?.id, setUiError],
   )
 
   const handleSelectThread = useCallback(
@@ -959,7 +849,7 @@ function App() {
         const threadPayload = await getThread(threadId)
         startTransition(() => {
           setActiveThreadId(threadPayload.thread.id)
-          setThreadRuns(threadPayload.runs)
+          setThreadRuns(threadPayload.runs ?? [])
         })
         if (threadPayload.latestRun?.id) {
           await hydrateRunState(threadPayload.latestRun.id)
@@ -970,16 +860,8 @@ function App() {
         }
 
         startTransition(() => {
-          setRun(undefined)
-          setAgentState(undefined)
-          setIntent(undefined)
-          setExecutionPlan(undefined)
-          setEvents([])
-          setArtifacts([])
-          setArtifactData({})
-          setArtifactMetadata({})
-          setSelectedArtifactId(undefined)
-          setToolRunResult(null)
+          clearActiveRunState()
+          setThreadRuns(threadPayload.runs ?? [])
           setActiveThreadId(threadPayload.thread.id)
         })
         if (session?.id) {
@@ -989,7 +871,7 @@ function App() {
         setUiError(formatUiError(error, '历史记录加载失败，请稍后重试。'))
       }
     },
-    [hydrateRunState, session?.id],
+    [clearActiveRunState, hydrateRunState, session?.id, setUiError],
   )
 
   const handleRenameThread = useCallback(
@@ -1010,7 +892,7 @@ function App() {
         setUiError(formatUiError(error, '标题更新失败，请再试一次。'))
       }
     },
-    [],
+    [setUiError],
   )
 
   const handleDeleteThread = useCallback(
@@ -1036,8 +918,17 @@ function App() {
         setUiError(formatUiError(error, '任务删除失败，请再试一次。'))
       }
     },
-    [clearActiveRunState, currentThreadId, refreshSessionHistory, session?.id],
+    [clearActiveRunState, currentThreadId, refreshSessionHistory, session?.id, setUiError],
   )
+
+  // 稳定化 ChatPanel 回调引用，避免每次渲染重建导致子树无效重渲染
+  const onSubmitStable = useStableVoid(handleSubmit)
+  const onSelectClarificationStable = useStableVoid(handleClarificationSelect)
+  const onUploadStable = useStableVoid(handleUpload)
+  const onSelectTaskStable = useStableVoid(handleSelectThread)
+  const onRenameTaskStable = useStableVoid(handleRenameThread)
+  const onDeleteTaskStable = useStableVoid(handleDeleteThread)
+  const onResolveApprovalStable = useStableVoid(handleResolveApproval)
 
   const handleRunQgisProcess = useCallback(
     async (algorithmId: string, distance?: number) => {
@@ -1069,7 +960,7 @@ function App() {
         setIsQgisSubmitting(false)
       }
     },
-    [hydrateRunState, run?.id, selectedArtifactId],
+    [hydrateRunState, run?.id, selectedArtifactId, setUiError],
   )
 
   const handleRunQgisModel = useCallback(
@@ -1111,7 +1002,7 @@ function App() {
         setIsQgisSubmitting(false)
       }
     },
-    [hydrateRunState, run?.id, selectedArtifactId],
+    [hydrateRunState, run?.id, selectedArtifactId, setUiError],
   )
 
   const handleRunTool = useCallback(
@@ -1148,7 +1039,7 @@ function App() {
         setIsQgisSubmitting(false)
       }
     },
-    [currentThreadId, hydrateRunState, run?.id, session?.id],
+    [currentThreadId, hydrateRunState, run?.id, session?.id, setUiError],
   )
 
   const handleUpsertToolCatalogEntry = useCallback(
@@ -1164,7 +1055,7 @@ function App() {
         setIsToolCatalogSubmitting(false)
       }
     },
-    [refreshToolingState],
+    [refreshToolingState, setUiError],
   )
 
   const handleSaveRuntimeConfig = useCallback(async (nextConfig: AgentRuntimeConfig) => {
@@ -1177,7 +1068,7 @@ function App() {
     } catch (error) {
       setUiError(formatUiError(error, '运行时配置保存失败。'))
     }
-  }, [])
+  }, [setUiError])
 
   const handleDeleteToolCatalogEntry = useCallback(
     async (tool: ToolDescriptor) => {
@@ -1192,7 +1083,7 @@ function App() {
         setIsToolCatalogSubmitting(false)
       }
     },
-    [refreshToolingState],
+    [refreshToolingState, setUiError],
   )
 
   const handleCopyShareLink = useCallback(async () => {
@@ -1205,7 +1096,7 @@ function App() {
     } catch {
       setUiError('复制分享链接失败，请稍后重试。')
     }
-  }, [currentThreadId, run?.id, session?.id])
+  }, [currentThreadId, run?.id, session?.id, setUiError])
 
   const handleProviderChange = useCallback(
     (value: string) => {
@@ -1368,31 +1259,17 @@ function App() {
                         runtimeConfig={runtimeConfig}
                         availableTools={availableTools}
                         onQueryChange={setQuery}
-                        onSubmit={() => {
-                          void handleSubmit()
-                        }}
+                        onSubmit={onSubmitStable}
                         onNewConversation={handleNewConversation}
                         onFillSample={handleSampleSelect}
-                        onSelectClarification={(value, optionId) => {
-                          void handleClarificationSelect(value, optionId)
-                        }}
+                        onSelectClarification={onSelectClarificationStable}
                         onUseTemplate={handleUseTemplate}
-                        onUpload={(file) => {
-                          void handleUpload(file)
-                        }}
+                        onUpload={onUploadStable}
                         onSelectArtifact={setSelectedArtifactId}
-                        onSelectTask={(threadId) => {
-                          void handleSelectThread(threadId)
-                        }}
-                        onRenameTask={(threadId, title) => {
-                          void handleRenameThread(threadId, title)
-                        }}
-                        onDeleteTask={(threadId) => {
-                          void handleDeleteThread(threadId)
-                        }}
-                        onResolveApproval={(approvalId, approved) => {
-                          void handleResolveApproval(approvalId, approved)
-                        }}
+                        onSelectTask={onSelectTaskStable}
+                        onRenameTask={onRenameTaskStable}
+                        onDeleteTask={onDeleteTaskStable}
+                        onResolveApproval={onResolveApprovalStable}
                       />
                     </m.div>
 

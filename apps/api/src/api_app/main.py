@@ -20,7 +20,9 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from shared_types.exceptions import NotFoundError
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent_core import GeoAgentRuntime
@@ -115,17 +117,46 @@ async def lifespan(app: FastAPI):
             logger.warning("Timed out waiting for %d background tasks to finish", len(pending_tasks))
 
 
+def _build_cors_origins() -> list[str]:
+    origins = [settings.web_base_url]
+    if settings.web_extra_origins:
+        origins.extend(settings.web_extra_origins)
+    # 开发环境自动允许 localhost/127.0.0.1 的 web 端口
+    if settings.app_env == "development":
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.web_base_url)
+        port = parsed.port or 5173
+        origins.extend([f"http://localhost:{port}", f"http://127.0.0.1:{port}"])
+    return _build_allowed_origins(*origins)
+
+
 app = FastAPI(title="geo-agent-platform", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_build_allowed_origins(
-        settings.web_base_url,
-        *(["http://localhost:5173", "http://127.0.0.1:5173"] if settings.app_env == "development" else []),
-    ),
+    allow_origins=_build_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
+
+
+@app.exception_handler(NotFoundError)
+async def not_found_handler(_request: Request, exc: NotFoundError) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+# 安全响应头（直连 8000 时 nginx 不生效，这里补一层）
+@app.middleware("http")
+async def _add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+    if settings.app_env != "development":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 
 # 路由注册
 app.include_router(health.router)

@@ -49,6 +49,7 @@ class EventType(str, Enum):
     SUBAGENT_CREATED = "subagent.created"
     SUBAGENT_UPDATED = "subagent.updated"
     MESSAGE_DELTA = "message.delta"
+    THINKING_DELTA = "thinking.delta"
     LOOP_UPDATED = "loop.updated"
     TODO_UPDATED = "todo.updated"
     TOOL_STARTED = "tool.started"

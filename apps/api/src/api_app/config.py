@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_base_url: str = "http://localhost:8000"
     web_base_url: str = "http://localhost:5173"
+    web_extra_origins: list[str] | None = None
     qgis_server_base_url: str = "http://localhost:8080"
     qgis_server_internal_base_url: str | None = None
     runtime_root: str = "./runtime"

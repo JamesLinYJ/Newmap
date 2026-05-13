@@ -12,6 +12,7 @@
 //
 // 展示当前结果对象、发布入口、运行摘要与系统状态等辅助信息。
 
+import { memo, useMemo } from 'react'
 import { CloudUpload, ExternalLink, Eye, EyeOff, Lightbulb, LoaderCircle, LocateFixed, MapPin, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
 
 import type {
@@ -82,7 +83,7 @@ interface DetailPanelProps {
   onDeleteLayer: (layerKey: string) => void
 }
 
-export function DetailPanel({
+export const DetailPanel = memo(function DetailPanel({
   panelMode,
   currentRunId,
   runStatus,
@@ -125,10 +126,13 @@ export function DetailPanel({
   // 并承接 artifact、运行历史和 QGIS 二次处理入口。
   // 这里不是纯展示区，而是“结果消费与后续动作面板”：
   // 用户看摘要、切换结果、回看历史、执行二次处理和发布结果都在这层完成。
-  const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) ?? artifacts[0]
+  const selectedArtifact = useMemo(
+    () => artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) ?? artifacts[0],
+    [artifacts, selectedArtifactId],
+  )
   const selectedCollection = selectedArtifact ? artifactData[selectedArtifact.artifactId] : undefined
   const featureCount = selectedCollection?.features.length ?? 0
-  const publishLinks = buildPublishLinks(publishResult)
+  const publishLinks = useMemo(() => buildPublishLinks(publishResult), [publishResult])
   const summaryTitle = deriveSummaryTitle(agentState?.parsedIntent?.area ?? undefined, selectedArtifact?.name)
   const summaryBody =
     agentState?.finalResponse?.summary ??
@@ -138,22 +142,34 @@ export function DetailPanel({
   const nextActions = agentState?.finalResponse?.nextActions?.slice(0, 2) ?? []
   const metricScore = featureCount ? (92 + Math.min(featureCount, 8) * 0.55).toFixed(1) : '--'
   const growthLabel = runStatus === 'completed' ? `+${Math.max(featureCount, 1) * 6.25}%` : '等待结果'
-  const primaryItems = artifacts.slice(0, 2)
   const todoItems = agentState?.todos ?? []
   const subAgents = agentState?.subAgents ?? []
   const approvals = agentState?.approvals ?? []
-  const managedLayers = layers.filter((layer) => !layer.sourceType.startsWith('session_') && layer.sourceType !== 'upload')
-  const sessionUploadLayers = layers.filter((layer) => layer.sourceType.startsWith('session_') || layer.sourceType === 'upload')
+  const managedLayers = useMemo(
+    () => layers.filter((layer) => !layer.sourceType.startsWith('session_') && layer.sourceType !== 'upload'),
+    [layers],
+  )
+  const sessionUploadLayers = useMemo(
+    () => layers.filter((layer) => layer.sourceType.startsWith('session_') || layer.sourceType === 'upload'),
+    [layers],
+  )
   const availableModelName =
     qgisModels?.models.find((item) => item === 'buffer_and_intersect') ?? qgisModels?.models[0] ?? null
-  const overlayCandidates = artifacts.filter((artifact) => artifact.artifactId !== selectedArtifact?.artifactId)
-  const cardLabels = primaryItems.map((artifact, index) => ({
-    title: index === 0 ? artifact.name : `${artifact.name}分布`,
-    subtitle:
-      index === 0
-        ? `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象已生成，可继续查看位置与范围`
-        : `当前结果已覆盖 ${Math.max(1.2, (artifactData[artifact.artifactId]?.features.length ?? 1) * 0.8).toFixed(1)}km² 可视区域`,
-  }))
+  const overlayCandidates = useMemo(
+    () => artifacts.filter((artifact) => artifact.artifactId !== selectedArtifact?.artifactId),
+    [artifacts, selectedArtifact?.artifactId],
+  )
+  const primaryItems = useMemo(() => artifacts.slice(0, 2), [artifacts])
+  const cardLabels = useMemo(
+    () => primaryItems.map((artifact, index) => ({
+      title: index === 0 ? artifact.name : `${artifact.name}分布`,
+      subtitle:
+        index === 0
+          ? `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象已生成，可继续查看位置与范围`
+          : `当前结果已覆盖 ${Math.max(1.2, (artifactData[artifact.artifactId]?.features.length ?? 1) * 0.8).toFixed(1)}km² 可视区域`,
+    })),
+    [primaryItems, artifactData],
+  )
 
   return (
     <div className="dc-detail-column">
@@ -831,7 +847,7 @@ export function DetailPanel({
       {runStatus === 'failed' ? <div className="dc-error-banner">这次分析没有完成，请调整问题后重新尝试。</div> : null}
     </div>
   )
-}
+})
 
 function deriveSummaryTitle(area?: string, artifactName?: string) {
   if (area) {

@@ -23,6 +23,7 @@ from json import JSONDecodeError
 from typing import Any
 
 from fastapi import HTTPException
+from shared_types.exceptions import NotFoundError
 from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ def _load_run_alias_map(store: PostgresPlatformStore, run_id: str) -> dict[str, 
     alias_map: dict[str, dict[str, object]] = {}
     try:
         run = store.get_run(run_id)
-    except HTTPException:
+    except (HTTPException, NotFoundError):
         return alias_map
 
     for artifact in run.state.artifacts:
@@ -124,7 +125,7 @@ def _load_run_alias_map(store: PostgresPlatformStore, run_id: str) -> dict[str, 
             alias = metadata.get("alias")
             if isinstance(alias, str) and alias.strip():
                 alias_map[alias.strip()] = collection
-        except HTTPException:
+        except (HTTPException, NotFoundError):
             continue
     return alias_map
 
@@ -243,7 +244,7 @@ def _record_tool_failure(
 ) -> None:
     try:
         run = store.get_run(run_id)
-    except HTTPException:
+    except (HTTPException, NotFoundError):
         return
 
     tool_results = list(run.state.tool_results)
