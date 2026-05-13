@@ -36,6 +36,7 @@ import type {
 
 import { apiBaseUrl } from '../api'
 import { buildFadeUpMotion, buildListItemVariants, buildListVariants, buildPressMotion } from '../motion'
+import { providerUnavailableLabel, supportsAgentSdkLiveSupervisor } from '../providerCapabilities'
 import { deriveConversationEntries, deriveRunTranscript, pickTranscriptHeadline } from '../runTranscript'
 import { StatusPill } from './StatusPill'
 
@@ -367,9 +368,9 @@ export function DebugPage({
                     onChange={(event) => onProviderChange(event.target.value)}
                   >
                     {providers.map((item) => (
-                      <option key={item.provider} value={item.provider} disabled={!item.configured}>
+                      <option key={item.provider} value={item.provider} disabled={!supportsAgentSdkLiveSupervisor(item)}>
                         {item.displayName}
-                        {!item.configured ? '（未配置）' : ''}
+                        {providerUnavailableLabel(item)}
                       </option>
                     ))}
                   </select>
@@ -702,7 +703,7 @@ export function DebugPage({
           <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
-                <div className="panel__eyebrow">Deep Agents 运行态</div>
+                <div className="panel__eyebrow">Agent SDK 运行态</div>
                 <h2>主智能体与子智能体轨迹</h2>
               </div>
             </div>

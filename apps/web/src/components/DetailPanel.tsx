@@ -13,7 +13,7 @@
 // 展示当前结果对象、发布入口、运行摘要与系统状态等辅助信息。
 
 import { memo, useMemo } from 'react'
-import { CloudUpload, ExternalLink, Eye, EyeOff, Lightbulb, LoaderCircle, LocateFixed, MapPin, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
+import { CloudUpload, ExternalLink, Eye, EyeOff, Lightbulb, LoaderCircle, LocateFixed, MapPin, RefreshCw, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
 
 import type {
   AgentState,
@@ -27,6 +27,7 @@ import type {
 } from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../api'
+import { providerUnavailableLabel, supportsAgentSdkLiveSupervisor } from '../providerCapabilities'
 import { AppIcon } from './AppIcon'
 
 interface ProgressItem {
@@ -79,6 +80,7 @@ interface DetailPanelProps {
   onModelChange: (value: string) => void
   onResolveApproval: (approvalId: string, approved: boolean) => void
   onImportManagedLayer: (file: File) => void
+  onReplaceManagedLayer: (layerKey: string, file: File) => void
   onToggleLayerStatus: (layerKey: string, nextStatus: string) => void
   onDeleteLayer: (layerKey: string) => void
 }
@@ -117,6 +119,7 @@ export const DetailPanel = memo(function DetailPanel({
   onModelChange,
   onResolveApproval,
   onImportManagedLayer,
+  onReplaceManagedLayer,
   onToggleLayerStatus,
   onDeleteLayer,
 }: DetailPanelProps) {
@@ -153,6 +156,8 @@ export const DetailPanel = memo(function DetailPanel({
     () => layers.filter((layer) => layer.sourceType.startsWith('session_') || layer.sourceType === 'upload'),
     [layers],
   )
+  const layerSummary = useMemo(() => buildLayerSummary(layers), [layers])
+  const qgisRuntimeReady = systemComponents?.qgisRuntimeAvailable === true || qgisModels?.available === true
   const availableModelName =
     qgisModels?.models.find((item) => item === 'buffer_and_intersect') ?? qgisModels?.models[0] ?? null
   const overlayCandidates = useMemo(
@@ -261,7 +266,7 @@ export const DetailPanel = memo(function DetailPanel({
               <div className="dc-card__header">
                 <div>
                   <div className="dc-card__eyebrow">运行状态</div>
-                  <h3>Deep Agents 状态</h3>
+                  <h3>Agent SDK 状态</h3>
                 </div>
                 <div className="dc-card__icon">
                   <Sparkles size={18} aria-hidden="true" />
@@ -365,6 +370,27 @@ export const DetailPanel = memo(function DetailPanel({
             </div>
 
           <div className="dc-panel-section">
+            <div className="dc-keyvalue-list dc-keyvalue-list--compact">
+              <div className="dc-keyvalue-row">
+                <span>图层总数</span>
+                <strong>{layerSummary.total}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>活跃 / 停用</span>
+                <strong>{layerSummary.active} / {layerSummary.inactive}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>目录 / 会话</span>
+                <strong>{layerSummary.managed} / {layerSummary.session}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>要素总量</span>
+                <strong>{layerSummary.features}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="dc-panel-section">
             <div className="dc-panel-section__title">分析结果</div>
             <div className="dc-layer-manager">
               {mapLayers.length ? (
@@ -434,11 +460,12 @@ export const DetailPanel = memo(function DetailPanel({
                     <div className="dc-layer-reference__top">
                       <strong>{layer.name}</strong>
                       <span>
-                        {layer.geometryType} · {layer.featureCount ?? 0} 要素
+                        {layer.geometryType} · {layer.featureCount ?? 0} 要素 · {layerStatusLabel(layer.status)}
                       </span>
                     </div>
                     <div className="dc-layer-reference__meta">
                       <span className="dc-pill-meta">{layer.sourceType}</span>
+                      <span className="dc-pill-meta">{layer.category || 'general'}</span>
                       <span className="dc-pill-meta">SRID {layer.srid}</span>
                       {(layer.tags ?? []).slice(0, 3).map((tag) => (
                         <span key={tag} className="dc-pill-meta">
@@ -446,7 +473,30 @@ export const DetailPanel = memo(function DetailPanel({
                         </span>
                       ))}
                     </div>
+                    <div className="dc-layer-reference__meta">
+                      <span className="dc-pill-meta">{formatLayerBounds(layer.bounds)}</span>
+                      <span className="dc-pill-meta">更新 {formatLayerUpdated(layer.updatedAt)}</span>
+                    </div>
+                    {layer.analysisCapabilities.length ? (
+                      <div className="dc-layer-reference__meta">
+                        {layer.analysisCapabilities.slice(0, 4).map((capability) => (
+                          <span key={capability} className="dc-pill-meta">
+                            {capability}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {(layer.propertySchema ?? []).length ? (
+                      <div className="dc-layer-fields">
+                        {(layer.propertySchema ?? []).slice(0, 4).map((field) => (
+                          <span key={field.name}>
+                            {field.name} · {field.dataType} · {field.populatedCount}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                     <p>{layer.description}</p>
+                    {layer.sourceConfigSummary ? <p>{layer.sourceConfigSummary}</p> : null}
                   </div>
                 ))
               ) : (
@@ -573,7 +623,7 @@ export const DetailPanel = memo(function DetailPanel({
             <button
               type="button"
               className="dc-action-button dc-action-button--primary"
-              disabled={!selectedArtifact || isQgisSubmitting}
+              disabled={!selectedArtifact || isQgisSubmitting || !qgisRuntimeReady}
               onClick={() => onRunQgisProcess('native:buffer', agentState?.parsedIntent?.distanceM ?? 1000)}
             >
               {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
@@ -582,7 +632,7 @@ export const DetailPanel = memo(function DetailPanel({
             <button
               type="button"
               className="dc-action-button"
-              disabled={!selectedArtifact || isQgisSubmitting || !availableModelName}
+              disabled={!selectedArtifact || isQgisSubmitting || !availableModelName || !qgisRuntimeReady}
               onClick={() => availableModelName && onRunQgisModel(availableModelName, overlayCandidates[0]?.artifactId)}
             >
               运行 QGIS 模型
@@ -590,11 +640,24 @@ export const DetailPanel = memo(function DetailPanel({
             <button
               type="button"
               className="dc-action-button"
-              disabled={!selectedArtifact || isQgisSubmitting}
+              disabled={!selectedArtifact || isQgisSubmitting || !qgisRuntimeReady}
               onClick={() => onRunQgisProcess('native:centroids')}
             >
               生成中心点
             </button>
+          </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-keyvalue-list">
+              <div className="dc-keyvalue-row">
+                <span>QGIS Runtime</span>
+                <strong>{qgisRuntimeReady ? '可用' : '未就绪'}</strong>
+              </div>
+              <div className="dc-keyvalue-row">
+                <span>模型数量</span>
+                <strong>{qgisModels?.models.length ?? 0}</strong>
+              </div>
+            </div>
           </div>
 
           <div className="dc-panel-section">
@@ -672,9 +735,25 @@ export const DetailPanel = memo(function DetailPanel({
                     <div>
                       <strong>{layer.name}</strong>
                       <span>{layer.description || `${layer.geometryType} 图层`} · {layer.category} · {layer.status}</span>
+                      <span>{formatLayerBounds(layer.bounds)} · 更新 {formatLayerUpdated(layer.updatedAt)}</span>
                     </div>
                     <div className="dc-panel-item__actions">
                       <span className="dc-pill-meta">{layer.layerKey}</span>
+                      <label className="dc-icon-button" title="替换数据" aria-label="替换数据">
+                        <RefreshCw size={16} aria-hidden="true" />
+                        <input
+                          type="file"
+                          accept=".geojson,.json,.gpkg"
+                          hidden
+                          onChange={(event) => {
+                            const file = event.target.files?.[0]
+                            if (file) {
+                              onReplaceManagedLayer(layer.layerKey, file)
+                            }
+                            event.currentTarget.value = ''
+                          }}
+                        />
+                      </label>
                       <button
                         type="button"
                         className="dc-icon-button"
@@ -704,6 +783,7 @@ export const DetailPanel = memo(function DetailPanel({
                     <div>
                       <strong>{layer.name}</strong>
                       <span>{layer.description || `${layer.geometryType} 图层`} · 当前会话</span>
+                      <span>{formatLayerBounds(layer.bounds)} · {(layer.propertySchema ?? []).length} 个字段</span>
                     </div>
                     <span className="dc-pill-meta">{layer.layerKey}</span>
                   </div>
@@ -792,9 +872,9 @@ export const DetailPanel = memo(function DetailPanel({
                 <span>模型 Provider</span>
                 <select value={provider} onChange={(event) => onProviderChange(event.target.value)}>
                   {providers.map((item) => (
-                    <option key={item.provider} value={item.provider} disabled={!item.configured}>
+                    <option key={item.provider} value={item.provider} disabled={!supportsAgentSdkLiveSupervisor(item)}>
                       {item.displayName}
-                      {!item.configured ? '（未配置）' : ''}
+                      {providerUnavailableLabel(item)}
                     </option>
                   ))}
                 </select>
@@ -877,6 +957,56 @@ function buildPublishLinks(publishResult?: Record<string, unknown> | null) {
       return [{ label, description, href: value }]
     }
     return []
+  })
+}
+
+function buildLayerSummary(layers: LayerDescriptor[]) {
+  return layers.reduce(
+    (summary, layer) => {
+      const isSessionLayer = layer.sourceType.startsWith('session_') || layer.sourceType === 'upload'
+      return {
+        total: summary.total + 1,
+        active: summary.active + (layer.status === 'active' ? 1 : 0),
+        inactive: summary.inactive + (layer.status === 'active' ? 0 : 1),
+        managed: summary.managed + (isSessionLayer ? 0 : 1),
+        session: summary.session + (isSessionLayer ? 1 : 0),
+        features: summary.features + (layer.featureCount ?? 0),
+      }
+    },
+    { total: 0, active: 0, inactive: 0, managed: 0, session: 0, features: 0 },
+  )
+}
+
+function layerStatusLabel(status: string) {
+  if (status === 'active') {
+    return '活跃'
+  }
+  if (status === 'inactive') {
+    return '停用'
+  }
+  return status || '未知'
+}
+
+function formatLayerBounds(bounds?: [number, number, number, number] | null) {
+  if (!bounds) {
+    return '无边界'
+  }
+  return bounds.map((item) => item.toFixed(4)).join(', ')
+}
+
+function formatLayerUpdated(timestamp?: string | null) {
+  if (!timestamp) {
+    return '--'
+  }
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp
+  }
+  return parsed.toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   })
 }
 

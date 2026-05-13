@@ -49,6 +49,7 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 "收到问题后，先判断意图，再决定自己直接调用工具还是分派给子智能体协作。"
                 "优先使用已经就绪的 GIS 工具，基于真实数据给出答案，不凭空构造结果。"
                 "和用户交流时像一位耐心的分析师，用清晰的中文说明你的判断和下一步。"
+                "在给出最终答案前，对照用户需求检查你的产出是否自洽——如有偏差，主动修正。"
             ),
             approval_interrupt_tools=["publish_to_qgis_project"],
         ),

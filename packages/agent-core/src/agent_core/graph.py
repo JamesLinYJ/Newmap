@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from typing import Any
 
 try:
@@ -24,6 +23,7 @@ try:
         Agent,
         FunctionTool,
         GuardrailFunctionOutput,
+        ModelSettings,
         OpenAIChatCompletionsModel,
         RawResponsesStreamEvent,
         RunConfig,
@@ -33,7 +33,7 @@ try:
     )
     from openai import AsyncOpenAI
 except ModuleNotFoundError:  # pragma: no cover - exercised by deployment smoke checks.
-    Agent = FunctionTool = GuardrailFunctionOutput = OpenAIChatCompletionsModel = RawResponsesStreamEvent = None  # type: ignore[assignment]
+    Agent = FunctionTool = GuardrailFunctionOutput = ModelSettings = OpenAIChatCompletionsModel = RawResponsesStreamEvent = None  # type: ignore[assignment]
     RunConfig = Runner = RunState = output_guardrail = None  # type: ignore[assignment]
     AsyncOpenAI = None  # type: ignore[assignment]
 
@@ -62,8 +62,6 @@ from .parser import build_execution_plan, parse_user_intent, verify_execution_pl
 from .supervisor_config import LOOP_PHASES, build_default_runtime_config
 
 logger = logging.getLogger(__name__)
-
-_FINAL_RESPONSE_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 # 统一格式化运行时错误
@@ -261,7 +259,7 @@ class GeoAgentRuntime:
             final_response = AgentFinalResponse(
                 summary="抱歉，这次分析没能完成。",
                 limitations=[formatted_error],
-                next_actions=["检查一下任务参数是否正确", "确认图层和服务是否正常", "调整后再试一次"],
+                next_actions=[],
             )
             self.store.update_run_state(run_id, errors=[formatted_error], final_response=final_response)
             final_state = self.store.get_run(run_id).state
@@ -778,7 +776,11 @@ class GeoAgentRuntime:
             repair_input = agent_input if repair_attempt == 0 else self._build_live_repair_observation(query, validation_error, run_id)
             try:
                 streaming = Runner.run_streamed(supervisor, repair_input, max_turns=50, run_config=run_config)
-                final_summary = await self._consume_oai_stream(streaming, run_id=run_id, thread_id=thread_id)
+                final_summary = await self._consume_oai_stream(
+                    streaming,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                )
                 if streaming.interruptions:
                     self._persist_sdk_approval_interruptions(
                         run_id=run_id,
@@ -790,7 +792,10 @@ class GeoAgentRuntime:
             except Exception as exc:
                 validation_error = RuntimeError(str(exc))
                 if repair_attempt >= repair_limit:
-                    raise
+                    self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1)
+                    warnings = list(self.store.get_run(run_id).state.warnings) + [f"修复已达上限（{repair_limit + 1} 轮），接受当前结果。最后一轮错误：{exc}"]
+                    self.store.update_run_state(run_id, warnings=warnings)
+                    break
                 self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1)
                 self._record_loop(run_id, thread_id, iteration=max(self.store.get_run(run_id).state.loop_iteration, 1), phase=LOOP_PHASES["observe_result"], title="执行出错，正在重试", description=f"Agent 运行异常：{exc}", status="running")
                 continue
@@ -805,7 +810,10 @@ class GeoAgentRuntime:
             except RuntimeError as exc:
                 validation_error = exc
                 if repair_attempt >= repair_limit:
-                    raise
+                    self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1)
+                    warnings = list(self.store.get_run(run_id).state.warnings) + [f"校验已达上限（{repair_limit + 1} 轮），接受当前结果。原因：{exc}"]
+                    self.store.update_run_state(run_id, warnings=warnings)
+                    break
                 self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1)
                 self._record_loop(run_id, thread_id, iteration=max(self.store.get_run(run_id).state.loop_iteration, 1), phase=LOOP_PHASES["observe_result"], title="校验结果并要求修正", description=f"校验未通过，交还 Agent 重新处理：{exc}", status="running")
 
@@ -814,14 +822,17 @@ class GeoAgentRuntime:
         if intent.publish_requested and current_state.artifacts and not any(item.status == "pending" for item in current_state.approvals):
             final_response = self._enqueue_publish_approval(run_id=run_id, thread_id=thread_id, iteration=max(current_state.loop_iteration, 1), warnings=current_state.warnings, latest_artifact_id=current_state.artifacts[-1].artifact_id)
             current_state = self.store.get_run(run_id).state
-        if final_response is not None:
-            pass
-        elif any(item.status == "pending" for item in current_state.approvals):
+        if final_response is None and any(item.status == "pending" for item in current_state.approvals):
             final_response = AgentFinalResponse(summary="分析结果已生成，需要你确认是否发布到地图服务。", limitations=current_state.warnings, next_actions=["确认发布", "先在地图上看看", "下载 GeoJSON"])
-        elif current_state.clarification and current_state.clarification.selected_option_id is None:
+        elif final_response is None and current_state.clarification and current_state.clarification.selected_option_id is None:
             final_response = AgentFinalResponse(summary=current_state.clarification.question, limitations=[], next_actions=[option.label for option in current_state.clarification.options] or ["补充说明"])
-        else:
-            final_response = self._coerce_sdk_final_response(getattr(streaming, "final_output", None), current_state, streamed_text=final_summary)
+        elif final_response is None:
+            final_response = self._coerce_sdk_final_response(
+                getattr(streaming, "final_output", None),
+                current_state,
+                streamed_text=final_summary,
+                allow_plain_text=self._allows_plain_text_final_response(provider, model_name),
+            )
             if final_response is None:
                 raise RuntimeError("OpenAI Agents SDK 没有产出合格的结构化最终答复。")
 
@@ -854,13 +865,14 @@ class GeoAgentRuntime:
         subagent_model = self._build_oai_subagent_model(provider)
         runtime_config = self._get_runtime_config()
 
-        use_sdk_output_type = self._supports_sdk_response_format(provider, model_name)
+        sdk_capabilities = self.model_registry.agents_sdk_capabilities(provider, model_name)
+        output_contract = sdk_capabilities.final_output_contract
         supervisor_base = self._build_live_supervisor_prompt(
             query=query,
             intent=intent,
             plan=plan,
             available_layers=available_layers,
-            use_sdk_output_type=use_sdk_output_type,
+            output_contract=output_contract,
         )
         thread_brief = self._build_thread_brief(run_id=run_id, thread_id=thread_id, runtime=runtime)
         instructions = f"{supervisor_base}\n\n{thread_brief}" if thread_brief else supervisor_base
@@ -885,8 +897,12 @@ class GeoAgentRuntime:
             "model": model,
             "output_guardrails": [self._build_oai_result_guardrail(run_id=run_id, intent=intent)],
         }
-        if use_sdk_output_type:
+        if output_contract == "sdk_structured":
             agent_kwargs["output_type"] = AgentFinalResponse
+        elif output_contract == "json_object":
+            model_settings = self._build_json_object_model_settings()
+            if model_settings is not None:
+                agent_kwargs["model_settings"] = model_settings
         return Agent(**agent_kwargs)
 
     def _build_oai_result_guardrail(self, *, run_id: str, intent: UserIntent):
@@ -922,7 +938,7 @@ class GeoAgentRuntime:
             return output
         return str(output or "")
 
-    def _coerce_sdk_final_response(self, output: Any, state: AgentStateModel, *, streamed_text: str = "") -> AgentFinalResponse | None:
+    def _coerce_sdk_final_response(self, output: Any, state: AgentStateModel, *, streamed_text: str = "", allow_plain_text: bool = False) -> AgentFinalResponse | None:
         if isinstance(output, AgentFinalResponse):
             final_response = output
         elif isinstance(output, dict):
@@ -936,7 +952,7 @@ class GeoAgentRuntime:
             if parsed is None and streamed_text and streamed_text != output:
                 parsed = self._decode_final_response_json(streamed_text)
             if parsed is None:
-                if not self._can_use_plain_sdk_text_as_final_response(raw_text, state):
+                if not allow_plain_text or not self._can_use_plain_sdk_text_as_final_response(raw_text, state):
                     return None
                 final_response = AgentFinalResponse(summary=raw_text, limitations=state.warnings, next_actions=[])
             else:
@@ -972,26 +988,53 @@ class GeoAgentRuntime:
 
     @staticmethod
     def _decode_final_response_json(text: str) -> dict[str, Any] | None:
-        # 非 response_format provider 的最终输出边界。
+        # JSON 最终输出边界。
         #
-        # 这里只接受完整 JSON 对象或完整 fenced JSON；不从普通自然语言里截取片段，
-        # 避免把格式错误的模型回答当成成功交付。
-        candidate = text.strip()
-        if not candidate:
-            return None
-        if candidate.startswith("```"):
-            lines = candidate.splitlines()
-            if len(lines) >= 3 and lines[0].strip() in {"```", "```json", "```JSON"} and lines[-1].strip() == "```":
-                candidate = "\n".join(lines[1:-1]).strip()
-        else:
-            fenced = _FINAL_RESPONSE_FENCE_RE.findall(candidate)
-            if len(fenced) == 1:
-                candidate = fenced[0].strip()
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
+        # 只接受完整 JSON 对象，或唯一 fenced JSON block。
+        # 多个代码块、自然语言里的零散花括号都不解析，避免把格式错误当成功。
+        for candidate in GeoAgentRuntime._final_response_json_candidates(text):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @staticmethod
+    def _final_response_json_candidates(text: str) -> list[str]:
+        raw = text.strip()
+        if not raw:
+            return []
+        candidates = [raw]
+        fenced_blocks = GeoAgentRuntime._extract_fenced_json_blocks(raw)
+        if len(fenced_blocks) == 1:
+            candidates.append(fenced_blocks[0])
+        return list(dict.fromkeys(item.strip() for item in candidates if item.strip()))
+
+    @staticmethod
+    def _extract_fenced_json_blocks(text: str) -> list[str]:
+        # fenced JSON 提取不靠贪婪正则。
+        #
+        # 只接受 ``` 或 ```json 开头的代码块；调用方会要求唯一 block。
+        blocks: list[str] = []
+        lines = text.splitlines()
+        in_block = False
+        buffer: list[str] = []
+        for line in lines:
+            marker = line.strip()
+            if not in_block and marker in {"```", "```json", "```JSON"}:
+                in_block = True
+                buffer = []
+                continue
+            if in_block and marker == "```":
+                blocks.append("\n".join(buffer).strip())
+                in_block = False
+                buffer = []
+                continue
+            if in_block:
+                buffer.append(line)
+        return [item for item in blocks if item]
 
     def _build_oai_run_config(self, *, run_id: str, thread_id: str | None):
         if RunConfig is None:
@@ -1152,7 +1195,11 @@ class GeoAgentRuntime:
                 max_turns=50,
                 run_config=self._build_oai_run_config(run_id=run.id, thread_id=run.thread_id),
             )
-            final_summary = await self._consume_oai_stream(streaming, run_id=run.id, thread_id=run.thread_id)
+            final_summary = await self._consume_oai_stream(
+                streaming,
+                run_id=run.id,
+                thread_id=run.thread_id,
+            )
             if streaming.interruptions:
                 self._persist_sdk_approval_interruptions(
                     run_id=run.id,
@@ -1166,7 +1213,12 @@ class GeoAgentRuntime:
             if self._is_text_delivery_allowed(intent, current_state, final_summary):
                 current_state = self.store.update_run_state(run.id, text_only_delivery=True).state
             self._ensure_live_result_is_actionable(current_state, intent, final_summary)
-            final_response = self._coerce_sdk_final_response(getattr(streaming, "final_output", None), current_state, streamed_text=final_summary)
+            final_response = self._coerce_sdk_final_response(
+                getattr(streaming, "final_output", None),
+                current_state,
+                streamed_text=final_summary,
+                allow_plain_text=self._allows_plain_text_final_response(run.model_provider or self.model_registry.default_provider, run.model_name),
+            )
             if final_response is None:
                 raise RuntimeError("OpenAI Agents SDK 没有产出合格的结构化最终答复。")
             self.store.update_run_state(run.id, final_response=final_response)
@@ -1185,7 +1237,7 @@ class GeoAgentRuntime:
             final_response = AgentFinalResponse(
                 summary="审批后的继续执行失败。",
                 limitations=[*state.warnings, formatted_error],
-                next_actions=["重试审批动作", "查看已有地图结果", "下载 GeoJSON"],
+                next_actions=[],
             )
             self.store.update_run_state(run.id, approvals=approvals, errors=[*state.errors, formatted_error], final_response=final_response)
             final_state = self.store.get_run(run.id).state
@@ -1225,21 +1277,7 @@ class GeoAgentRuntime:
             self._append_event(run_id, thread_id, EventType.THINKING_DELTA, iter_thinking, payload={"_done": True, "_startedAt": thinking_started_at or now_utc()})
         streamed = final_summary.strip()
         final_output = self._extract_sdk_final_summary(streaming.final_output)
-        return streamed or final_output or self._extract_reasoning_delivery_text(iter_thinking)
-
-    @staticmethod
-    def _extract_reasoning_delivery_text(reasoning_text: str) -> str:
-        # DeepSeek/OpenAI-compatible 兼容边界。
-        #
-        # 部分 endpoint 会把直接答复放在 reasoning delta，content/final_output 为空。
-        # 这里只在没有正式文本时提取“推理说明之后的可见答复段”，不把整段推理当成结论。
-        normalized = reasoning_text.strip()
-        if not normalized:
-            return ""
-        paragraphs = [part.strip() for part in normalized.split("\n\n") if part.strip()]
-        if len(paragraphs) >= 2 and ("用户" in paragraphs[0] or "问题" in paragraphs[0]):
-            return "\n\n".join(paragraphs[1:]).strip()
-        return normalized
+        return streamed or final_output
 
     def _build_thread_brief(
         self,
@@ -1536,41 +1574,62 @@ class GeoAgentRuntime:
             on_invoke_tool=_tool_handler,
             strict_json_schema=False,
             needs_approval=tool_name in set(self._get_runtime_config().supervisor.approval_interrupt_tools),
+            timeout_seconds=self._SDK_TOOL_TIMEOUT_SECONDS,
+            timeout_behavior="raise_exception",
         )
 
     _LLM_TIMEOUT_SECONDS = 120
+    _SDK_TOOL_TIMEOUT_SECONDS = 120
 
     def _supports_sdk_response_format(self, provider: str, model_name: str | None = None) -> bool:
-        # SDK structured output 能力边界。
+        # SDK structured output 能力边界由 model adapter 声明。
         #
-        # Agents SDK 的 output_type 会在 Chat Completions 请求里启用 response_format。
-        # DeepSeek 等 OpenAI-compatible endpoint 目前会返回 unavailable；这些 provider
-        # 仍使用 SDK agent loop / tool / approval / guardrail，但最终 JSON 由文本边界解析。
+        # graph.py 不再靠 URL 字符串猜 provider；运行时只消费 registry 给出的事实。
+        return self.model_registry.supports_agents_sdk_structured_output(provider, model_name)
+
+    def _supports_json_object_response_format(self, provider: str, model_name: str | None = None) -> bool:
+        return self.model_registry.supports_agents_sdk_json_object_output(provider, model_name)
+
+    def _allows_plain_text_final_response(self, provider: str, model_name: str | None = None) -> bool:
+        caps = self.model_registry.agents_sdk_capabilities(provider, model_name)
+        return caps.final_output_contract == "plain_text"
+
+    @staticmethod
+    def _build_json_object_model_settings():
+        # DeepSeek JSON Output 契约。
+        #
+        # Agents SDK 的 output_type 会发送 json_schema；DeepSeek 当前支持的是
+        # json_object。这里通过 SDK ModelSettings.extra_body 显式启用 provider
+        # 支持的 response_format，而不是在失败后猜测补救。
+        if ModelSettings is None:
+            return None
+        return ModelSettings(extra_body={"response_format": {"type": "json_object"}})
+
+    def _resolve_oai_live_adapter(self, provider: str):
+        # SDK 主路径 provider 解析。
+        #
+        # 配置缺失、provider 不支持和模型缺失要在平台边界直接报清楚，
+        # 不把这些问题延迟到 SDK HTTP 请求阶段。
         try:
             adapter = self.model_registry.resolve_provider(provider)
-        except Exception:
-            return False
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
         if adapter.provider != "openai_compatible":
-            return False
-        base_url = str(getattr(adapter, "base_url", "") or "").lower()
-        model = (model_name or getattr(adapter, "default_model", "") or "").lower()
-        if "deepseek" in base_url or "deepseek" in model:
-            return False
-        return "api.openai.com" in base_url
+            raise RuntimeError(f"provider '{adapter.provider}' 当前不能接入 OpenAI Agents SDK live supervisor；请选择 openai_compatible。")
+        if not getattr(adapter, "base_url", None):
+            raise RuntimeError("openai_compatible provider 缺少 base_url，无法启动 OpenAI Agents SDK live supervisor。")
+        if not getattr(adapter, "api_key", None):
+            raise RuntimeError("openai_compatible provider 缺少 api_key，无法启动 OpenAI Agents SDK live supervisor。")
+        return adapter
 
     def _build_oai_model(self, provider: str, model_name: str | None) -> OpenAIChatCompletionsModel | None:
         """为 OpenAI-compatible provider 构建 OAI SDK 模型实例。"""
-        if OpenAIChatCompletionsModel is None:
+        if OpenAIChatCompletionsModel is None or AsyncOpenAI is None:
             return None
-        try:
-            adapter = self.model_registry.resolve_provider(provider)
-        except Exception:
-            return None
-        if adapter.provider != "openai_compatible":
-            return None
+        adapter = self._resolve_oai_live_adapter(provider)
         resolved_model_name = model_name or getattr(adapter, "default_model", None)
         if not resolved_model_name:
-            return None
+            raise RuntimeError("openai_compatible provider 缺少模型名，无法启动 OpenAI Agents SDK live supervisor。")
         client = AsyncOpenAI(
             base_url=adapter.base_url,
             api_key=adapter.api_key,
@@ -1581,14 +1640,9 @@ class GeoAgentRuntime:
 
     def _build_oai_subagent_model(self, provider: str) -> OpenAIChatCompletionsModel | None:
         """为子智能体构建模型，使用配置的子智能体模型名。"""
-        if OpenAIChatCompletionsModel is None:
+        if OpenAIChatCompletionsModel is None or AsyncOpenAI is None:
             return None
-        try:
-            adapter = self.model_registry.resolve_provider(provider)
-        except Exception:
-            return None
-        if adapter.provider != "openai_compatible":
-            return None
+        adapter = self._resolve_oai_live_adapter(provider)
         subagent_model_name = getattr(adapter, "subagent_model_name", None) or getattr(adapter, "default_model", None)
         if not subagent_model_name:
             return None
@@ -1600,7 +1654,7 @@ class GeoAgentRuntime:
         )
         return OpenAIChatCompletionsModel(model=subagent_model_name, openai_client=client)
 
-    def _build_live_supervisor_prompt(self, *, query: str, intent: UserIntent, plan: ExecutionPlan, available_layers: list[str], use_sdk_output_type: bool) -> str:
+    def _build_live_supervisor_prompt(self, *, query: str, intent: UserIntent, plan: ExecutionPlan, available_layers: list[str], output_contract: str) -> str:
         # live supervisor prompt 只负责角色、约束和当前任务边界，
         # 不在这里重复塞整套状态快照，避免 prompt 与上下文文件职责重叠。
         runtime_config = self._get_runtime_config()
@@ -1636,7 +1690,7 @@ class GeoAgentRuntime:
                 "## 当前可用 layer_key",
             ]
         )
-        if use_sdk_output_type:
+        if output_contract == "sdk_structured":
             lines.extend(
                 [
                     "",
@@ -1644,15 +1698,24 @@ class GeoAgentRuntime:
                     "- 最终交付必须使用 SDK 配置的结构化输出格式，字段为 summary、limitations、nextActions；不要在最终输出里返回 Markdown 代码块。",
                 ]
             )
+        elif output_contract == "json_object":
+            lines.extend(
+                [
+                    "",
+                    "## 最终输出格式",
+                    "- 当前 provider 使用 Chat Completions JSON mode；Agents SDK 仍负责工具、handoff、审批和 guardrail。",
+                    '- 最终交付必须只输出一个 JSON 对象，不要写 Markdown，不要写代码块，不要在 JSON 前后添加说明。',
+                    '- JSON 字段固定为：{"summary":"中文结论","limitations":[],"nextActions":[]}',
+                    "- limitations 和 nextActions 必须是字符串数组；没有限制或下一步建议时使用空数组。",
+                ]
+            )
         else:
             lines.extend(
                 [
                     "",
                     "## 最终输出格式",
-                    "- 当前 provider 不支持 SDK response_format，但仍由 Agents SDK 负责工具、handoff、审批和 guardrail。",
-                    '- 最终交付必须只输出一个 JSON 对象，不要写 Markdown，不要写代码块，不要在 JSON 前后添加说明。',
-                    '- JSON 字段固定为：{"summary":"中文结论","limitations":[],"nextActions":[]}',
-                    "- limitations 和 nextActions 必须是字符串数组；没有限制或下一步建议时使用空数组。",
+                    "- 当前 provider 没有声明可用 response_format；最终答复可以是中文自然语言。",
+                    "- 空间分析仍必须先通过真实工具、artifact 或审批状态证明，不能只靠文本交付。",
                 ]
             )
         lines.extend(f"- {item}" for item in available_layers[:20])
@@ -1702,7 +1765,7 @@ class GeoAgentRuntime:
             for a in artifacts:
                 lines.append(f"  - {a.name}，通过 artifactId={a.artifact_id} 引用")
         lines.extend([
-            "请基于以上事实重新处理：",
+            "请基于以上事实重新处理，对照用户需求检查产出是否自洽：",
             "- 地点问答 → 调用 geocode_place 拿到坐标，或给出自然的位置说明。",
             "- 空间分析 → 使用真实工具和已有的 referenceId / artifactId / layerKey。",
             '- 不要只回复过程描述或一句「分析已完成」。',

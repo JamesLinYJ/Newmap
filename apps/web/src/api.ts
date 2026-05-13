@@ -30,28 +30,18 @@ import type {
 
 // API 地址解析
 //
-// 优先尊重显式的 VITE_API_BASE_URL；
-// 未配置时自动跟随当前页面主机名，只把端口收口到 API 默认端口。
-export function deriveApiBaseUrl(envBaseUrl?: string, locationLike?: Pick<Location, 'origin' | 'protocol' | 'hostname' | 'port'>) {
-  if (envBaseUrl?.trim()) {
-    return envBaseUrl.trim().replace(/\/+$/u, '')
+// 前端不推断 API 端口：显式 VITE_API_BASE_URL 代表跨端口/跨域 API；
+// 未配置时使用同源相对路径，由部署入口或 Vite proxy 决定实际后端。
+export function deriveApiBaseUrl(envBaseUrl?: string) {
+  const explicit = envBaseUrl?.trim()
+  if (!explicit || explicit === '/') {
+    return ''
   }
-
-  if (!locationLike || !locationLike.hostname || locationLike.protocol === 'file:') {
-    return 'http://localhost:8000'
-  }
-
-  if (locationLike.port === '8000') {
-    return locationLike.origin.replace(/\/+$/u, '')
-  }
-
-  return `${locationLike.protocol}//${locationLike.hostname}:8000`
+  return explicit.replace(/\/+$/u, '')
 }
 
-const API_BASE_URL = deriveApiBaseUrl(
-  import.meta.env.VITE_API_BASE_URL,
-  typeof window !== 'undefined' ? window.location : undefined,
-)
+const API_BASE_URL = deriveApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
+const API_BASE_LABEL = API_BASE_URL || '同源相对地址'
 
 export const apiBaseUrl = API_BASE_URL
 
@@ -104,7 +94,7 @@ async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 30_0
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error(formatApiErrorMessage(`请求超时（${path}），请检查 API 服务是否响应正常。`, detail))
     }
-    throw new Error(formatApiErrorMessage(`暂时无法连接分析服务，请确认本地 API 或部署环境已经启动（接口：${path}，当前地址：${API_BASE_URL}）`, detail))
+    throw new Error(formatApiErrorMessage(`暂时无法连接分析服务，请确认本地 API 或部署代理已经启动（接口：${path}，当前地址：${API_BASE_LABEL}）`, detail))
   } finally {
     clearTimeout(timer)
   }

@@ -34,12 +34,27 @@ interface RunState {
   isSubmitting: boolean
   uiError?: string
   seenEventIds: Set<string>
+  placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null
+  featureCount?: number
 }
 
 const MAX_EVENTS = 1000
 
 function initialState(): RunState {
   return { events: [], artifacts: [], isSubmitting: false, seenEventIds: new Set() }
+}
+
+function formatHydrationError(error: unknown) {
+  // hydrate 错误必须显式浮出到 UI。
+  //
+  // 完成态快照是最终结果和 artifact 的事实来源；失败时不能静默吞掉。
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error
+  }
+  return '刷新运行状态失败。'
 }
 
 // Reducer 只做纯状态转移
@@ -56,11 +71,13 @@ type RunAction =
   | { type: 'SET_INTENT'; intent: UserIntent }
   | { type: 'SET_PLAN'; plan: ExecutionPlan }
   | { type: 'APPEND_ARTIFACT'; artifact: ArtifactRef }
+  | { type: 'SET_PLACE_RESOLUTION'; placeResolution: RunState['placeResolution'] }
 
 function runReducer(state: RunState, action: RunAction): RunState {
   switch (action.type) {
     case 'SET_RUN': {
       const isDifferentRun = state.run?.id !== action.run.id
+      const isRunning = action.run.status === 'running'
       return {
         ...state,
         run: action.run,
@@ -68,6 +85,9 @@ function runReducer(state: RunState, action: RunAction): RunState {
         intent: action.intent,
         executionPlan: action.plan,
         artifacts: action.artifacts ?? [],
+        placeResolution: action.agentState.placeResolution ?? state.placeResolution,
+        isSubmitting: isDifferentRun ? isRunning : isRunning ? state.isSubmitting : false,
+        uiError: isDifferentRun ? undefined : state.uiError,
         events: isDifferentRun ? [] : state.events,
         seenEventIds: isDifferentRun ? new Set() : state.seenEventIds,
       }
@@ -79,12 +99,12 @@ function runReducer(state: RunState, action: RunAction): RunState {
       }
     case 'APPEND_EVENT': {
       if (state.seenEventIds.has(action.event.eventId)) return state
-      const next = new Set(state.seenEventIds)
-      next.add(action.event.eventId)
-      const events = state.events.length >= MAX_EVENTS
-        ? [...state.events.slice(-MAX_EVENTS / 2), action.event]
-        : [...state.events, action.event]
-      return { ...state, events, seenEventIds: next }
+      const retainedEvents = state.events.length >= MAX_EVENTS
+        ? state.events.slice(-(MAX_EVENTS - 1))
+        : state.events
+      const events = [...retainedEvents, action.event]
+      const seenEventIds = new Set(events.map((event) => event.eventId))
+      return { ...state, events, seenEventIds }
     }
     case 'SET_SUBMITTING':
       return { ...state, isSubmitting: action.value }
@@ -101,6 +121,8 @@ function runReducer(state: RunState, action: RunAction): RunState {
           ? state.artifacts
           : [...state.artifacts, action.artifact],
       }
+    case 'SET_PLACE_RESOLUTION':
+      return { ...state, placeResolution: action.placeResolution }
     default:
       return state
   }
@@ -157,20 +179,19 @@ export function useRunState() {
 
   const finishRun = useCallback(async (runId: string) => {
     try {
-      await getRun(runId).then((latestRun) => {
-        startTransition(() => {
-          dispatch({
-            type: 'SET_RUN',
-            run: latestRun,
-            agentState: latestRun.state,
-            intent: latestRun.state.parsedIntent,
-            plan: latestRun.state.executionPlan,
-            artifacts: latestRun.state.artifacts,
-          })
+      const latestRun = await getRun(runId)
+      startTransition(() => {
+        dispatch({
+          type: 'SET_RUN',
+          run: latestRun,
+          agentState: latestRun.state,
+          intent: latestRun.state.parsedIntent,
+          plan: latestRun.state.executionPlan,
+          artifacts: latestRun.state.artifacts,
         })
       })
-    } catch {
-      // hydrate on finish is best-effort
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', error: formatHydrationError(error) })
     } finally {
       dispatch({ type: 'SET_SUBMITTING', value: false })
     }
@@ -194,7 +215,7 @@ export function useRunState() {
 
   // SSE connection
   useEffect(() => {
-    if (!runId || runStatus !== 'running') return
+    if (!runId) return
 
     let source: EventSource | undefined
     let reconnectTimer: number | undefined
@@ -223,6 +244,20 @@ export function useRunState() {
               startTransition(() => dispatch({ type: 'APPEND_ARTIFACT', artifact }))
             }
           }
+          // 工具完成后，通用提取坐标数据驱动地图飞行（不针对特定工具）
+          if (event.type === 'tool.completed' && event.payload) {
+            const p = event.payload as Record<string, unknown>
+            const result = p.result as Record<string, unknown> | undefined
+            const selected = result?.selected as Record<string, unknown> | undefined
+            const lat = selected?.latitude ?? result?.latitude ?? result?.center_lat ?? result?.lat
+            const lng = selected?.longitude ?? result?.longitude ?? result?.center_lng ?? result?.lng
+            if (typeof lat === 'number' && typeof lng === 'number') {
+              startTransition(() => dispatch({
+                type: 'SET_PLACE_RESOLUTION',
+                placeResolution: { status: 'resolved', selected: { latitude: lat, longitude: lng } },
+              }))
+            }
+          }
           if (event.type === 'warning.raised') {
             dispatch({ type: 'SET_ERROR', error: undefined })
           }
@@ -249,14 +284,23 @@ export function useRunState() {
                   })
                 })
               })
-              .catch(() => {})
+              .catch((error) => {
+                if (disposed) return
+                dispatch({ type: 'SET_ERROR', error: formatHydrationError(error) })
+              })
               .finally(() => {
                 dispatch({ type: 'SET_SUBMITTING', value: false })
               })
           }
         },
         () => {
-          if (disposed || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return
+          if (disposed) return
+          if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            dispatch({ type: 'SET_ERROR', error: '事件流连续断开，已停止等待实时更新。' })
+            dispatch({ type: 'SET_SUBMITTING', value: false })
+            source?.close()
+            return
+          }
           reconnectAttempts += 1
           const delay = Math.min(1500 * Math.pow(2, reconnectAttempts - 1), 30000)
           getRun(runId)
@@ -305,6 +349,7 @@ export function useRunState() {
     artifacts: state.artifacts,
     isSubmitting: state.isSubmitting,
     uiError: state.uiError,
+    placeResolution: state.placeResolution,
     clearRun,
     hydrateRun,
     acceptRun,

@@ -74,6 +74,7 @@
   .dc-result-item,
   .dc-service-item,
   .dc-layer-reference,
+  .dc-layer-fields,
   .dc-layer-manager__item,
   .dc-layer-manager__icon,
   .dc-icon-button,
@@ -419,6 +420,10 @@
     @apply grid-cols-2;
   }
 
+  .dc-keyvalue-list--compact {
+    @apply grid-cols-2;
+  }
+
   .dc-form-grid {
     @apply sm:grid-cols-2;
   }
@@ -562,6 +567,10 @@
 
   .dc-layer-manager__slider input {
     @apply h-2 w-full cursor-pointer appearance-none rounded-full bg-black/10 accent-[#1c1c1e];
+  }
+
+  .dc-layer-fields {
+    @apply grid gap-1 rounded-[14px] border border-white/30 bg-white/24 p-3 text-[12px] leading-relaxed text-[#596273];
   }
 
   .dc-layer-import {
@@ -1156,6 +1165,10 @@
       #f2f2f7;
   }
 
+  .dc-map-stage--loading {
+    @apply grid min-h-[min(72vh,760px)] place-items-center text-[15px] font-semibold text-slate-500;
+  }
+
   .dc-map-stage__wash {
     @apply pointer-events-none absolute inset-0 z-[3];
     background:
@@ -1206,7 +1219,19 @@
   }
 
   .dc-map-stage__legend-item strong {
-    @apply truncate;
+    @apply truncate max-w-[160px];
+  }
+
+  .dc-map-stage__legend-dot {
+    @apply size-[9px] shrink-0 rounded-full;
+  }
+
+  .dc-map-stage__legend-count {
+    @apply ml-auto rounded-full bg-black/[0.06] px-1.5 py-px text-[10px] font-medium text-[#6e7681];
+  }
+
+  .dc-map-stage__legend-item em {
+    @apply rounded-full bg-amber-400/30 px-1.5 py-px text-[10px] not-italic text-amber-700;
   }
 
   .dc-map-stage__legend-item em {
@@ -1301,6 +1326,35 @@
     @apply hidden;
   }
 
+  /* ── 悬停气泡 ────────────────────────────── */
+  .dc-map-stage__hover-popup {
+    @apply z-10 pointer-events-none;
+  }
+
+  .dc-map-stage__hover-popup .maplibregl-popup-content {
+    @apply rounded-[10px] border border-white/30 bg-white/82 px-2.5 py-1.5 text-[12px] leading-tight text-[#1c1c1e] shadow-[0_4px_12px_rgb(15_23_42/0.10)] backdrop-blur-lg;
+  }
+
+  .dc-map-stage__hover-popup .maplibregl-popup-tip {
+    @apply hidden;
+  }
+
+  .dc-hover-popup {
+    @apply flex items-center gap-1.5 whitespace-nowrap;
+  }
+
+  .dc-hover-popup strong {
+    @apply font-semibold;
+  }
+
+  .dc-hover-category {
+    @apply rounded-full bg-black/[0.06] px-1.5 py-px text-[11px] text-[#6e7681];
+  }
+
+  .dc-null {
+    @apply text-[#8e8e93] not-italic;
+  }
+
   .maplibregl-popup-content {
     @apply rounded-[20px] bg-transparent p-0 shadow-none;
   }
@@ -1338,6 +1392,7 @@
   .dc-result-item,
   .dc-service-item,
   .dc-layer-reference,
+  .dc-layer-fields,
   .dc-layer-manager__item,
   .dc-layer-manager__icon,
   .dc-icon-button,

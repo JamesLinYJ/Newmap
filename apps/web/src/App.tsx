@@ -54,6 +54,7 @@ import {
   listSessionRuns,
   listQgisModels,
   publishArtifact,
+  replaceManagedLayer,
   resolveApproval,
   runQgisModel,
   runQgisProcess,
@@ -74,8 +75,8 @@ import { useRunState } from './hooks/useRunState'
 import { ChatPanel } from './components/ChatPanel'
 import { DetailPanel } from './components/DetailPanel'
 import { AppIcon, type AppIconName } from './components/AppIcon'
-import { MapCanvas } from './components/MapCanvas'
 import { TopBar } from './components/TopBar'
+import { supportsAgentSdkLiveSupervisor } from './providerCapabilities'
 import { buildWorkspaceShareUrl, readWorkspacePointer, syncCleanWorkspaceUrl } from './workspacePointer'
 
 type PrimaryNav = 'analysis' | 'layers' | 'history' | 'compute'
@@ -93,6 +94,7 @@ interface MapRenderLayer {
 }
 
 const DebugPage = lazy(() => import('./components/DebugPage').then((module) => ({ default: module.DebugPage })))
+const MapCanvas = lazy(() => import('./components/MapCanvas').then((module) => ({ default: module.MapCanvas })))
 
 const SIDEBAR_ITEMS: Array<{ id: SidebarItemId; icon: AppIconName; label: string; shortLabel: string }> = [
   { id: 'assistant', icon: 'psychology', label: '智能指令', shortLabel: '助手' },
@@ -108,14 +110,21 @@ const SAMPLE_QUERIES = [
   '帮我查一下 Springfield 在哪里',
 ] as const
 
-function formatUiError(error: unknown, fallback: string) {
+function formatUiError(error: unknown, defaultMessage: string) {
   if (error instanceof Error && error.message.trim()) {
     return error.message
   }
   if (typeof error === 'string' && error.trim()) {
     return error
   }
-  return fallback
+  return defaultMessage
+}
+
+function reportNonBlockingError(scope: string, error: unknown) {
+  // 非阻断刷新失败不覆盖主任务状态。
+  //
+  // 但失败必须留下诊断线索，避免历史列表或辅助面板悄悄停更。
+  console.warn(`[${scope}]`, error)
 }
 
 function useStableVoid<Args extends unknown[]>(fn: (...args: Args) => Promise<void>): (...args: Args) => void {
@@ -165,6 +174,7 @@ function App() {
   const {
     run, agentState, intent, executionPlan,
     events, artifacts, isSubmitting, uiError,
+    placeResolution,
     clearRun,
     hydrateRun,
     acceptRun,
@@ -321,7 +331,7 @@ function App() {
       }
 
       if (latestRun.sessionId) {
-        void refreshSessionHistory(latestRun.sessionId).catch(() => {})
+        void refreshSessionHistory(latestRun.sessionId).catch((error) => reportNonBlockingError('refreshSessionHistory:hydrateRunState', error))
       }
 
       syncUrl(latestRun.sessionId, latestRun.id, latestRun.threadId ?? undefined)
@@ -458,7 +468,7 @@ function App() {
           }
         })
 
-        void refreshSessionHistory(sessionRecord.id).catch(() => {})
+        void refreshSessionHistory(sessionRecord.id).catch((error) => reportNonBlockingError('refreshSessionHistory:bootstrap', error))
 
         const threadToRestore = threadId || undefined
         const runToRestore = runId || undefined
@@ -518,8 +528,8 @@ function App() {
         startTransition(() => {
           setProviders(providerList ?? [])
           const preferred =
-            providerList.find((item) => item.provider === 'openai_compatible' && item.configured) ??
-            providerList.find((item) => item.configured) ??
+            providerList.find((item) => item.provider === 'openai_compatible' && supportsAgentSdkLiveSupervisor(item)) ??
+            providerList.find((item) => supportsAgentSdkLiveSupervisor(item)) ??
             providerList[0]
 
           if (preferred) {
@@ -528,8 +538,10 @@ function App() {
           }
         })
       })
-      .catch(() => {})
-  }, [])
+      .catch((error) => {
+        setUiError(formatUiError(error, '模型提供方加载失败。'))
+      })
+  }, [setUiError])
 
   useEffect(() => {
     void getRuntimeConfig()
@@ -538,8 +550,10 @@ function App() {
           setRuntimeConfig(loadedRuntimeConfig)
         })
       })
-      .catch(() => {})
-  }, [])
+      .catch((error) => {
+        setUiError(formatUiError(error, '运行时配置加载失败。'))
+      })
+  }, [setUiError])
 
   useEffect(() => {
     // 工具目录预加载
@@ -552,8 +566,10 @@ function App() {
           setAvailableTools(tools ?? [])
         })
       })
-      .catch(() => {})
-  }, [])
+      .catch((error) => {
+        setUiError(formatUiError(error, '工具目录加载失败。'))
+      })
+  }, [setUiError])
 
   useEffect(() => {
     // 调试/计算工具预加载
@@ -667,6 +683,10 @@ function App() {
           setUiError(`${selectedProvider.displayName} 还没配置好，暂时没法提交分析。`)
           return
         }
+        if (selectedProvider && !supportsAgentSdkLiveSupervisor(selectedProvider)) {
+          setUiError(`${selectedProvider.displayName} 当前不是 Agent SDK 主路径，不能提交分析。`)
+          return
+        }
         setUiError(undefined)
         startRun()
         if (updateComposer) {
@@ -691,7 +711,7 @@ function App() {
           setActiveThreadId(nextThreadId)
           setThreadRuns((current) => (nextThreadId && !forceNewThread ? mergeThreadRuns(current, createdRun) : [createdRun]))
         })
-        void refreshSessionHistory(session.id).catch(() => {})
+        void refreshSessionHistory(session.id).catch((error) => reportNonBlockingError('refreshSessionHistory:submitMessage', error))
         syncUrl(session.id, createdRun.id, nextThreadId)
       } catch (error) {
         setUiError(formatUiError(error, clarificationOptionId ? '回复提交失败，请重试。' : '任务提交失败，请重试。'))
@@ -787,6 +807,22 @@ function App() {
         await refreshLayers()
       } catch (error) {
         setUiError(formatUiError(error, '图层状态更新失败，请再试一次。'))
+      }
+    },
+    [refreshLayers, setUiError],
+  )
+
+  const handleReplaceManagedLayer = useCallback(
+    async (layerKey: string, file: File) => {
+      try {
+        setUiError(undefined)
+        setActiveNav('layers')
+        setPanelMode('sources')
+        setActiveSidebarItem('sources')
+        await replaceManagedLayer(layerKey, file)
+        await refreshLayers()
+      } catch (error) {
+        setUiError(formatUiError(error, '图层数据替换失败，请再试一次。'))
       }
     },
     [refreshLayers, setUiError],
@@ -1235,7 +1271,7 @@ function App() {
                     </m.article>
                   </m.section>
                   <m.div
-                    className="workspace-grid grid min-h-[calc(100vh-64px-44px)] grid-cols-[minmax(320px,0.82fr)_minmax(620px,1.85fr)_minmax(320px,0.92fr)] items-start gap-4"
+                    className="workspace-grid grid min-h-[calc(100vh-64px-44px)] grid-cols-[minmax(240px,0.78fr)_minmax(480px,1.82fr)_minmax(240px,0.84fr)] items-start gap-4"
                     variants={workspaceListVariants}
                     initial="hidden"
                     animate="visible"
@@ -1274,17 +1310,20 @@ function App() {
                     </m.div>
 
                     <m.div className="min-w-0" layout variants={workspaceItemVariants}>
-                      <MapCanvas
-                        artifactCount={artifacts.length}
-                        basemaps={basemaps}
-                        runStatus={run?.status}
-                        selectedBasemapKey={selectedBasemapKey}
-                        onSelectBasemap={setSelectedBasemapKey}
-                        layers={mapLayers}
-                        selectedArtifactId={selectedArtifactId}
-                        selectedArtifactName={selectedArtifact?.name}
-                        onSelectArtifact={setSelectedArtifactId}
-                      />
+                      <Suspense fallback={<div className="dc-map-stage dc-map-stage--loading">正在加载地图…</div>}>
+                        <MapCanvas
+                          artifactCount={artifacts.length}
+                          basemaps={basemaps}
+                          runStatus={run?.status}
+                          selectedBasemapKey={selectedBasemapKey}
+                          onSelectBasemap={setSelectedBasemapKey}
+                          layers={mapLayers}
+                          selectedArtifactId={selectedArtifactId}
+                          selectedArtifactName={selectedArtifact?.name}
+                          onSelectArtifact={setSelectedArtifactId}
+                          placeResolution={placeResolution}
+                        />
+                      </Suspense>
                     </m.div>
 
                     <m.div className="min-w-0" layout variants={workspaceItemVariants} transition={motionSpring.gentle}>
@@ -1337,6 +1376,9 @@ function App() {
                         }}
                         onImportManagedLayer={(file) => {
                           void handleImportManagedLayer(file)
+                        }}
+                        onReplaceManagedLayer={(layerKey, file) => {
+                          void handleReplaceManagedLayer(layerKey, file)
                         }}
                         onToggleLayerStatus={(layerKey, nextStatus) => {
                           void handleToggleLayerStatus(layerKey, nextStatus)

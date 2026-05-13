@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
 import maplibregl, { LngLatBounds, Map, type StyleSpecification } from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import { Ruler } from 'lucide-react'
 
 import type { ArtifactRef, BasemapDescriptor } from '@geo-agent-platform/shared-types'
@@ -48,6 +49,7 @@ interface MapCanvasProps {
   selectedArtifactId?: string
   selectedArtifactName?: string
   onSelectArtifact: (artifactId: string) => void
+  placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null
 }
 
 export function MapCanvas({
@@ -58,6 +60,7 @@ export function MapCanvas({
   selectedArtifactId,
   selectedArtifactName,
   onSelectArtifact,
+  placeResolution,
 }: MapCanvasProps) {
   // 地图主画布
   //
@@ -69,6 +72,8 @@ export function MapCanvas({
   const boundsRef = useRef<LngLatBounds | null>(null)
   const appliedBasemapKeyRef = useRef<string | null>(null)
   const popupRef = useRef<maplibregl.Popup | null>(null)
+  const hoverPopupRef = useRef<maplibregl.Popup | null>(null)
+  const hoverTimerRef = useRef<number | null>(null)
   const manualDragRef = useRef<MapManualDragState | null>(null)
   const suppressNextMapClickRef = useRef(false)
   const measureModeRef = useRef(false)
@@ -121,6 +126,21 @@ export function MapCanvas({
 
     map.flyTo({ center: [121.4737, 31.2304], zoom: 11.2 })
   }, [layers, selectedArtifactId])
+
+  // 地点解析成功后自动飞行到目标坐标
+  const lastFlownRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!placeResolution || placeResolution.status !== 'resolved') return
+    const lat = placeResolution.selected?.latitude
+    const lng = placeResolution.selected?.longitude
+    if (lat == null || lng == null) return
+    const key = `${lat},${lng}`
+    if (key === lastFlownRef.current) return
+    lastFlownRef.current = key
+    const map = mapRef.current
+    if (!map) return
+    map.flyTo({ center: [lng, lat], zoom: 14, duration: 1200 })
+  }, [placeResolution])
 
   const handlePointerMove = useCallback((lng: number, lat: number) => {
     setCursor(`${lng.toFixed(4)}, ${lat.toFixed(4)}`)
@@ -330,6 +350,24 @@ export function MapCanvas({
         }
         const features = queryRenderedArtifactFeatures(map, event.point)
         map.getCanvas().style.cursor = features.length ? 'pointer' : ''
+
+        // 悬停气泡：停留 250ms 后显示要素摘要，移动即清除
+        if (hoverTimerRef.current) { window.clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null }
+        hoverPopupRef.current?.remove()
+        hoverPopupRef.current = null
+        const hoverFeature = features[0]
+        if (hoverFeature) {
+          hoverTimerRef.current = window.setTimeout(() => {
+            if (!mapRef.current) return
+            hoverPopupRef.current = new maplibregl.Popup({
+              closeButton: false, closeOnClick: false, offset: 6,
+              className: 'dc-map-stage__hover-popup',
+            })
+              .setLngLat(event.lngLat)
+              .setHTML(buildHoverPopupHtml(hoverFeature))
+              .addTo(mapRef.current)
+          }, 250)
+        }
       })
       map.on('mousedown', () => setInteractionHint('正在拖拽地图'))
       map.on('mouseup', () => setInteractionHint(measureModeRef.current ? '测距模式已开启，点击地图继续加点' : '拖拽平移 · 滚轮缩放 · 点击对象查看详情'))
@@ -400,6 +438,9 @@ export function MapCanvas({
         mapResizeObserver?.disconnect()
         popupRef.current?.remove()
         popupRef.current = null
+        hoverPopupRef.current?.remove()
+        hoverPopupRef.current = null
+        if (hoverTimerRef.current) { window.clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null }
         mapRef.current.remove()
         mapRef.current = null
       }
@@ -516,21 +557,25 @@ export function MapCanvas({
       <AnimatePresence initial={false}>
       {layers.length && showLayerLegend ? (
         <m.div className="dc-map-stage__legend" aria-label="地图图层摘要" layout {...buildFadeUpMotion(reducedMotion, 0.14, 10)}>
-          {layers.map(({ artifact, visible }) => (
-            <m.button
-              key={artifact.artifactId}
-              type="button"
-              className={`dc-map-stage__legend-item${
-                artifact.artifactId === selectedArtifactId ? ' dc-map-stage__legend-item--active' : ''
-              }`}
-              onClick={() => onSelectArtifact(artifact.artifactId)}
-              {...pressMotion}
-            >
-              <span className="dc-map-stage__legend-dot" aria-hidden="true" />
-              <strong>{artifact.name}</strong>
-              {!visible ? <em>已隐藏</em> : null}
-            </m.button>
-          ))}
+          {layers.map(({ artifact, visible, featureCount }, idx) => {
+            const color = artifact.artifactId === selectedArtifactId ? '#00687a' : ['#00a3bf', '#d48136', '#5b8def', '#4c956c'][idx % 4]
+            return (
+              <m.button
+                key={artifact.artifactId}
+                type="button"
+                className={`dc-map-stage__legend-item${
+                  artifact.artifactId === selectedArtifactId ? ' dc-map-stage__legend-item--active' : ''
+                }`}
+                onClick={() => onSelectArtifact(artifact.artifactId)}
+                {...pressMotion}
+              >
+                <span className="dc-map-stage__legend-dot" style={{ background: color }} aria-hidden="true" />
+                <strong>{artifact.name}</strong>
+                <span className="dc-map-stage__legend-count">{featureCount}</span>
+                {!visible ? <em>隐藏</em> : null}
+              </m.button>
+            )
+          })}
         </m.div>
       ) : null}
       </AnimatePresence>
@@ -874,14 +919,38 @@ function queryRenderedArtifactFeatures(map: Map, point: maplibregl.PointLike) {
   return map.queryRenderedFeatures(point, { layers: layerIds })
 }
 
+function buildHoverPopupHtml(feature: maplibregl.MapGeoJSONFeature) {
+  const props = (feature.properties as Record<string, unknown>) ?? {}
+  const name = props.name ?? props.Name ?? props.NAME ?? props.title ?? props.label ?? ''
+  const category = props.category ?? props.type ?? props.kind ?? props.amenity ?? ''
+  const parts: string[] = []
+  if (name) parts.push(`<strong>${escapeHtml(String(name))}</strong>`)
+  if (category) parts.push(`<span class="dc-hover-category">${escapeHtml(String(category))}</span>`)
+  if (!parts.length) {
+    const first = Object.entries(props).find(([, v]) => v != null && String(v).trim())
+    if (first) parts.push(`<span>${escapeHtml(String(first[1]))}</span>`)
+  }
+  return `<div class="dc-hover-popup">${parts.join('')}</div>`
+}
+
 function buildFeaturePopupHtml(feature: maplibregl.MapGeoJSONFeature, layerName?: string) {
-  const properties = Object.entries((feature.properties as Record<string, unknown>) ?? {})
+  const props = (feature.properties as Record<string, unknown>) ?? {}
+  const entries = Object.entries(props)
     .filter(([, value]) => value != null && String(value).trim())
-    .slice(0, 6)
-  const rows = properties.length
-    ? properties
-        .map(([key, value]) => `<div><span>${escapeHtml(key)}</span><strong>${escapeHtml(String(value))}</strong></div>`)
-        .join('')
+    .slice(0, 10)
+  const priorityKeys = ['name', 'Name', 'NAME', 'title', 'category', 'type', 'amenity', 'addr:street', 'addr:city']
+  entries.sort(([a], [b]) => {
+    const ai = priorityKeys.indexOf(a); const bi = priorityKeys.indexOf(b)
+    if (ai >= 0 && bi >= 0) return ai - bi
+    if (ai >= 0) return -1
+    if (bi >= 0) return 1
+    return 0
+  })
+  const rows = entries.length
+    ? entries.map(([key, rawValue]) => {
+        const value = formatPopupValue(rawValue)
+        return `<div><span>${escapeHtml(key)}</span><strong>${value}</strong></div>`
+      }).join('')
     : '<div><span>属性</span><strong>当前对象没有可展示字段</strong></div>'
   return `
     <div class="dc-map-popup">
@@ -889,6 +958,15 @@ function buildFeaturePopupHtml(feature: maplibregl.MapGeoJSONFeature, layerName?
       ${rows}
     </div>
   `
+}
+
+function formatPopupValue(value: unknown) {
+  if (value == null) return '<em class="dc-null">未设置</em>'
+  if (typeof value === 'boolean') return value ? '✓' : '✗'
+  if (typeof value === 'number') return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  const s = String(value).trim()
+  if (/^https?:\/\/\S+$/i.test(s)) return `<a href="${escapeHtml(s)}" target="_blank" rel="noopener">${escapeHtml(new URL(s).hostname)}</a>`
+  return escapeHtml(s)
 }
 
 function escapeHtml(value: string) {

@@ -62,6 +62,24 @@ const SAMPLES = [
   '查询叫 Springfield 的区域',
 ] as const
 
+function errorCardTitle(message?: string) {
+  // 错误标题只描述已知事实。
+  //
+  // 模型、工具和网络问题要分别呈现，避免把 provider 400 误导成连接失败。
+  const normalized = (message ?? '').toLowerCase()
+  if (!normalized.trim()) return '运行出错'
+  if (normalized.includes('response_format') || normalized.includes('invalid_request_error') || normalized.includes('badrequesterror') || normalized.includes('模型')) {
+    return '模型调用失败'
+  }
+  if (normalized.includes('工具') || normalized.includes('tool')) {
+    return '工具执行失败'
+  }
+  if (normalized.includes('failed to fetch') || normalized.includes('network') || normalized.includes('timeout') || normalized.includes('timed out') || normalized.includes('无法连接') || normalized.includes('连接')) {
+    return '连接失败'
+  }
+  return '运行出错'
+}
+
 export function ChatPanel(props: ChatPanelProps) {
   const {
     artifactCount,
@@ -140,6 +158,7 @@ export function ChatPanel(props: ChatPanelProps) {
     () => deriveConversationEntries(transcriptEntries, runStatus, availableTools),
     [availableTools, runStatus, transcriptEntries],
   )
+  const errorTitle = useMemo(() => errorCardTitle(errorMessage), [errorMessage])
 
   // 新消息到达时自动滚到底部，除非用户手动上滚
   useEffect(() => {
@@ -480,7 +499,7 @@ export function ChatPanel(props: ChatPanelProps) {
                       <span className="cc-timeline-dot" />
                       <div className="cc-timeline-body">
                         <div className="cc-error-card">
-                          <strong>连接失败</strong>
+                          <strong>{errorTitle}</strong>
                           <span>{errorMessage}</span>
                           <button className="cc-mini-button" onClick={onSubmit}>
                             重试

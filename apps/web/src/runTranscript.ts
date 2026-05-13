@@ -391,7 +391,7 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
       id: event.eventId,
       kind: 'error',
       timestamp: event.timestamp,
-      title: event.type === 'run.failed' ? humanizeFailureTitle(event.message, payload) : humanizeWarningTitle(event.message, payload),
+      title: event.type === 'run.failed' ? humanizeFailureTitle(event.message, payload) : humanizeWarningTitle(event.message),
       body: humanizeFailureBody(event.message, payload),
       status: event.type === 'run.failed' ? 'failed' : 'blocked',
       recoveryNote: deriveRecoveryNote(event, events) ?? extractNextActions(failurePayload),
@@ -872,14 +872,10 @@ function sanitizeUserFacingText(value: string) {
     .replaceAll('run', '任务')
     .replaceAll('OpenAI Agents SDK', '系统')
     .replaceAll('Agents SDK', '系统')
-    .replaceAll('model_recovery', '模型恢复')
     .trim()
 }
 
-function humanizeWarningTitle(message: string, payload: Record<string, unknown>) {
-  if (payload.kind === 'model_recovery') {
-    return '模型服务已恢复'
-  }
+function humanizeWarningTitle(message: string) {
   if (message.includes('审批')) {
     return '需要你继续确认'
   }
@@ -898,7 +894,9 @@ function humanizeFailureTitle(message: string, payload: Record<string, unknown>)
 }
 
 function humanizeFailureBody(message: string, payload: Record<string, unknown>) {
-  // 用户优先看到可交付的失败摘要，只有缺失时才退回原始消息。
+  // 用户优先看到后端给出的失败事实。
+  //
+  // 如果没有合格摘要，直接显示原始错误文本，不再生成恢复话术。
   const summary = (payload.finalResponse as Record<string, unknown> | undefined)?.summary
   if (typeof summary === 'string' && summary.trim() && !isGenericFailureSummary(summary)) {
     return sanitizeUserFacingText(summary)
@@ -908,9 +906,6 @@ function humanizeFailureBody(message: string, payload: Record<string, unknown>) 
     : []
   if (errors.length) {
     return sanitizeUserFacingText(errors[0])
-  }
-  if (payload.kind === 'model_recovery') {
-    return '模型服务一度不可用，系统已经恢复并继续处理当前任务。'
   }
   return sanitizeUserFacingText(message)
 }

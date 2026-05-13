@@ -16,12 +16,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from shared_types.schemas import ModelProviderDescriptor
 
-from .base import BaseModelAdapter
+from .base import AgentsSdkCapabilities, BaseModelAdapter
 
 
 class OpenAICompatibleAdapter(BaseModelAdapter):
@@ -35,6 +36,33 @@ class OpenAICompatibleAdapter(BaseModelAdapter):
 
     def is_configured(self) -> bool:
         return bool(self.base_url and self.api_key and self.default_model)
+
+    def agents_sdk_capabilities(self, model_name: str | None = None) -> AgentsSdkCapabilities:
+        # OpenAI-compatible 不等于所有 OpenAI 扩展能力都支持。
+        #
+        # Agents SDK 的 output_type 会发送 json_schema response_format；
+        # DeepSeek 当前支持的是 json_object JSON mode，因此运行时必须选择
+        # 与 endpoint 匹配的输出契约。
+        if not self.is_configured():
+            return AgentsSdkCapabilities()
+        hostname = self._base_url_hostname(self.base_url)
+        model = (model_name or self.default_model or "").lower()
+        is_deepseek = self._is_deepseek_endpoint(hostname) or "deepseek" in model
+        is_openai_api = hostname == "api.openai.com"
+        return AgentsSdkCapabilities(
+            live_supervisor=True,
+            structured_output=is_openai_api and not is_deepseek,
+            json_object_output=False,
+        )
+
+    @staticmethod
+    def _base_url_hostname(base_url: str) -> str:
+        parsed = urlparse(base_url if "://" in base_url else f"https://{base_url}")
+        return (parsed.hostname or base_url).lower()
+
+    @staticmethod
+    def _is_deepseek_endpoint(hostname: str) -> bool:
+        return hostname == "api.deepseek.com" or hostname.endswith(".deepseek.com")
 
     async def chat(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
         model = kwargs.get("model") or self.default_model
@@ -281,9 +309,18 @@ class ModelAdapterRegistry:
         return self._adapters[provider].is_configured()
 
     def supports_live_supervisor(self, provider: str | None) -> bool:
-        if provider != "openai_compatible":
-            return False
-        return self.is_provider_configured(provider)
+        return self.agents_sdk_capabilities(provider).live_supervisor
+
+    def agents_sdk_capabilities(self, provider: str | None, model_name: str | None = None) -> AgentsSdkCapabilities:
+        if not provider or provider not in self._adapters:
+            return AgentsSdkCapabilities()
+        return self._adapters[provider].agents_sdk_capabilities(model_name)
+
+    def supports_agents_sdk_structured_output(self, provider: str | None, model_name: str | None = None) -> bool:
+        return self.agents_sdk_capabilities(provider, model_name).structured_output
+
+    def supports_agents_sdk_json_object_output(self, provider: str | None, model_name: str | None = None) -> bool:
+        return self.agents_sdk_capabilities(provider, model_name).json_object_output
 
     def descriptors(self) -> list[ModelProviderDescriptor]:
         return [
@@ -292,7 +329,22 @@ class ModelAdapterRegistry:
                 display_name=adapter.display_name,
                 configured=adapter.is_configured(),
                 default_model=adapter.default_model,
-                capabilities=adapter.capabilities(),
+                capabilities=[
+                    *adapter.capabilities(),
+                    *self._agents_sdk_capability_labels(adapter),
+                ],
             )
             for adapter in self._adapters.values()
         ]
+
+    @staticmethod
+    def _agents_sdk_capability_labels(adapter: BaseModelAdapter) -> list[str]:
+        caps = adapter.agents_sdk_capabilities(getattr(adapter, "default_model", None))
+        labels: list[str] = []
+        if caps.live_supervisor:
+            labels.append("agents_sdk_live_supervisor")
+        if caps.structured_output:
+            labels.append("agents_sdk_structured_output")
+        if caps.json_object_output:
+            labels.append("agents_sdk_json_object_output")
+        return labels

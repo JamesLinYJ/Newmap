@@ -227,7 +227,7 @@ class PostgresPlatformStore:
             try:
                 return self.get_thread(session.latest_thread_id)
             except NotFoundError:
-                pass
+                return self.create_thread(session_id, title=title)
         return self.create_thread(session_id, title=title)
 
     def update_thread(self, thread_id: str, **fields: Any) -> AgentThreadRecord:
@@ -271,7 +271,7 @@ class PostgresPlatformStore:
             try:
                 self.artifact_store.delete(self._artifact_relative_path(artifact_id))
             except NotFoundError:
-                pass
+                continue
 
         with self.transaction() as conn, conn.cursor() as cur:
             if artifact_ids:
@@ -426,16 +426,13 @@ class PostgresPlatformStore:
                 """,
                 (event.event_id, run_id, event.timestamp, json.dumps(event.model_dump(mode="json", by_alias=True), ensure_ascii=False)),
             )
-        try:
-            run = self.get_run(run_id)
-            if run.thread_id:
-                self.update_thread(
-                    run.thread_id,
-                    history_preview=self._build_thread_history_preview(run),
-                    updated_at=now_utc(),
-                )
-        except NotFoundError:
-            pass
+        run = self._get_run_or_none(run_id)
+        if run and run.thread_id:
+            self.update_thread(
+                run.thread_id,
+                history_preview=self._build_thread_history_preview(run),
+                updated_at=now_utc(),
+            )
         for queue in self._subscribers.get(run_id, []):
             queue.put_nowait(event)
 
@@ -688,6 +685,12 @@ class PostgresPlatformStore:
     def _connect(self):
         # 统一通过同一连接工厂接入 Postgres，方便后续测试覆盖与配置收口。
         return connect_postgres(self.database_url)
+
+    def _get_run_or_none(self, run_id: str) -> AnalysisRunRecord | None:
+        try:
+            return self.get_run(run_id)
+        except NotFoundError:
+            return None
 
     def _build_thread_history_snapshot(self, run: AnalysisRunRecord) -> dict[str, Any]:
         # 线程快照是历史恢复的数据库锚点。

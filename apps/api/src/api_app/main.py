@@ -80,11 +80,11 @@ async def lifespan(app: FastAPI):
         ),
         poi_config=runtime_config.external_poi,
     )
-    qgis_runner = QgisRuntimeClient(settings.qgis_runtime_base_url)
+    qgis_runner = QgisRuntimeClient(settings.effective_qgis_runtime_base_url)
     publisher = MapPublisher(
         settings.resolved_qgis_publish_dir,
         settings.qgis_server_base_url,
-        app_base_url=settings.app_base_url,
+        app_base_url=settings.effective_app_base_url,
         qgis_runtime=qgis_runner,
         default_project_key=runtime_config.default_publish_project_key,
     )
@@ -118,14 +118,14 @@ async def lifespan(app: FastAPI):
 
 
 def _build_cors_origins() -> list[str]:
-    origins = [settings.web_base_url]
+    origins = [settings.effective_web_base_url]
     if settings.web_extra_origins:
         origins.extend(settings.web_extra_origins)
     # 开发环境自动允许 localhost/127.0.0.1 的 web 端口
     if settings.app_env == "development":
         from urllib.parse import urlparse
-        parsed = urlparse(settings.web_base_url)
-        port = parsed.port or 5173
+        parsed = urlparse(settings.effective_web_base_url)
+        port = parsed.port or settings.web_dev_port
         origins.extend([f"http://localhost:{port}", f"http://127.0.0.1:{port}"])
     return _build_allowed_origins(*origins)
 
@@ -145,7 +145,7 @@ async def not_found_handler(_request: Request, exc: NotFoundError) -> JSONRespon
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
-# 安全响应头（直连 8000 时 nginx 不生效，这里补一层）
+# 安全响应头（直连 API 服务时 nginx 不生效，这里补一层）
 @app.middleware("http")
 async def _add_security_headers(request, call_next):
     response = await call_next(request)

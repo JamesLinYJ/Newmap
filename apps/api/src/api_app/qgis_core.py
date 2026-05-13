@@ -144,7 +144,7 @@ def _resolve_qgis_inputs(
             resolved[key] = _to_qgis_runtime_path(store.get_artifact_geojson_path(value))
             continue
         except (HTTPException, NotFoundError):
-            pass
+            logger.debug("QGIS input %s is not an artifact id; trying path/catalog resolution.", key)
         if _looks_like_local_path(value):
             resolved[key] = value
             continue
@@ -334,7 +334,7 @@ async def run_qgis_algorithm_tool(
                 inputs[str(key)] = json.loads(value)
                 continue
             except json.JSONDecodeError:
-                pass
+                logger.debug("QGIS tool arg %s looked like JSON but did not parse; keeping raw string.", key)
         inputs[str(key)] = value
     result = await execute_qgis_process(
         QgisProcessRequest(
