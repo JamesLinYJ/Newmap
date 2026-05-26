@@ -1,0 +1,535 @@
+/* Layer Panel — QGIS-style 图层管理面板 */
+
+.lp-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #fafafa;
+  border-left: 1px solid #d4d4d4;
+  font-size: 13px;
+  color: #333;
+}
+
+.lp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #e8e8e8;
+  border-bottom: 1px solid #d4d4d4;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.lp-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lp-header-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.lp-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #555;
+}
+
+.lp-icon-btn:hover {
+  background: #ddd;
+  color: #222;
+}
+
+/* Toolbar */
+.lp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #ddd;
+}
+
+.lp-tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #555;
+  transition: background 0.1s;
+}
+
+.lp-tool-btn:hover:not(:disabled) {
+  background: #d0d0d0;
+  color: #111;
+}
+
+.lp-tool-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.lp-tool-btn--danger:hover:not(:disabled) {
+  background: #fdd;
+  color: #c00;
+}
+
+.lp-toolbar-spacer {
+  flex: 1;
+}
+
+/* Search */
+.lp-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid #ddd;
+  background: #f8f8f8;
+}
+
+.lp-search-icon {
+  color: #888;
+  flex-shrink: 0;
+}
+
+.lp-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  padding: 2px 0;
+  color: #333;
+}
+
+.lp-search-input::placeholder {
+  color: #aaa;
+}
+
+.lp-search-clear {
+  display: flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #888;
+  padding: 0;
+}
+
+.lp-search-clear:hover { color: #333; }
+
+/* Tree */
+.lp-tree {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.lp-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.08s;
+  user-select: none;
+  min-height: 28px;
+}
+
+.lp-tree-row:hover {
+  background: #eaf3fb;
+}
+
+.lp-tree-row--selected {
+  background: #cce4f6 !important;
+}
+
+.lp-tree-row--dragging {
+  opacity: 0.5;
+}
+
+.lp-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.lp-expand-spacer {
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.lp-eye-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  color: #666;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.lp-eye-btn:hover {
+  background: #ddd;
+  color: #222;
+}
+
+.lp-geom-icon {
+  font-size: 11px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  color: #555;
+  font-weight: bold;
+}
+
+.lp-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.lp-name-input {
+  flex: 1;
+  border: 1px solid #4a90d9;
+  outline: none;
+  padding: 1px 4px;
+  font-size: 12px;
+  border-radius: 2px;
+  background: #fff;
+  min-width: 0;
+}
+
+.lp-count {
+  font-size: 10px;
+  color: #999;
+  background: #f0f0f0;
+  padding: 0 5px;
+  border-radius: 3px;
+  line-height: 16px;
+  flex-shrink: 0;
+}
+
+.lp-kind-tag {
+  font-size: 9px;
+  color: #777;
+  border: 1px solid #ddd;
+  padding: 0 4px;
+  border-radius: 2px;
+  line-height: 15px;
+  flex-shrink: 0;
+}
+
+.lp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+.lp-dot--on { background: #3a3; }
+.lp-dot--off { background: #ccc; }
+
+.lp-group-children {
+  /* no additional styling needed; indentation via paddingLeft on rows */
+}
+
+.lp-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: #999;
+  font-size: 13px;
+}
+
+/* Properties Panel */
+.lp-properties {
+  border-top: 2px solid #ccc;
+  max-height: 40%;
+  overflow-y: auto;
+  background: #f5f5f5;
+}
+
+.lp-props-header {
+  padding: 5px 8px;
+  font-weight: 600;
+  font-size: 12px;
+  background: #e8e8e8;
+  border-bottom: 1px solid #d4d4d4;
+}
+
+.lp-props-body {
+  padding: 4px 0;
+}
+
+.lp-prop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.lp-prop-row > span:first-child {
+  color: #777;
+  width: 56px;
+  flex-shrink: 0;
+}
+
+.lp-prop-row > span:last-child {
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lp-prop-mono {
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 10px;
+}
+
+.lp-prop-wrap {
+  white-space: normal !important;
+  word-break: break-word;
+}
+
+.lp-opacity-slider {
+  width: 80px;
+  accent-color: #4a90d9;
+}
+
+.lp-prop-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.lp-prop-subtitle {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+}
+
+.lp-prop-row--field {
+  gap: 4px;
+}
+
+.lp-field-name {
+  color: #333 !important;
+  font-weight: 500;
+  flex: 1;
+  width: auto !important;
+}
+
+.lp-field-type {
+  color: #888;
+  font-size: 10px;
+  background: #eee;
+  padding: 0 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.lp-field-count {
+  color: #999;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.lp-prop-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 2px 8px;
+}
+
+.lp-tag {
+  font-size: 10px;
+  color: #555;
+  background: #e8e8e8;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Status Bar */
+.lp-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #888;
+  background: #f0f0f0;
+  border-top: 1px solid #ddd;
+}
+
+.lp-status-spacer {
+  flex: 1;
+}
+
+/* Context Menu */
+.lp-context-menu {
+  position: fixed;
+  z-index: 2000;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  padding: 4px 0;
+  min-width: 160px;
+}
+
+.lp-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  color: #333;
+  text-align: left;
+}
+
+.lp-context-menu button:hover {
+  background: #eaf3fb;
+}
+
+.lp-context-menu hr {
+  margin: 4px 0;
+  border: none;
+  border-top: 1px solid #eee;
+}
+
+.lp-context-danger {
+  color: #c00 !important;
+}
+.lp-context-danger:hover {
+  background: #fdd !important;
+}
+
+/* Dialog */
+.lp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0,0,0,0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lp-dialog {
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  min-width: 280px;
+  max-width: 380px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.lp-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 13px;
+}
+
+.lp-dialog-msg {
+  padding: 10px 14px 4px;
+  font-size: 12px;
+  color: #666;
+  margin: 0;
+}
+
+.lp-dialog-input {
+  margin: 8px 14px;
+  width: calc(100% - 28px);
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.lp-dialog-input:focus {
+  border-color: #4a90d9;
+  box-shadow: 0 0 0 2px rgba(74,144,217,0.2);
+}
+
+.lp-dialog-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid #eee;
+}
+
+.lp-dialog-btn {
+  padding: 5px 16px;
+  border-radius: 4px;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.lp-dialog-btn--secondary {
+  background: #eee;
+  color: #555;
+}
+
+.lp-dialog-btn--secondary:hover {
+  background: #ddd;
+}
+
+.lp-dialog-btn--primary {
+  background: #4a90d9;
+  color: #fff;
+}
+
+.lp-dialog-btn--primary:hover {
+  background: #3a7bc8;
+}

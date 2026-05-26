@@ -28,7 +28,9 @@ import type {
 
 import { apiBaseUrl } from '../api'
 import { providerUnavailableLabel, supportsAgentSdkLiveSupervisor } from '../providerCapabilities'
+import type { LayerTreeNode } from '../hooks/useLayerManager'
 import { AppIcon } from './AppIcon'
+import { LayerPanel } from './LayerPanel'
 
 interface ProgressItem {
   id: string
@@ -37,7 +39,7 @@ interface ProgressItem {
   status: 'done' | 'active' | 'pending' | 'warning'
 }
 
-type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config'
+type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config' | 'layerManager'
 
 interface DetailPanelProps {
   panelMode: PanelMode
@@ -82,6 +84,26 @@ interface DetailPanelProps {
   onReplaceManagedLayer: (layerKey: string, file: File) => void
   onToggleLayerStatus: (layerKey: string, nextStatus: string) => void
   onDeleteLayer: (layerKey: string) => void
+  // LayerPanel props
+  layerTree?: LayerTreeNode[]
+  layerSelectedId?: string | null
+  layerSearchQuery?: string
+  layerTotalCount?: number
+  layerVisibleCount?: number
+  layerSelectedNode?: LayerTreeNode | undefined
+  onLayerSelect?: (id: string | null) => void
+  onLayerToggleVisibility?: (id: string) => void
+  onLayerToggleAllVisibility?: () => void
+  onLayerSetOpacity?: (id: string, opacity: number) => void
+  onLayerRename?: (id: string, name: string) => void
+  onLayerMoveUp?: (id: string) => void
+  onLayerMoveDown?: (id: string) => void
+  onLayerRemove?: (id: string) => void
+  onLayerCreateGroup?: (name: string, memberIds: string[]) => void
+  onLayerToggleGroup?: (id: string) => void
+  onLayerSetSearchQuery?: (q: string) => void
+  onLayerZoomTo?: (id: string) => void
+  onLayerExport?: (id: string) => void
 }
 
 export const DetailPanel = memo(function DetailPanel({
@@ -117,6 +139,25 @@ export const DetailPanel = memo(function DetailPanel({
   onReplaceManagedLayer,
   onToggleLayerStatus,
   onDeleteLayer,
+  layerTree,
+  layerSelectedId,
+  layerSearchQuery,
+  layerTotalCount,
+  layerVisibleCount,
+  layerSelectedNode,
+  onLayerSelect,
+  onLayerToggleVisibility,
+  onLayerToggleAllVisibility,
+  onLayerSetOpacity,
+  onLayerRename,
+  onLayerMoveUp,
+  onLayerMoveDown,
+  onLayerRemove,
+  onLayerCreateGroup,
+  onLayerToggleGroup,
+  onLayerSetSearchQuery,
+  onLayerZoomTo,
+  onLayerExport,
 }: DetailPanelProps) {
   // 右侧详情面板
   //
@@ -804,6 +845,30 @@ export const DetailPanel = memo(function DetailPanel({
             </div>
           </div>
         </section>
+      ) : null}
+
+      {panelMode === 'layerManager' && layerTree ? (
+        <LayerPanel
+          tree={layerTree}
+          selectedId={layerSelectedId ?? null}
+          searchQuery={layerSearchQuery ?? ''}
+          totalCount={layerTotalCount ?? 0}
+          visibleCount={layerVisibleCount ?? 0}
+          selectedNode={layerSelectedNode}
+          onSelectLayer={onLayerSelect ?? (() => {})}
+          onToggleVisibility={onLayerToggleVisibility ?? (() => {})}
+          onToggleAllVisibility={onLayerToggleAllVisibility ?? (() => {})}
+          onSetOpacity={onLayerSetOpacity ?? (() => {})}
+          onRenameLayer={onLayerRename ?? (() => {})}
+          onMoveUp={onLayerMoveUp ?? (() => {})}
+          onMoveDown={onLayerMoveDown ?? (() => {})}
+          onRemoveLayer={onLayerRemove ?? (() => {})}
+          onCreateGroup={onLayerCreateGroup ?? (() => {})}
+          onToggleGroup={onLayerToggleGroup ?? (() => {})}
+          onSetSearchQuery={onLayerSetSearchQuery ?? (() => {})}
+          onZoomToLayer={onLayerZoomTo ?? (() => {})}
+          onExportLayer={onLayerExport ?? (() => {})}
+        />
       ) : null}
 
       {panelMode === 'export' ? (

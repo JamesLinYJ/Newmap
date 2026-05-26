@@ -73,6 +73,7 @@ import { pickPreferredArtifactId } from './artifactSelection'
 import { buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from './motion'
 import { deriveThreadTranscript, pickTranscriptHeadline } from './runTranscript'
 import { useRunState } from './hooks/useRunState'
+import { useLayerManager } from './hooks/useLayerManager'
 import { ChatPanel } from './components/ChatPanel'
 import { DetailPanel } from './components/DetailPanel'
 import { AppIcon, type AppIconName } from './components/AppIcon'
@@ -81,7 +82,7 @@ import { supportsAgentSdkLiveSupervisor } from './providerCapabilities'
 import { buildWorkspaceShareUrl, readWorkspacePointer, syncCleanWorkspaceUrl } from './workspacePointer'
 
 type PrimaryNav = 'analysis' | 'layers' | 'history' | 'compute'
-type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config'
+type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config' | 'layerManager'
 type SidebarItemId = 'assistant' | 'query' | 'sources' | 'config' | 'export'
 type MapLayerPreference = { visible: boolean; opacity: number }
 
@@ -406,7 +407,7 @@ function App() {
       }
 
       if (nav === 'layers') {
-        setPanelMode('layers')
+        setPanelMode('layerManager')
         setActiveSidebarItem('sources')
         return
       }
@@ -467,7 +468,7 @@ function App() {
 
       if (itemId === 'sources') {
         setActiveNav('layers')
-        setPanelMode('sources')
+        setPanelMode('layerManager')
         return
       }
 
@@ -918,7 +919,7 @@ function App() {
 
       setUiError(undefined)
       setActiveNav('layers')
-      setPanelMode('sources')
+      setPanelMode('layerManager')
       setActiveSidebarItem('sources')
 
       let layerUploaded = false
@@ -976,7 +977,7 @@ function App() {
       try {
         setUiError(undefined)
         setActiveNav('layers')
-        setPanelMode('sources')
+        setPanelMode('layerManager')
         setActiveSidebarItem('sources')
         await importManagedLayer(file)
         await refreshLayers()
@@ -1005,7 +1006,7 @@ function App() {
       try {
         setUiError(undefined)
         setActiveNav('layers')
-        setPanelMode('sources')
+        setPanelMode('layerManager')
         setActiveSidebarItem('sources')
         await replaceManagedLayer(layerKey, file)
         await refreshLayers()
@@ -1298,6 +1299,23 @@ function App() {
     [artifactData, artifactMetadata, artifacts, mapLayerPreferences, run?.status],
   )
 
+  const layerManager = useLayerManager({
+    mapLayers,
+    onToggleVisibility: handleToggleArtifactVisibility,
+    onChangeOpacity: handleArtifactOpacityChange,
+  })
+
+  const handleZoomToLayer = useCallback((id: string) => {
+    setSelectedArtifactId(id)
+  }, [])
+
+  const handleExportLayer = useCallback((id: string) => {
+    const artifact = artifacts.find((a) => a.artifactId === id)
+    if (artifact) {
+      window.open(`${apiBaseUrl}${artifact.uri}`, '_blank')
+    }
+  }, [artifacts])
+
   return (
     <Suspense fallback={<div className="dc-route-loading">正在加载页面…</div>}>
       <LazyMotion features={domAnimation}>
@@ -1497,6 +1515,25 @@ function App() {
                         onDeleteLayer={(layerKey) => {
                           void handleDeleteLayer(layerKey)
                         }}
+                        layerTree={layerManager.tree}
+                        layerSelectedId={layerManager.selectedId}
+                        layerSearchQuery={layerManager.searchQuery}
+                        layerTotalCount={layerManager.totalCount}
+                        layerVisibleCount={layerManager.visibleCount}
+                        layerSelectedNode={layerManager.selectedNode}
+                        onLayerSelect={layerManager.selectLayer}
+                        onLayerToggleVisibility={layerManager.toggleVisibility}
+                        onLayerToggleAllVisibility={layerManager.toggleAllVisibility}
+                        onLayerSetOpacity={layerManager.setOpacity}
+                        onLayerRename={layerManager.renameLayer}
+                        onLayerMoveUp={layerManager.moveUp}
+                        onLayerMoveDown={layerManager.moveDown}
+                        onLayerRemove={layerManager.removeLayer}
+                        onLayerCreateGroup={layerManager.createGroup}
+                        onLayerToggleGroup={layerManager.toggleGroup}
+                        onLayerSetSearchQuery={layerManager.setSearchQuery}
+                        onLayerZoomTo={handleZoomToLayer}
+                        onLayerExport={handleExportLayer}
                       />
                     </m.div>
                   </m.div>
