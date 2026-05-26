@@ -26,12 +26,12 @@ import type {
   LayerDescriptor,
   LoopTraceEntry,
   ModelProviderDescriptor,
-  QgisModelsResponse,
   RunEvent,
   SystemComponentsStatus,
   ToolDescriptor,
   ToolParameterDescriptor,
   UserIntent,
+  WeatherDatasetRecord,
 } from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../api'
@@ -46,7 +46,7 @@ import { StatusPill } from './StatusPill'
 interface DebugPageProps {
   query: string
   isSubmitting: boolean
-  isQgisSubmitting: boolean
+  isToolSubmitting: boolean
   uploadedLayerName?: string
   errorMessage?: string
   runStatus?: string
@@ -57,6 +57,7 @@ interface DebugPageProps {
   providers: ModelProviderDescriptor[]
   sessionRuns: AnalysisRun[]
   layers: LayerDescriptor[]
+  weatherDatasets: WeatherDatasetRecord[]
   events: RunEvent[]
   intent?: UserIntent
   executionPlan?: ExecutionPlan
@@ -64,12 +65,10 @@ interface DebugPageProps {
   artifacts: ArtifactRef[]
   artifactMetadata: Record<string, Record<string, unknown>>
   selectedArtifactId?: string
-  publishResult?: Record<string, unknown> | null
   toolRunResult?: Record<string, unknown> | null
   toolCatalogEntries: Array<Record<string, unknown>>
   runtimeConfig?: AgentRuntimeConfig
   systemComponents?: SystemComponentsStatus
-  qgisModels?: QgisModelsResponse
   tools: ToolDescriptor[]
   isToolCatalogSubmitting?: boolean
   onQueryChange: (value: string) => void
@@ -78,9 +77,6 @@ interface DebugPageProps {
   onSubmit: () => void
   onUpload: (file: File) => void
   onSelectArtifact: (artifactId: string) => void
-  onPublish: (artifactId: string) => void
-  onRunQgisProcess: (algorithmId: string, distance?: number) => void
-  onRunQgisModel: (modelName: string, overlayArtifactId?: string) => void
   onRunTool: (tool: ToolDescriptor, args: Record<string, unknown>) => void
   onUpsertToolCatalogEntry: (tool: ToolDescriptor, payload: Record<string, unknown>, sortOrder?: number) => void
   onDeleteToolCatalogEntry: (tool: ToolDescriptor) => void
@@ -99,7 +95,7 @@ const EMPTY_TOOL_RESULTS: AgentState['toolResults'] = []
 export function DebugPage({
   query,
   isSubmitting,
-  isQgisSubmitting,
+  isToolSubmitting,
   uploadedLayerName,
   errorMessage,
   runStatus,
@@ -110,6 +106,7 @@ export function DebugPage({
   providers,
   sessionRuns,
   layers,
+  weatherDatasets,
   events,
   intent,
   executionPlan,
@@ -117,12 +114,10 @@ export function DebugPage({
   artifacts,
   artifactMetadata,
   selectedArtifactId,
-  publishResult,
   toolRunResult,
   toolCatalogEntries,
   runtimeConfig,
   systemComponents,
-  qgisModels,
   tools,
   isToolCatalogSubmitting,
   onQueryChange,
@@ -131,9 +126,6 @@ export function DebugPage({
   onSubmit,
   onUpload,
   onSelectArtifact,
-  onPublish,
-  onRunQgisProcess,
-  onRunQgisModel,
   onRunTool,
   onUpsertToolCatalogEntry,
   onDeleteToolCatalogEntry,
@@ -148,8 +140,8 @@ export function DebugPage({
   // 统一摆在同一页上：输入、状态、事件、数据资产、工具和目录配置。
   const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) ?? artifacts[0]
   const currentRun = sessionRuns.find((item) => item.id === currentRunId)
+  const sessionLogPath = currentRun?.sessionLogPath
   const selectedMetadata = selectedArtifact ? artifactMetadata[selectedArtifact.artifactId] : undefined
-  const overlayCandidates = artifacts.filter((artifact) => artifact.artifactId !== selectedArtifact?.artifactId)
   const latestRuns = sessionRuns.slice(0, 5)
   const latestEvent = events.at(-1)
   const currentThreadId = agentState?.threadId ?? events.find((event) => event.threadId)?.threadId
@@ -244,16 +236,17 @@ export function DebugPage({
       error: nextError,
     }))
   }, [])
-  const publishLinks = buildQuickLinks({
+  const quickLinks = buildQuickLinks({
     currentSessionId,
     currentRunId,
     selectedArtifactId: selectedArtifact?.artifactId,
   })
   const collectionOptions = useMemo(() => buildCollectionOptions({ artifacts, layers }), [artifacts, layers])
+  const weatherDatasetOptions = useMemo(() => buildWeatherDatasetOptions(weatherDatasets), [weatherDatasets])
   const groupedTools = useMemo(() => groupTools(tools), [tools])
   const selectedTool =
     tools.find((tool) => tool.name === selectedToolName) ??
-    tools.find((tool) => tool.group === 'qgis' && tool.available) ??
+    tools.find((tool) => tool.available) ??
     tools[0]
   const selectedToolCatalogEntry = selectedTool
     ? toolCatalogEntries.find(
@@ -262,7 +255,6 @@ export function DebugPage({
     : undefined
   const toolFormValues = selectedTool ? toolFormsByName[selectedTool.name] ?? resolveToolDefaults(selectedTool) : {}
   const missingToolParameters = selectedTool ? getMissingRequiredParameters(selectedTool, toolFormValues) : []
-  const qgisToolCount = tools.filter((tool) => tool.group === 'qgis').length
   const panelVariants = buildListItemVariants(reducedMotion, 18)
   const overviewVariants = buildListVariants(reducedMotion, 0.05, 0.03)
   const pressMotion = buildPressMotion(reducedMotion)
@@ -297,9 +289,15 @@ export function DebugPage({
       tone: events.length ? 'success' : 'neutral',
     },
     {
+      label: '会话日志',
+      value: sessionLogPath ? '已绑定' : '未绑定',
+      meta: sessionLogPath ? compactPath(sessionLogPath) : compactPath(systemComponents?.sessionLogRoot),
+      tone: sessionLogPath ? 'success' : 'neutral',
+    },
+    {
       label: '工具工作台',
       value: `${tools.length}`,
-      meta: `${qgisToolCount} 个 QGIS 工具`,
+      meta: tools.length ? `${groupedTools.length} 个工具分组` : '暂无工具',
       tone: tools.length ? 'accent' : 'neutral',
     },
   ]
@@ -310,7 +308,7 @@ export function DebugPage({
         <div>
           <div className="panel__eyebrow">内部调试页</div>
           <h1>运行诊断与数据管理台</h1>
-          <p>这里聚合模型输入、数据资产、事件流、QGIS 操作与 API 快捷入口，方便你完整检查一次分析任务。</p>
+          <p>这里聚合模型输入、数据资产、事件流、工具执行与 API 快捷入口，方便你完整检查一次分析任务。</p>
         </div>
         <div className="debug-shell__actions">
           <StatusPill label={formatRunStatus(runStatus)} tone={deriveTone(runStatus)} />
@@ -407,7 +405,7 @@ export function DebugPage({
                 <input
                   id="debug-layer-upload"
                   type="file"
-                  accept=".geojson,.json,.gpkg"
+                  accept=".geojson,.json,.gpkg,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
                   hidden
                   onChange={(event) => {
                     const file = event.target.files?.[0]
@@ -439,6 +437,11 @@ export function DebugPage({
                   <span>Session</span>
                   <strong>{currentSessionId ? shortId(currentSessionId) : '未创建'}</strong>
                   <p>{latestRuns.length} 条运行记录</p>
+                </div>
+                <div className="inventory-card">
+                  <span>会话日志</span>
+                  <strong>{sessionLogPath ? 'JSONL' : '--'}</strong>
+                  <p>{sessionLogPath ? compactPath(sessionLogPath) : compactPath(systemComponents?.sessionLogRoot)}</p>
                 </div>
                 <div className="inventory-card">
                   <span>当前结果</span>
@@ -483,7 +486,7 @@ export function DebugPage({
                 <span className="panel__muted">便于直接排查</span>
               </div>
               <div className="data-link-list">
-                {publishLinks.map((item) => (
+                {quickLinks.map((item) => (
                   <a key={item.label} className="data-link" href={item.href} target="_blank" rel="noreferrer">
                     <div>
                       <strong>{item.label}</strong>
@@ -506,15 +509,14 @@ export function DebugPage({
             <div className="panel__section">
               <div className="intent-block">
                 <div className="intent-row">
-                  <span>QGIS 模型目录</span>
-                  <strong>{qgisModels?.available ? `已加载 ${qgisModels.models.length} 个模型` : "当前不可用"}</strong>
+                  <span>会话日志目录</span>
+                  <strong>{compactPath(systemComponents?.sessionLogRoot)}</strong>
                 </div>
                 <div className="intent-row">
                   <span>最新事件</span>
                   <strong>{latestEvent?.type ?? "暂无事件"}</strong>
                 </div>
               </div>
-              {qgisModels?.error ? <div className="clarification-box clarification-box--error">{qgisModels.error}</div> : null}
               {latestEvent?.message ? <p className="panel__muted">{latestEvent.message}</p> : null}
             </div>
           </m.section>
@@ -568,6 +570,7 @@ export function DebugPage({
                         collectionOptions={collectionOptions}
                         artifacts={artifacts}
                         layers={layers}
+                        weatherDatasetOptions={weatherDatasetOptions}
                         onChange={(value) => {
                           if (!selectedTool) {
                             return
@@ -593,11 +596,11 @@ export function DebugPage({
                     <button
                     className="toolbar-button toolbar-button--primary"
                     type="button"
-                    disabled={!selectedTool.available || isQgisSubmitting || missingToolParameters.length > 0}
+                    disabled={!selectedTool.available || isToolSubmitting || missingToolParameters.length > 0}
                     onClick={() => onRunTool(selectedTool, buildToolArgs(selectedTool, toolFormValues))}
                     {...pressMotion}
                   >
-                    {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Wrench size={16} aria-hidden="true" />}
+                    {isToolSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Wrench size={16} aria-hidden="true" />}
                     运行工具
                   </button>
                   </div>
@@ -659,16 +662,8 @@ export function DebugPage({
                     <strong>{systemComponents.postgisEnabled ? '已接入' : '未接入'}</strong>
                   </div>
                   <div className="intent-row">
-                    <span>QGIS 运行环境</span>
-                    <strong>{systemComponents.qgisRuntimeAvailable ? '可用' : '不可用'}</strong>
-                  </div>
-                  <div className="intent-row">
-                    <span>QGIS Server</span>
-                    <strong>{systemComponents.qgisServerAvailable ? '在线' : '离线'}</strong>
-                  </div>
-                  <div className="intent-row">
-                    <span>OGC API</span>
-                    <strong>{systemComponents.ogcApiAvailable ? '可用' : '不可用'}</strong>
+                    <span>会话日志</span>
+                    <strong>{systemComponents.sessionLogRoot ? '已启用' : '未返回'}</strong>
                   </div>
                 </div>
               </div>
@@ -764,17 +759,6 @@ export function DebugPage({
               </div>
               {runtimeConfigDraft ? (
                 <div className="runtime-config-grid">
-                  <label className="tool-field">
-                    <span className="composer__label">默认发布项目</span>
-                    <input
-                      className="composer__input"
-                      value={runtimeConfigDraft.defaultPublishProjectKey}
-                      onChange={(event) => {
-                        setRuntimeConfigDraft({ ...runtimeConfigDraft, defaultPublishProjectKey: event.target.value })
-                        setRuntimeConfigError(undefined)
-                      }}
-                    />
-                  </label>
                   <label className="tool-field">
                     <span className="composer__label">Loop 轨迹上限</span>
                     <input
@@ -947,6 +931,51 @@ export function DebugPage({
                         setRuntimeConfigDraft({
                           ...runtimeConfigDraft,
                           context: { ...runtimeConfigDraft.context, warningWindow: Number(event.target.value) || 1 },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field">
+                    <span className="composer__label">Prompt 字符上限</span>
+                    <input
+                      className="composer__input"
+                      type="number"
+                      min={1000}
+                      value={runtimeConfigDraft.context.promptMaxChars}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          context: { ...runtimeConfigDraft.context, promptMaxChars: Number(event.target.value) || 1000 },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field">
+                    <span className="composer__label">上下文条目窗口</span>
+                    <input
+                      className="composer__input"
+                      type="number"
+                      min={1}
+                      value={runtimeConfigDraft.context.contextEntryWindow}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          context: { ...runtimeConfigDraft.context, contextEntryWindow: Number(event.target.value) || 1 },
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="tool-field">
+                    <span className="composer__label">记忆文件字符上限</span>
+                    <input
+                      className="composer__input"
+                      type="number"
+                      min={0}
+                      value={runtimeConfigDraft.context.memoryFileCharLimit}
+                      onChange={(event) => {
+                        setRuntimeConfigDraft({
+                          ...runtimeConfigDraft,
+                          context: { ...runtimeConfigDraft.context, memoryFileCharLimit: Number(event.target.value) || 0 },
                         })
                       }}
                     />
@@ -1475,8 +1504,8 @@ export function DebugPage({
           <m.section className="panel" layout variants={panelVariants}>
             <div className="panel__header">
               <div>
-                <div className="panel__eyebrow">产物与发布</div>
-                <h2>Artifacts、元数据与 QGIS</h2>
+                <div className="panel__eyebrow">产物与元数据</div>
+                <h2>Artifacts 与状态快照</h2>
               </div>
             </div>
             <div className="panel__section">
@@ -1518,10 +1547,6 @@ export function DebugPage({
                     <ExternalLink size={16} aria-hidden="true" />
                     打开 GeoJSON
                   </a>
-                  <button className="toolbar-button toolbar-button--primary" type="button" onClick={() => onPublish(selectedArtifact.artifactId)}>
-                    <ExternalLink size={16} aria-hidden="true" />
-                    发布到 QGIS Server
-                  </button>
                 </div>
               ) : null}
             </div>
@@ -1530,50 +1555,6 @@ export function DebugPage({
                 <span>artifact metadata</span>
               </div>
               <pre className="debug-pre">{selectedMetadata ? JSON.stringify(selectedMetadata, null, 2) : '暂无数据'}</pre>
-            </div>
-            <div className="panel__section">
-              <div className="panel__subheader">
-                <span>QGIS 二次分析</span>
-                <span className="panel__muted">{qgisModels?.available ? '可用' : '不可用'}</span>
-              </div>
-              {systemComponents?.qgisRuntimeAvailable ? (
-                <div className="debug-actions">
-                  <button
-                    className="toolbar-button toolbar-button--ghost"
-                    type="button"
-                    disabled={!selectedArtifact || isQgisSubmitting}
-                    onClick={() => onRunQgisProcess('native:buffer', 1000)}
-                    {...pressMotion}
-                  >
-                    {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
-                    运行 native:buffer
-                  </button>
-                  {(qgisModels?.models ?? []).map((modelName) => (
-                    <button
-                      key={modelName}
-                      className="toolbar-button toolbar-button--ghost"
-                      type="button"
-                      disabled={!selectedArtifact || isQgisSubmitting}
-                      onClick={() => onRunQgisModel(modelName, overlayCandidates[0]?.artifactId)}
-                      {...pressMotion}
-                    >
-                      {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
-                      运行模型：{modelName}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div>
-                  <p className="panel__empty">qgis-runtime 当前不可用。</p>
-                  {qgisModels?.error ? <p className="panel__muted">{qgisModels.error}</p> : null}
-                </div>
-              )}
-            </div>
-            <div className="panel__section">
-              <div className="panel__subheader">
-                <span>发布返回值</span>
-              </div>
-              <pre className="debug-pre">{publishResult ? JSON.stringify(publishResult, null, 2) : '暂无数据'}</pre>
             </div>
             <div className="panel__section">
               <div className="panel__subheader">
@@ -1673,6 +1654,7 @@ function ToolParameterField({
   collectionOptions,
   artifacts,
   layers,
+  weatherDatasetOptions,
   onChange,
 }: {
   parameter: ToolParameterDescriptor
@@ -1680,6 +1662,7 @@ function ToolParameterField({
   collectionOptions: Array<{ label: string; value: string }>
   artifacts: ArtifactRef[]
   layers: LayerDescriptor[]
+  weatherDatasetOptions: Array<{ label: string; value: string }>
   onChange: (value: string) => void
 }) {
   if (parameter.options.length) {
@@ -1759,6 +1742,22 @@ function ToolParameterField({
     )
   }
 
+  if (parameter.source === 'weather-dataset') {
+    return (
+      <label className="tool-field">
+        <span className="composer__label">{parameter.label}</span>
+        <select className="composer__select" value={value} onChange={(event) => onChange(event.target.value)}>
+          <option value="">请选择气象数据集</option>
+          {weatherDatasetOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    )
+  }
+
   if (parameter.source === 'json') {
     return (
       <label className="tool-field tool-field--full">
@@ -1817,6 +1816,26 @@ function buildCollectionOptions({
   return [...artifactOptions, ...layerOptions]
 }
 
+function buildWeatherDatasetOptions(datasets: WeatherDatasetRecord[]) {
+  return datasets.map((dataset) => ({
+    label: `${dataset.filename} · ${formatWeatherDatasetCapability(dataset)} · ${shortId(dataset.datasetId)}`,
+    value: dataset.datasetId,
+  }))
+}
+
+function formatWeatherDatasetCapability(dataset: WeatherDatasetRecord) {
+  if (dataset.status !== 'completed') {
+    return formatRunStatus(dataset.status)
+  }
+  const variables = Array.isArray(dataset.metadata.variables) ? dataset.metadata.variables : []
+  const mapReady = variables.filter((item) => Boolean((item as { mapReady?: unknown })?.mapReady)).length
+  const analysisReady = variables.filter((item) => Boolean((item as { analysisReady?: unknown })?.analysisReady)).length
+  if (variables.length) {
+    return `${variables.length} 变量 · ${analysisReady} 可统计 · ${mapReady} 可制图`
+  }
+  return '变量待识别'
+}
+
 function buildToolArgs(tool: ToolDescriptor, values: Record<string, string>) {
   return tool.parameters.reduce<Record<string, unknown>>((accumulator, parameter) => {
     const rawValue = values[parameter.key]
@@ -1846,8 +1865,8 @@ function groupTools(tools: ToolDescriptor[]) {
     catalog: '目录与图层',
     data: '数据准备',
     lookup: '地理编码',
-    output: '导出与发布',
-    qgis: 'QGIS 工具',
+    meteorology: '气象分析',
+    output: '导出',
   }
 
   return Object.entries(
@@ -1871,6 +1890,13 @@ function getMissingRequiredParameters(tool: ToolDescriptor, values: Record<strin
 
 function shortId(value: string) {
   return value.length > 10 ? `${value.slice(0, 8)}…` : value
+}
+
+function compactPath(value?: string | null) {
+  if (!value) {
+    return '暂无路径'
+  }
+  return value.length > 42 ? `…${value.slice(-41)}` : value
 }
 
 function formatRunStatus(status?: string) {
@@ -2160,11 +2186,11 @@ function toStringValue(value: unknown) {
 }
 
 function deriveLoopTraceFromEvents(events: RunEvent[]): LoopTraceEntry[] {
-  return events
-    .filter((event) => event.type === 'loop.updated')
-    .map((event) => {
+  const entries: LoopTraceEntry[] = []
+  for (const event of events) {
+    if (event.type === 'loop.updated') {
       const payload = event.payload ?? {}
-      return {
+      entries.push({
         iteration: Number(payload.iteration ?? 0),
         phase: String(payload.phase ?? 'observe'),
         title: String(payload.title ?? event.message),
@@ -2174,8 +2200,30 @@ function deriveLoopTraceFromEvents(events: RunEvent[]): LoopTraceEntry[] {
         agentId: typeof payload.agentId === 'string' ? payload.agentId : null,
         toolName: typeof payload.toolName === 'string' ? payload.toolName : null,
         stepId: typeof payload.stepId === 'string' ? payload.stepId : null,
+      })
+      continue
+    }
+    // 从 tool 事件中提取 loop 信息作为回退
+    if ((event.type === 'tool.started' || event.type === 'tool.completed') && event.payload) {
+      const p = event.payload as Record<string, unknown>
+      const loopPhase = typeof p.loopPhase === 'string' ? p.loopPhase : undefined
+      const loopIteration = typeof p.loopIteration === 'number' ? p.loopIteration : undefined
+      if (loopPhase && loopIteration !== undefined) {
+        entries.push({
+          iteration: loopIteration,
+          phase: loopPhase,
+          title: event.type === 'tool.started'
+            ? `调用工具 ${String(p.tool ?? '')}`
+            : `工具 ${String(p.tool ?? '')} 完成`,
+          description: event.message,
+          status: event.type === 'tool.started' ? 'running' : 'completed',
+          timestamp: event.timestamp,
+          toolName: typeof p.tool === 'string' ? p.tool : null,
+        })
       }
-    })
+    }
+  }
+  return entries
 }
 
 function formatExecutionStatus(status?: string) {

@@ -787,6 +787,13 @@
     @apply text-[13px] leading-[1.45] text-[#6e7681];
   }
 
+  /* 流式输出光标 — 跟在最后一段文字末尾 */
+  .dc-markdown--streaming > :last-child::after {
+    content: "|";
+    @apply ml-px inline-block font-normal text-[#57606a];
+    animation: dc-typing 1.2s ease-in-out infinite;
+  }
+
   /* ── 工具卡片 ────────────────────────────── */
   .cc-tool-detail { overflow: hidden; }
   .cc-tool-row { overflow: hidden; }
@@ -1049,6 +1056,63 @@
     @apply mx-6 my-auto border-0;
   }
 
+  .cc-data-context {
+    @apply flex w-full max-w-[440px] flex-col gap-3 rounded-[8px] border border-black/[0.10] bg-white px-3 py-3 text-left shadow-[0_6px_18px_rgb(27_31_36/0.06)];
+  }
+
+  .cc-data-context__head {
+    @apply flex items-center justify-between gap-3;
+  }
+
+  .cc-data-context__head strong {
+    @apply text-[14px] font-semibold text-[#24292f];
+  }
+
+  .cc-data-context__head span,
+  .cc-data-context__more {
+    @apply text-[12px] text-[#6e7781];
+  }
+
+  .cc-data-context__list {
+    @apply flex max-h-[260px] flex-col gap-2 overflow-y-auto pr-1;
+  }
+
+  .cc-data-reference {
+    @apply grid min-h-[52px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 rounded-[7px] border border-black/[0.08] bg-[#f6f8fa] px-2.5 py-2;
+  }
+
+  .cc-data-reference__kind {
+    @apply inline-flex h-6 items-center justify-center rounded-[6px] px-2 text-[11px] font-semibold;
+  }
+
+  .cc-data-reference__kind--layer {
+    @apply bg-[#ddf4ff] text-[#0969da];
+  }
+
+  .cc-data-reference__kind--weather {
+    @apply bg-[#dafbe1] text-[#1a7f37];
+  }
+
+  .cc-data-reference__kind--artifact {
+    @apply bg-[#fff8c5] text-[#9a6700];
+  }
+
+  .cc-data-reference__main {
+    @apply min-w-0;
+  }
+
+  .cc-data-reference__main strong {
+    @apply block truncate text-[13px] font-semibold text-[#24292f];
+  }
+
+  .cc-data-reference__main small {
+    @apply block truncate text-[12px] text-[#6e7781];
+  }
+
+  .cc-data-reference__status {
+    @apply rounded-[6px] bg-white px-2 py-1 text-[11px] font-medium text-[#57606a];
+  }
+
   .alert-overlay {
     @apply fixed inset-0 z-[100] grid place-items-center bg-black/30 p-6 backdrop-blur-md;
   }
@@ -1228,6 +1292,10 @@
 
   .dc-map-stage__legend-count {
     @apply ml-auto rounded-full bg-black/[0.06] px-1.5 py-px text-[10px] font-medium text-[#6e7681];
+  }
+
+  .dc-map-stage__legend-route {
+    @apply ml-auto truncate max-w-[120px] rounded-full bg-[#00a3bf]/10 px-1.5 py-px text-[10px] font-medium text-[#00687a];
   }
 
   .dc-map-stage__legend-item em {

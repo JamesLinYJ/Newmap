@@ -20,12 +20,12 @@ import type {
   BasemapDescriptor,
   LayerDescriptor,
   ModelProviderDescriptor,
-  PublishRequest,
-  QgisModelsResponse,
   RunEvent,
   SessionRecord,
   SystemComponentsStatus,
   ToolDescriptor,
+  WeatherDatasetRecord,
+  WeatherJobRecord,
 } from '@geo-agent-platform/shared-types'
 
 // API 地址解析
@@ -106,6 +106,37 @@ async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 30_0
   return (await response.json()) as T
 }
 
+async function requestFormJson<T>(path: string, body: FormData, failurePrefix: string, timeoutMs = 120_000): Promise<T> {
+  // FormData 请求同样走统一超时和错误提取。
+  //
+  // 图层上传、后台导入和数据替换都可能传较大文件；这里不给它们另起一套
+  // 网络语义，避免图层管理在端口/代理异常时只抛出浏览器原始 TypeError。
+  let response: Response
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      body,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(formatApiErrorMessage(`${failurePrefix}超时（接口：${path}）。`, detail))
+    }
+    throw new Error(formatApiErrorMessage(`${failurePrefix}，请确认本地 API 或部署代理已经启动（接口：${path}，当前地址：${API_BASE_LABEL}）`, detail))
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (!response.ok) {
+    throw new Error(await extractErrorDetail(response))
+  }
+
+  return (await response.json()) as T
+}
+
 export function createSession() {
   // 会话是工作台的最外层容器，首页首次进入先拿到它。
   return requestJson<SessionRecord>('/api/v1/sessions', {
@@ -151,8 +182,15 @@ export function listSessionRuns(sessionId: string) {
   return requestJson<AnalysisRun[]>(`/api/v1/sessions/${sessionId}/runs`)
 }
 
-export function listLayers() {
-  return requestJson<LayerDescriptor[]>('/api/v1/layers?includeInactive=true')
+export function listLayers(sessionId?: string | null, threadId?: string | null) {
+  const params = new URLSearchParams({ includeInactive: 'true' })
+  if (sessionId) {
+    params.set('sessionId', sessionId)
+  }
+  if (threadId) {
+    params.set('threadId', threadId)
+  }
+  return requestJson<LayerDescriptor[]>(`/api/v1/layers?${params.toString()}`)
 }
 
 export function createLayer(payload: Record<string, unknown>) {
@@ -185,15 +223,6 @@ export function listProviders() {
 
 export function getSystemComponents() {
   return requestJson<SystemComponentsStatus>('/api/v1/system/components')
-}
-
-export function listQgisModels() {
-  return requestJson<QgisModelsResponse>('/api/v1/qgis/models')
-}
-
-export function listQgisAlgorithms() {
-  // QGIS algorithm 列表。
-  return requestJson<{ available: boolean; algorithms: ToolDescriptor[]; error?: string }>('/api/v1/qgis/algorithms')
 }
 
 export function listTools() {
@@ -232,10 +261,11 @@ export function deleteToolCatalogEntry(toolKind: string, toolName: string) {
 
 export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null) {
   // v1 仍保留作主工作台入口，内部会启动一次完整 run。
+  // 后端会同步调用 LLM 生成线程标题，超时放宽到 60 秒。
   return requestJson<AnalysisRun>('/api/v1/chat', {
     method: 'POST',
     body: JSON.stringify({ sessionId, query, provider, model, clarificationOptionId }),
-  })
+  }, 60_000)
 }
 
 export function startThreadRun(threadId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null) {
@@ -267,33 +297,11 @@ export function getArtifactMetadata(artifactId: string) {
   return requestJson<Record<string, unknown>>(`/api/v1/results/${artifactId}/metadata`)
 }
 
-export function publishArtifact(artifactId: string, payload: PublishRequest) {
-  // 发布仍走显式接口，保持审批边界和结果交付边界清晰分开。
-  return requestJson<Record<string, unknown>>(`/api/v1/results/${artifactId}/publish`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
 export function resolveApproval(runId: string, approvalId: string, approved: boolean) {
   // 审批动作恢复的是被中断的 run，而不是单独起一个新任务。
   return requestJson<AnalysisRun>(`/api/v2/runs/${runId}/approvals/${approvalId}`, {
     method: 'POST',
     body: JSON.stringify({ approved }),
-  })
-}
-
-export function runQgisProcess(payload: Record<string, unknown>) {
-  return requestJson<Record<string, unknown>>('/api/v1/qgis/process', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
-export function runQgisModel(payload: Record<string, unknown>) {
-  return requestJson<Record<string, unknown>>('/api/v1/qgis/models/run', {
-    method: 'POST',
-    body: JSON.stringify(payload),
   })
 }
 
@@ -304,28 +312,63 @@ export function runTool(payload: Record<string, unknown>) {
   })
 }
 
-export async function uploadLayer(sessionId: string, file: File) {
+export async function uploadLayer(sessionId: string, file: File, threadId?: string | null) {
   // 图层上传走 FormData，避免手动处理二进制序列化。
   const formData = new FormData()
   formData.append('session_id', sessionId)
+  if (threadId) {
+    formData.append('threadId', threadId)
+  }
   formData.append('file', file)
 
-  let response: Response
-  try {
-    response = await fetch(`${API_BASE_URL}/api/v1/layers/register`, {
+  return requestFormJson<LayerDescriptor>('/api/v1/layers/register', formData, '图层上传请求失败')
+}
+
+export async function uploadWeatherDataset(sessionId: string, file: File, threadId?: string | null) {
+  // 气象数据文件可能很大，后端会流式落盘并创建后台解析任务。
+  const formData = new FormData()
+  formData.append('sessionId', sessionId)
+  if (threadId) {
+    formData.append('threadId', threadId)
+  }
+  formData.append('file', file)
+
+  return requestFormJson<{ dataset: WeatherDatasetRecord; job?: WeatherJobRecord | null }>(
+    '/api/v1/weather/datasets',
+    formData,
+    '气象数据上传请求失败',
+    600_000,
+  )
+}
+
+export function listWeatherDatasets(sessionId?: string, threadId?: string | null) {
+  const params = new URLSearchParams()
+  if (sessionId) params.set('sessionId', sessionId)
+  if (threadId) params.set('threadId', threadId)
+  const query = params.toString()
+  return requestJson<WeatherDatasetRecord[]>(`/api/v1/weather/datasets${query ? '?' + query : ''}`)
+}
+
+export function getWeatherJob(jobId: string) {
+  return requestJson<WeatherJobRecord>(`/api/v1/weather/jobs/${encodeURIComponent(jobId)}`)
+}
+
+export function generateWeatherDatasetReport(
+  datasetId: string,
+  payload: {
+    llmInterpretation: string
+    runId?: string | null
+    resultName?: string | null
+  },
+) {
+  return requestJson<{ artifact: ArtifactRef; payload: Record<string, unknown> }>(
+    `/api/v1/weather/datasets/${encodeURIComponent(datasetId)}/report`,
+    {
       method: 'POST',
-      body: formData,
-    })
-  } catch (error) {
-    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-    throw new Error(formatApiErrorMessage('暂时无法连接分析服务，请确认本地 API 或部署环境已经启动', detail))
-  }
-
-  if (!response.ok) {
-    throw new Error(await extractErrorDetail(response))
-  }
-
-  return (await response.json()) as LayerDescriptor
+      body: JSON.stringify(payload),
+    },
+    120_000,
+  )
 }
 
 export async function importManagedLayer(
@@ -364,28 +407,18 @@ export async function importManagedLayer(
     formData.append('sourceConfigSummary', options.sourceConfigSummary)
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/v1/layers/import`, {
-    method: 'POST',
-    body: formData,
-  })
-  if (!response.ok) {
-    throw new Error(await extractErrorDetail(response))
-  }
-  return (await response.json()) as LayerDescriptor
+  return requestFormJson<LayerDescriptor>('/api/v1/layers/import', formData, '后台图层导入请求失败')
 }
 
 export async function replaceManagedLayer(layerKey: string, file: File) {
   const formData = new FormData()
   formData.append('file', file)
 
-  const response = await fetch(`${API_BASE_URL}/api/v1/layers/${encodeURIComponent(layerKey)}/replace`, {
-    method: 'POST',
-    body: formData,
-  })
-  if (!response.ok) {
-    throw new Error(await extractErrorDetail(response))
-  }
-  return (await response.json()) as LayerDescriptor
+  return requestFormJson<LayerDescriptor>(
+    `/api/v1/layers/${encodeURIComponent(layerKey)}/replace`,
+    formData,
+    '图层数据替换请求失败',
+  )
 }
 
 export function openRunEventStream(

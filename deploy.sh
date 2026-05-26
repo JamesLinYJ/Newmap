@@ -30,7 +30,6 @@ fi
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1}"
 APP_BASE_URL="${APP_BASE_URL:-${PUBLIC_BASE_URL}}"
 WEB_BASE_URL="${WEB_BASE_URL:-${PUBLIC_BASE_URL}}"
-QGIS_SERVER_BASE_URL="${QGIS_SERVER_BASE_URL:-${PUBLIC_BASE_URL%/}/qgis}"
 WEB_PORT="${WEB_PORT:-}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-$(current_branch_name)}"
 DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-}"
@@ -53,7 +52,7 @@ detect_working_docker_mirror() {
     return 0
   fi
 
-  if curl -I -4 -m 5 -sS https://registry-1.docker.io/v2/qgis/qgis/manifests/latest >/dev/null 2>&1; then
+  if curl -I -4 -m 5 -sS https://registry-1.docker.io/v2/library/python/manifests/latest >/dev/null 2>&1; then
     return 0
   fi
 
@@ -62,7 +61,7 @@ detect_working_docker_mirror() {
   )
   local mirror=""
   for mirror in "${mirror_candidates[@]}"; do
-    if curl -I -4 -m 5 -sS "${mirror}/v2/qgis/qgis/manifests/latest" >/dev/null 2>&1; then
+    if curl -I -4 -m 5 -sS "${mirror}/v2/library/python/manifests/latest" >/dev/null 2>&1; then
       DOCKER_REGISTRY_MIRRORS="${mirror}"
       print_warn "检测到直连 Docker Hub 不稳定，已自动切换到镜像源 ${mirror}"
       return 0
@@ -155,13 +154,8 @@ WEB_PORT=${WEB_PORT}
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 APP_BASE_URL=${APP_BASE_URL}
 WEB_BASE_URL=${WEB_BASE_URL}
-QGIS_SERVER_BASE_URL=${QGIS_SERVER_BASE_URL}
 RUNTIME_ROOT=./runtime
 SEED_LAYERS_DIR=./infra/seeds/layers
-QGIS_MODELS_DIR=./qgis/models
-QGIS_PUBLISH_DIR=./runtime/published
-QGIS_PROCESS_BIN=qgis_process
-QGIS_RUNTIME_BASE_URL=http://qgis-runtime:8090
 DATABASE_URL=postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
 DEFAULT_MODEL_PROVIDER=openai_compatible
 DEFAULT_MODEL_NAME=deepseek-v4-pro
@@ -185,10 +179,8 @@ PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1:${WEB_PORT}}"
 prompt_with_default PUBLIC_BASE_URL "请输入访问地址（例如 http://127.0.0.1 或你的域名）" "${PUBLIC_BASE_URL}"
 APP_BASE_URL="${APP_BASE_URL:-${PUBLIC_BASE_URL}}"
 WEB_BASE_URL="${WEB_BASE_URL:-${PUBLIC_BASE_URL}}"
-QGIS_SERVER_BASE_URL="${QGIS_SERVER_BASE_URL:-${PUBLIC_BASE_URL%/}/qgis}"
 prompt_with_default APP_BASE_URL "请输入 API 地址" "${APP_BASE_URL}"
 prompt_with_default WEB_BASE_URL "请输入前端地址" "${WEB_BASE_URL}"
-prompt_with_default QGIS_SERVER_BASE_URL "请输入 QGIS 地址" "${QGIS_SERVER_BASE_URL}"
 prompt_with_default OPENAI_API_KEY "请输入 DeepSeek API Key" "${OPENAI_API_KEY:-}" 1
 prompt_with_default GEMINI_API_KEY "请输入 Gemini API Key（可选备用）" "${GEMINI_API_KEY:-}" 1
 prompt_with_default TIANDITU_API_KEY "请输入天地图 API Key" "${TIANDITU_API_KEY:-}" 1

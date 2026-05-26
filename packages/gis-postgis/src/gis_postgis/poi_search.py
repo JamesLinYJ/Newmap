@@ -48,11 +48,12 @@ class PoiSearchProvider(Protocol):
     def health(self) -> dict[str, Any]: ...
 
 
-# Overpass API 镜像列表
-_OVERPASS_FALLBACK_BASE_URLS = [
+# Overpass API failover 列表。
+#
+# 只在同一 OSM 查询语义下切换端点，失败时继续抛出真实网络/API 错误。
+_OVERPASS_FAILOVER_BASE_URLS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 
 
@@ -79,7 +80,7 @@ class OverpassPoiSearchProvider:
         )
 
     def _request_with_retry(self, action, parse):
-        urls = [self.config.base_url] + [u for u in _OVERPASS_FALLBACK_BASE_URLS if u != self.config.base_url]
+        urls = [self.config.base_url] + [u for u in _OVERPASS_FAILOVER_BASE_URLS if u != self.config.base_url]
 
         last_error: Exception | None = None
         for base_url in urls:
@@ -89,13 +90,15 @@ class OverpassPoiSearchProvider:
                         response = action(client)
                         response.raise_for_status()
                         return parse(response)
-                except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
+                except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
                     last_error = exc
                     if attempt < 1:
                         time.sleep(0.3)
                         continue
                 break
-        raise last_error  # type: ignore[misc]
+        if last_error is None:
+            raise RuntimeError("外部 POI 检索请求未执行。")
+        raise last_error
 
     def search(
         self,

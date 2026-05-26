@@ -39,8 +39,11 @@ interface MapCanvasProps {
   runStatus?: string
   onSelectBasemap: (basemapKey: string) => void
   layers: Array<{
+    kind: 'geojson' | 'raster'
     artifact: ArtifactRef
-    data: GeoJsonPayload
+    data?: GeoJsonPayload
+    imageUrl?: string
+    coordinates?: [[number, number], [number, number], [number, number], [number, number]]
     visible: boolean
     opacity: number
     featureCount: number
@@ -50,6 +53,7 @@ interface MapCanvasProps {
   selectedArtifactName?: string
   onSelectArtifact: (artifactId: string) => void
   placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null
+  agentState?: { placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null } | null
 }
 
 export function MapCanvas({
@@ -60,7 +64,6 @@ export function MapCanvas({
   selectedArtifactId,
   selectedArtifactName,
   onSelectArtifact,
-  placeResolution,
 }: MapCanvasProps) {
   // 地图主画布
   //
@@ -70,6 +73,7 @@ export function MapCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<Map | null>(null)
   const boundsRef = useRef<LngLatBounds | null>(null)
+  const prevLayerCountRef = useRef(0)
   const appliedBasemapKeyRef = useRef<string | null>(null)
   const popupRef = useRef<maplibregl.Popup | null>(null)
   const hoverPopupRef = useRef<maplibregl.Popup | null>(null)
@@ -91,7 +95,7 @@ export function MapCanvas({
     basemaps.find((item) => item.basemapKey === selectedBasemapKey) ??
     basemaps.find((item) => item.isDefault) ??
     basemaps[0] ??
-    FALLBACK_BASEMAP
+    DEFAULT_BASEMAP
   const initialBasemapRef = useRef(activeBasemap)
 
   const cycleBasemap = useCallback(() => {
@@ -116,7 +120,7 @@ export function MapCanvas({
       return
     }
     const selectionBounds = selectedArtifactId
-      ? boundsFromCollection(layers.find((item) => item.artifact.artifactId === selectedArtifactId)?.data)
+      ? boundsFromLayer(layers.find((item) => item.artifact.artifactId === selectedArtifactId))
       : boundsRef.current
 
     if (selectionBounds && !selectionBounds.isEmpty()) {
@@ -126,21 +130,6 @@ export function MapCanvas({
 
     map.flyTo({ center: [121.4737, 31.2304], zoom: 11.2 })
   }, [layers, selectedArtifactId])
-
-  // 地点解析成功后自动飞行到目标坐标
-  const lastFlownRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!placeResolution || placeResolution.status !== 'resolved') return
-    const lat = placeResolution.selected?.latitude
-    const lng = placeResolution.selected?.longitude
-    if (lat == null || lng == null) return
-    const key = `${lat},${lng}`
-    if (key === lastFlownRef.current) return
-    lastFlownRef.current = key
-    const map = mapRef.current
-    if (!map) return
-    map.flyTo({ center: [lng, lat], zoom: 14, duration: 1200 })
-  }, [placeResolution])
 
   const handlePointerMove = useCallback((lng: number, lat: number) => {
     setCursor(`${lng.toFixed(4)}, ${lat.toFixed(4)}`)
@@ -476,20 +465,23 @@ export function MapCanvas({
 
     const syncLayers = () => {
       const bounds = syncArtifactLayers(map, layers, selectedArtifactId)
+      const prevLayerCount = prevLayerCountRef.current
       const prevBounds = boundsRef.current
       boundsRef.current = bounds
+      prevLayerCountRef.current = layers.length
 
-      // 仅在选中 artifact 变化或 bounds 真正改变时才飞行，避免每次图层刷新都跳动
-      const boundsChanged =
-        bounds && !bounds.isEmpty() &&
-        (!prevBounds || !prevBounds.isEmpty() &&
-          (Math.abs(bounds.getWest() - prevBounds.getWest()) > 1e-7 ||
-           Math.abs(bounds.getSouth() - prevBounds.getSouth()) > 1e-7 ||
-           Math.abs(bounds.getEast() - prevBounds.getEast()) > 1e-7 ||
-           Math.abs(bounds.getNorth() - prevBounds.getNorth()) > 1e-7))
-
-      if (boundsChanged) {
-        map.fitBounds(bounds, { padding: 120, duration: 900, maxZoom: 14 })
+      if (!bounds || bounds.isEmpty()) return
+      // 新图层出现时无条件飞行
+      const isNewLayer = layers.length > prevLayerCount
+      // 已有图层时仅 bounds 显著变化才飞
+      const boundsShifted = prevBounds && !prevBounds.isEmpty() && (
+        Math.abs(bounds.getWest() - prevBounds.getWest()) > 1e-5 ||
+        Math.abs(bounds.getSouth() - prevBounds.getSouth()) > 1e-5 ||
+        Math.abs(bounds.getEast() - prevBounds.getEast()) > 1e-5 ||
+        Math.abs(bounds.getNorth() - prevBounds.getNorth()) > 1e-5
+      )
+      if (isNewLayer || boundsShifted || !prevBounds || prevBounds.isEmpty()) {
+        map.fitBounds(bounds, { padding: 100, duration: 700, maxZoom: 14 })
       }
     }
 
@@ -557,8 +549,9 @@ export function MapCanvas({
       <AnimatePresence initial={false}>
       {layers.length && showLayerLegend ? (
         <m.div className="dc-map-stage__legend" aria-label="地图图层摘要" layout {...buildFadeUpMotion(reducedMotion, 0.14, 10)}>
-          {layers.map(({ artifact, visible, featureCount }, idx) => {
+          {layers.map(({ artifact, visible, featureCount, data }, idx) => {
             const color = artifact.artifactId === selectedArtifactId ? '#00687a' : ['#00a3bf', '#d48136', '#5b8def', '#4c956c'][idx % 4]
+            const routeInfo = data ? extractRouteLegendInfo(data) : null
             return (
               <m.button
                 key={artifact.artifactId}
@@ -571,7 +564,13 @@ export function MapCanvas({
               >
                 <span className="dc-map-stage__legend-dot" style={{ background: color }} aria-hidden="true" />
                 <strong>{artifact.name}</strong>
-                <span className="dc-map-stage__legend-count">{featureCount}</span>
+                {routeInfo ? (
+                  <span className="dc-map-stage__legend-route">{routeInfo}</span>
+                ) : !data ? (
+                  <span className="dc-map-stage__legend-count">栅格</span>
+                ) : (
+                  <span className="dc-map-stage__legend-count">{featureCount}</span>
+                )}
                 {!visible ? <em>隐藏</em> : null}
               </m.button>
             )
@@ -607,7 +606,7 @@ export function MapCanvas({
   )
 }
 
-const FALLBACK_BASEMAP: BasemapDescriptor = {
+const DEFAULT_BASEMAP: BasemapDescriptor = {
   basemapKey: 'osm',
   name: 'OpenStreetMap',
   provider: 'osm',
@@ -695,10 +694,27 @@ function syncArtifactLayers(
   layers.forEach((layer, index) => {
     const { artifact, data, visible, opacity } = layer
     const sourceId = `artifact-${artifact.artifactId}`
+    if (layer.kind === 'raster') {
+      syncRasterLayerSet(map, layer, sourceId, visible ? 'visible' : 'none', opacity)
+      const rasterBounds = boundsFromLayer(layer)
+      if (rasterBounds && !rasterBounds.isEmpty()) {
+        bounds.extend(rasterBounds.getSouthWest())
+        bounds.extend(rasterBounds.getNorthEast())
+        hasBounds = true
+      }
+      return
+    }
+
+    if (!data) {
+      return
+    }
     const source = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
-    if (source) {
+    if (source && typeof source.setData === 'function') {
       source.setData(data)
     } else {
+      if (source) {
+        removeArtifactSource(map, sourceId)
+      }
       map.addSource(sourceId, {
         type: 'geojson',
         data,
@@ -746,6 +762,61 @@ function removeStaleArtifactLayers(map: Map, activeSourceIds: Set<string>) {
     })
 }
 
+function removeArtifactSource(map: Map, sourceId: string) {
+  map.getStyle().layers
+    ?.filter((layer) => 'source' in layer && String(layer.source) === sourceId)
+    .forEach((layer) => {
+      if (map.getLayer(layer.id)) {
+        map.removeLayer(layer.id)
+      }
+    })
+  if (map.getSource(sourceId)) {
+    map.removeSource(sourceId)
+  }
+}
+
+function syncRasterLayerSet(
+  map: Map,
+  layer: MapCanvasProps['layers'][number],
+  sourceId: string,
+  visibility: 'visible' | 'none',
+  opacity: number,
+) {
+  if (!layer.imageUrl || !layer.coordinates) {
+    removeArtifactSource(map, sourceId)
+    return
+  }
+  const source = map.getSource(sourceId) as (maplibregl.ImageSource & { updateImage?: (options: { url: string; coordinates: [[number, number], [number, number], [number, number], [number, number]] }) => void }) | undefined
+  if (source && typeof source.updateImage === 'function') {
+    source.updateImage({ url: layer.imageUrl, coordinates: layer.coordinates })
+  } else {
+    if (source) {
+      removeArtifactSource(map, sourceId)
+    }
+    map.addSource(sourceId, {
+      type: 'image',
+      url: layer.imageUrl,
+      coordinates: layer.coordinates,
+    })
+  }
+  const layerId = `${sourceId}-raster`
+  if (!map.getLayer(layerId)) {
+    map.addLayer({
+      id: layerId,
+      type: 'raster',
+      source: sourceId,
+      paint: {
+        'raster-opacity': opacity,
+        'raster-fade-duration': 120,
+      },
+      layout: { visibility },
+    })
+    return
+  }
+  map.setLayoutProperty(layerId, 'visibility', visibility)
+  map.setPaintProperty(layerId, 'raster-opacity', opacity)
+}
+
 function syncArtifactLayerSet({
   map,
   layer,
@@ -763,8 +834,12 @@ function syncArtifactLayerSet({
   visible: boolean
   opacity: number
 }) {
+  if (!layer.data) {
+    return
+  }
   const geometryTypes = collectGeometryTypes(layer.data)
   const visibility = visible ? 'visible' : 'none'
+  const isRoute = hasRouteProperties(layer.data)
 
   syncMapLayer(map, {
     id: `${sourceId}-fill`,
@@ -789,6 +864,15 @@ function syncArtifactLayerSet({
       'line-opacity': 0.85 * opacity,
     },
   })
+  // 路线 LineString：用不同 dash 区分主路线和备选
+  const routeDashSequence = isRoute
+    ? ['match', ['get', 'route_index'],
+        0, ['literal', [1]],
+        1, ['literal', [6, 3]],
+        2, ['literal', [3, 2, 1, 2]],
+        ['literal', [1]],
+      ] as unknown as maplibregl.Expression
+    : undefined
   syncMapLayer(map, {
     id: `${sourceId}-path`,
     type: 'line',
@@ -797,10 +881,19 @@ function syncArtifactLayerSet({
     visibility,
     paint: {
       'line-color': color,
-      'line-width': selected ? 4 : 2.4,
+      'line-width': isRoute ? (selected ? 5 : 3.2) : (selected ? 4 : 2.4),
       'line-opacity': 0.92 * opacity,
+      ...(routeDashSequence ? { 'line-dasharray': routeDashSequence } : {}),
     },
   })
+  // 路线起点/终点使用特殊颜色（绿/红），其他点保持统一颜色
+  const pointColorExpr = isRoute
+    ? ['match', ['get', 'kind'],
+        'route_start', '#34c759',
+        'route_end', '#ff3b30',
+        color,
+      ] as unknown as maplibregl.Expression
+    : color
   syncMapLayer(map, {
     id: `${sourceId}-point`,
     type: 'circle',
@@ -808,9 +901,9 @@ function syncArtifactLayerSet({
     enabled: geometryTypes.has('Point') || geometryTypes.has('MultiPoint'),
     visibility,
     paint: {
-      'circle-radius': selected ? 8 : 6,
-      'circle-color': color,
-      'circle-stroke-width': 2,
+      'circle-radius': isRoute ? 7 : (selected ? 8 : 6),
+      'circle-color': pointColorExpr,
+      'circle-stroke-width': isRoute ? 2.5 : 2,
       'circle-stroke-color': '#ffffff',
       'circle-opacity': opacity,
     },
@@ -859,6 +952,22 @@ function syncMapLayer(
   })
 }
 
+function hasRouteProperties(collection: GeoJSON.FeatureCollection) {
+  return collection.features.some((f) => f.properties && ('route_index' in (f.properties as Record<string, unknown>) || 'distance_km' in (f.properties as Record<string, unknown>)))
+}
+
+function extractRouteLegendInfo(collection: GeoJSON.FeatureCollection): string | null {
+  const routeFeature = collection.features.find((f) => f.properties && 'distance_km' in (f.properties as Record<string, unknown>))
+  if (!routeFeature?.properties) return null
+  const p = routeFeature.properties as Record<string, unknown>
+  const dist = Number(p.distance_km)
+  const dur = Number(p.duration_min)
+  const modeLabel = p.mode_label ?? ''
+  if (Number.isNaN(dist) || Number.isNaN(dur)) return null
+  const distStr = dist >= 1 ? `${dist.toFixed(1)} km` : `${(dist * 1000).toFixed(0)} m`
+  return `${modeLabel} · ${distStr} · ${formatDurationLabel(dur)}`
+}
+
 function collectGeometryTypes(collection: GeoJSON.FeatureCollection) {
   const types = new Set<string>()
   collection.features.forEach((feature) => {
@@ -885,6 +994,21 @@ function boundsFromCollection(collection?: GeoJSON.FeatureCollection) {
   }
   const bounds = new LngLatBounds()
   extendBounds(bounds, collection)
+  return bounds.isEmpty() ? null : bounds
+}
+
+function boundsFromLayer(layer?: MapCanvasProps['layers'][number]) {
+  if (!layer) {
+    return null
+  }
+  if (layer.kind === 'geojson') {
+    return boundsFromCollection(layer.data)
+  }
+  if (!layer.coordinates) {
+    return null
+  }
+  const bounds = new LngLatBounds()
+  layer.coordinates.forEach((point) => bounds.extend(point))
   return bounds.isEmpty() ? null : bounds
 }
 
@@ -921,6 +1045,23 @@ function queryRenderedArtifactFeatures(map: Map, point: maplibregl.PointLike) {
 
 function buildHoverPopupHtml(feature: maplibregl.MapGeoJSONFeature) {
   const props = (feature.properties as Record<string, unknown>) ?? {}
+  // 路线要素：显示路线名称 + 距离 + 耗时
+  if (props.distance_km != null && props.duration_min != null) {
+    const name = props.name ?? '路线'
+    const dist = Number(props.distance_km)
+    const dur = Number(props.duration_min)
+    const modeLabel = props.mode_label ?? ''
+    const distStr = dist >= 1 ? `${dist.toFixed(1)} km` : `${(dist * 1000).toFixed(0)} m`
+    const durStr = formatDurationLabel(dur)
+    return `<div class="dc-hover-popup"><strong>${escapeHtml(String(name))}</strong><span class="dc-hover-category">${escapeHtml(String(modeLabel))} · ${distStr} · ${durStr}</span></div>`
+  }
+  // 路线起终点
+  if (props.kind === 'route_start' || props.kind === 'route_end') {
+    const label = props.kind === 'route_start' ? '起点' : '终点'
+    const name = props.name ?? label
+    return `<div class="dc-hover-popup"><strong>${escapeHtml(String(name))}</strong><span class="dc-hover-category">${label}</span></div>`
+  }
+  // 默认要素
   const name = props.name ?? props.Name ?? props.NAME ?? props.title ?? props.label ?? ''
   const category = props.category ?? props.type ?? props.kind ?? props.amenity ?? ''
   const parts: string[] = []
@@ -935,6 +1076,35 @@ function buildHoverPopupHtml(feature: maplibregl.MapGeoJSONFeature) {
 
 function buildFeaturePopupHtml(feature: maplibregl.MapGeoJSONFeature, layerName?: string) {
   const props = (feature.properties as Record<string, unknown>) ?? {}
+
+  // 路线要素专用弹窗
+  if (props.distance_km != null && props.duration_min != null) {
+    const dist = Number(props.distance_km)
+    const dur = Number(props.duration_min)
+    const distStr = dist >= 1 ? `${dist.toFixed(1)} km` : `${(dist * 1000).toFixed(0)} m`
+    const durStr = formatDurationLabel(dur)
+    const rows = [
+      `<div><span>路线</span><strong>${escapeHtml(String(props.name ?? '路线'))}</strong></div>`,
+      `<div><span>方式</span><strong>${escapeHtml(String(props.mode_label ?? props.mode ?? '-'))}</strong></div>`,
+      `<div><span>距离</span><strong>${distStr}</strong></div>`,
+      `<div><span>耗时</span><strong>${durStr}</strong></div>`,
+    ].join('')
+    return `<div class="dc-map-popup"><h4>${escapeHtml(layerName ?? '路线详情')}</h4>${rows}</div>`
+  }
+  // 起终点专用弹窗
+  if (props.kind === 'route_start' || props.kind === 'route_end') {
+    const label = props.kind === 'route_start' ? '起点' : '终点'
+    const coords = feature.geometry.type === 'Point'
+      ? ` ${(feature.geometry.coordinates as number[])[0].toFixed(4)}, ${(feature.geometry.coordinates as number[])[1].toFixed(4)}`
+      : ''
+    const rows = [
+      `<div><span>类型</span><strong>${label}</strong></div>`,
+      `<div><span>名称</span><strong>${escapeHtml(String(props.name ?? label))}</strong></div>`,
+      `<div><span>坐标</span><strong>${coords}</strong></div>`,
+    ].join('')
+    return `<div class="dc-map-popup"><h4>${escapeHtml(layerName ?? '路线节点')}</h4>${rows}</div>`
+  }
+  // 默认要素弹窗
   const entries = Object.entries(props)
     .filter(([, value]) => value != null && String(value).trim())
     .slice(0, 10)
@@ -958,6 +1128,13 @@ function buildFeaturePopupHtml(feature: maplibregl.MapGeoJSONFeature, layerName?
       ${rows}
     </div>
   `
+}
+
+function formatDurationLabel(minutes: number): string {
+  if (minutes < 60) return `${Math.round(minutes)} 分钟`
+  const h = Math.floor(minutes / 60)
+  const m = Math.round(minutes % 60)
+  return m > 0 ? `${h} 小时 ${m} 分钟` : `${h} 小时`
 }
 
 function formatPopupValue(value: unknown) {

@@ -27,6 +27,16 @@ from ..run_core import _build_tool_runtime
 
 router = APIRouter(tags=["runs"])
 
+TERMINAL_SSE_EVENT_TYPES = {"run.completed", "run.failed", "approval.required", "clarification.required"}
+
+
+def _is_terminal_sse_event(event) -> bool:
+    # SSE 终止语义。
+    #
+    # approval.required / clarification.required 都表示 run 已进入人工等待快照，
+    # 前端需要立刻 hydrate，不能继续把事件流挂在 running 状态里等 run.completed。
+    return event.type.value in TERMINAL_SSE_EVENT_TYPES
+
 
 @router.get("/api/v2/runs/{run_id}")
 async def get_thread_run(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
@@ -66,7 +76,7 @@ async def _stream_analysis_events(run_id: str, store: PostgresPlatformStore):
         for event in history:
             seen_ids.add(event.event_id)
             yield _format_sse(event)
-            if event.type.value in {"run.completed", "run.failed"}:
+            if _is_terminal_sse_event(event):
                 terminal_seen = True
 
         if terminal_seen:
@@ -83,7 +93,7 @@ async def _stream_analysis_events(run_id: str, store: PostgresPlatformStore):
                 if event.event_id not in seen_ids:
                     seen_ids.add(event.event_id)
                     yield _format_sse(event)
-                if event.type.value in {"run.completed", "run.failed"}:
+                if _is_terminal_sse_event(event):
                     break
         finally:
             store.unsubscribe(run_id, queue)

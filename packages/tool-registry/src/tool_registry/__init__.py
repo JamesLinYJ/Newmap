@@ -14,6 +14,7 @@
 
 from .base import ToolArgsModel, ToolExecutionResult, ToolRuntime, ToolRuntimeContext, ToolRuntimeState, ToolRuntimeStore
 from .registry import ToolDefinition, ToolMetadata, ToolRegistry, build_default_registry, build_default_tool_definitions
+from .value_refs import ToolValueStore, make_value_ref_id, resolve_value_ref
 
 __all__ = [
     "ToolArgsModel",
@@ -25,6 +26,9 @@ __all__ = [
     "ToolRuntimeContext",
     "ToolRuntimeState",
     "ToolRuntimeStore",
+    "ToolValueStore",
     "build_default_registry",
     "build_default_tool_definitions",
+    "make_value_ref_id",
+    "resolve_value_ref",
 ]

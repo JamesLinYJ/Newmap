@@ -35,8 +35,10 @@ from shared_types.schemas import (
     EventType,
     RunEvent,
     ToolCall,
+    ToolValueRef,
 )
 from tool_registry import ToolExecutionResult, ToolRuntime, ToolRuntimeContext, ToolRuntimeState, ToolRuntimeStore
+from tool_registry.value_refs import serialize_value_refs_for_model
 
 from .config import settings
 from .models import AnalysisRequest, ToolRunRequest
@@ -58,17 +60,20 @@ async def _generate_thread_title(
 ) -> str | None:
     try:
         adapter = runtime.model_registry.resolve_provider(provider)
-        response = await adapter.chat(
-            (
-                "请把下面这条用户需求压缩成一个简短中文任务标题。\n"
-                "要求：\n"
-                "1. 只返回标题文本，不要解释。\n"
-                "2. 控制在 8 到 18 个中文字符内。\n"
-                "3. 保留任务目标，不要写成口号。\n\n"
-                f"用户需求：{query}"
+        response = await asyncio.wait_for(
+            adapter.chat(
+                (
+                    "请把下面这条用户需求压缩成一个简短中文任务标题。\n"
+                    "要求：\n"
+                    "1. 只返回标题文本，不要解释。\n"
+                    "2. 控制在 8 到 18 个中文字符内。\n"
+                    "3. 保留任务目标，不要写成口号。\n\n"
+                    f"用户需求：{query}"
+                ),
+                model=model_name,
+                temperature=0.1,
             ),
-            model=model_name,
-            temperature=0.1,
+            timeout=8,
         )
     except Exception:
         return None
@@ -96,15 +101,17 @@ def _build_tool_runtime(
             session_id=session_id,
             latest_uploaded_layer_key=latest_uploaded_layer_key,
         ),
-        state=ToolRuntimeState(alias_map=_load_run_alias_map(store, run_id)),
+        state=ToolRuntimeState(
+            alias_map=_load_run_alias_map(store, run_id),
+            value_map=_load_run_value_map(store, run_id),
+        ),
         store=ToolRuntimeStore(
             platform_store=app.state.platform_store,
             layer_repository=app.state.layer_repository,
             artifact_export_store=app.state.artifact_export_store,
             spatial_service=app.state.spatial_service,
-            qgis_runner=app.state.qgis_runner,
-            publisher=app.state.publisher,
             runtime_root=settings.resolved_runtime_root,
+            weather_service=app.state.weather_service,
         ),
     )
 
@@ -130,6 +137,18 @@ def _load_run_alias_map(store: PostgresPlatformStore, run_id: str) -> dict[str, 
     return alias_map
 
 
+def _load_run_value_map(store: PostgresPlatformStore, run_id: str) -> dict[str, ToolValueRef]:
+    # run 恢复黑板。
+    #
+    # JSONL run snapshot 中的 tool_value_refs 是当前 run 工具值事实源；
+    # 缺字段视为空黑板，不回扫事件或旧历史兜底。
+    try:
+        run = store.get_run(run_id)
+    except (HTTPException, NotFoundError):
+        return {}
+    return {ref.ref_id: ref for ref in run.state.tool_value_refs}
+
+
 async def _execute_tool_request(
     payload: ToolRunRequest,
     *,
@@ -148,28 +167,6 @@ async def _execute_tool_request(
             app=app,
         )
         return await app.state.tool_registry.execute(payload.tool_name, dict(payload.args), runtime)
-
-    if payload.tool_kind == "qgis_algorithm":
-        from .qgis_core import run_qgis_algorithm_tool
-        return await run_qgis_algorithm_tool(
-            payload,
-            run_id=run_id,
-            store=app.state.store,
-            qgis_runner=app.state.qgis_runner,
-            layer_repository=app.state.layer_repository,
-            spatial_service=app.state.spatial_service,
-        )
-
-    if payload.tool_kind == "qgis_model":
-        from .qgis_core import run_qgis_model_tool
-        return await run_qgis_model_tool(
-            payload,
-            run_id=run_id,
-            store=app.state.store,
-            qgis_runner=app.state.qgis_runner,
-            layer_repository=app.state.layer_repository,
-            spatial_service=app.state.spatial_service,
-        )
 
     raise ValueError(f"不支持的工具类型：{payload.tool_kind}")
 
@@ -194,8 +191,20 @@ def _apply_tool_result_to_run(
             message=result.message,
             started_at=now_utc(),
             completed_at=now_utc(),
+            result_id=result.result_id,
+            source=result.source,
+            confidence=result.confidence,
+            used_query=result.used_query,
+            provenance=result.provenance,
+            crs=result.crs,
+            geometry_type=result.geometry_type,
+            feature_count=result.feature_count,
+            value_refs=result.value_refs,
         )
     )
+    tool_value_refs_by_id = {ref.ref_id: ref for ref in run.state.tool_value_refs}
+    for ref in result.value_refs:
+        tool_value_refs_by_id[ref.ref_id] = ref
     artifacts = list(run.state.artifacts)
     if result.artifact and not any(item.artifact_id == result.artifact.artifact_id for item in artifacts):
         artifacts.append(result.artifact)
@@ -203,6 +212,7 @@ def _apply_tool_result_to_run(
         run_id,
         status="completed",
         tool_results=tool_results,
+        tool_value_refs=list(tool_value_refs_by_id.values()),
         artifacts=artifacts,
         warnings=[*run.state.warnings, *result.warnings],
     )
@@ -215,7 +225,7 @@ def _apply_tool_result_to_run(
             type=EventType.TOOL_COMPLETED,
             message=result.message,
             timestamp=now_utc(),
-            payload={"tool": tool_name, "toolKind": tool_kind, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None},
+            payload={"tool": tool_name, "toolKind": tool_kind, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None, "valueRefs": serialize_value_refs_for_model(result.value_refs)},
         ),
     )
     store.append_event(
@@ -227,7 +237,7 @@ def _apply_tool_result_to_run(
             type=EventType.STEP_COMPLETED,
             message=result.message,
             timestamp=now_utc(),
-            payload={"tool": tool_name, "toolKind": tool_kind, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None},
+            payload={"tool": tool_name, "toolKind": tool_kind, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None, "valueRefs": serialize_value_refs_for_model(result.value_refs)},
         ),
     )
     return updated_run

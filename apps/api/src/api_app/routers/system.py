@@ -18,8 +18,6 @@ from fastapi import APIRouter, Request
 
 from agent_core import GeoAgentRuntime
 from shared_types.schemas import SystemComponentsStatus
-from ..config import settings
-from ..qgis_core import qgis_server_capabilities
 
 router = APIRouter(tags=["system"])
 
@@ -27,21 +25,10 @@ router = APIRouter(tags=["system"])
 @router.get("/api/v1/system/components")
 async def system_components(request: Request):
     app = request.app
-    qgis_runtime = await app.state.qgis_runner.health()
-    qgis_server_available, ogc_api_available = await qgis_server_capabilities()
-    capabilities = ["geojson"]
-    if qgis_server_available:
-        capabilities.extend(["wms", "wfs"])
-    if ogc_api_available:
-        capabilities.append("ogc_api_features")
     return SystemComponentsStatus(
         catalog_backend=app.state.layer_repository.__class__.__name__,
         postgis_enabled=True,
-        qgis_runtime_available=bool(qgis_runtime.get("available")),
-        qgis_server_available=qgis_server_available,
-        ogc_api_available=ogc_api_available,
-        publish_capabilities=capabilities,
-        qgis_server_base_url=settings.qgis_server_base_url,
+        session_log_root=str(app.state.store.session_log_store.root_path),
         providers=app.state.runtime.model_registry.descriptors(),
     )
 

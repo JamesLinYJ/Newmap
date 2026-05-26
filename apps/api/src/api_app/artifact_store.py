@@ -34,6 +34,21 @@ class ArtifactExportStore:
         save_geojson(output_path, collection)
         return output_path
 
+    def export_file(self, *, run_id: str, artifact_id: str, source_path: Path, suffix: str) -> Path:
+        # 非 GeoJSON artifact 导出。
+        #
+        # raster_png 等派生产物仍统一落到 runtime/artifacts/{run_id}，
+        # 这样结果访问、线程删除和路径逃逸校验继续复用同一套边界。
+        artifact_dir = self.artifacts_dir / run_id
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        normalized_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+        output_path = artifact_dir / f"{artifact_id}{normalized_suffix}"
+        output_path.write_bytes(source_path.read_bytes())
+        return output_path
+
+    def open_file(self, relative_path: str) -> Path:
+        return self.resolve(relative_path)
+
     def load_geojson(self, relative_path: str) -> dict[str, object]:
         return load_geojson(self.resolve(relative_path))
 

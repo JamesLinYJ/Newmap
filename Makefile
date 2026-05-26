@@ -9,7 +9,7 @@ install-web:
 	npm install
 
 dev-api:
-	python3 -m uvicorn api_app.main:app --reload --host 0.0.0.0 --port 8000
+	npm run dev:api
 
 dev-web:
 	npm run dev --workspace apps/web

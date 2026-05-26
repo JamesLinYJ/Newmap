@@ -1,0 +1,5416 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 483569726,
+        "osm_type": "node",
+        "name": "L'Hôpital Suisse de Paris",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "10",
+          "addr:street": "Rue Minard",
+          "amenity": "hospital",
+          "check_date": "2026-03-14",
+          "email": "info@hopitalsuissedeparis.com",
+          "healthcare": "hospital",
+          "heritage": "3",
+          "heritage:operator": "mhs",
+          "mhs:inscription_date": "1996-06-10",
+          "name": "L'Hôpital Suisse de Paris",
+          "phone:FR": "08 26 10 11 10",
+          "ref:FR:FINESS": "920000635",
+          "ref:mhs": "PA92000002",
+          "source:heritage": "Ministère de la Culture - 06/2019",
+          "type:FR:FINESS": "129",
+          "website": "https://www.hopitalsuissedeparis.com/",
+          "wikidata": "Q22980791",
+          "wikipedia": "fr:Hôpital suisse de Paris"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2768317,
+          48.8235358
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 703406696,
+        "osm_type": "node",
+        "name": "Clinique Vétérinaire Saint Paul",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "20",
+          "addr:postcode": "75004",
+          "addr:street": "Rue Ferdinand Duval",
+          "amenity": "clinic",
+          "check_date": "2024-08-04",
+          "email": "contact@saintpaul.vet",
+          "name": "Clinique Vétérinaire Saint Paul",
+          "opening_hours": "Tu-Sa 08:30-20:00; Su-Mo 09:00-19:00",
+          "phone": "+33148878596",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "website": "https://saintpaul.vet/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.359653,
+          48.856638
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 783760856,
+        "osm_type": "node",
+        "name": "Centre de Pneumologie de l'Enfant",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "108",
+          "addr:street": "Avenue Victor Hugo",
+          "amenity": "hospital",
+          "name": "Centre de Pneumologie de l'Enfant",
+          "phone": "+33 1 46 99 98 98",
+          "source:amenity": "survey"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2442898,
+          48.8352616
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 977194624,
+        "osm_type": "node",
+        "name": "Clinique Geoffroy Saint-Hilaire",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "check_date": "2026-04-14",
+          "fax": "+33 1 43 37 73 98",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Clinique Geoffroy Saint-Hilaire",
+          "operator": "Ramsay Santé",
+          "operator:type": "private",
+          "operator:wikidata": "Q3123085",
+          "operator:wikipedia": "fr:Ramsay Santé",
+          "phone": "+33 1 44 08 40 00",
+          "ref:FR:FINESS": "750300071",
+          "ref:FR:SIRET": "56209797200011",
+          "type:FR:FINESS": "128",
+          "website": "https://clinique-geoffroy-saint-hilaire-paris.ramsaygds.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3549103,
+          48.8435512
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1224158095,
+        "osm_type": "node",
+        "name": "Centre d'Exploration Digestive de l'Enfant",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "104",
+          "addr:street": "Avenue Victor Hugo",
+          "amenity": "hospital",
+          "check_date": "2025-04-11",
+          "name": "Centre d'Exploration Digestive de l'Enfant",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2011",
+          "source:amenity": "survey"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2444495,
+          48.835404
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1225227409,
+        "osm_type": "node",
+        "name": "Clinique Drouot Molitor",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2024-07-27",
+          "healthcare": "clinic",
+          "name": "Clinique Drouot Molitor",
+          "opening_hours": "Mo-Fr 09:00-19:00; Sa 09:00-12:00",
+          "phone": "+33 1 88 40 20 30",
+          "source": "survey 2018"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2614765,
+          48.8450737
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1362787029,
+        "osm_type": "node",
+        "name": "Place dentaire & Place Vision",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Place dentaire & Place Vision",
+          "wheelchair": "limited"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3578095,
+          48.8234162
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1462112612,
+        "osm_type": "node",
+        "name": "Clinique de la Muette",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Clinique de la Muette",
+          "ref:FR:FINESS": "750300840",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales, de la Santé et des Droits des Femmes - 12/2015",
+          "type:FR:FINESS": "365",
+          "website": "https://www.clinique-delamuette.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2777715,
+          48.8604665
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1684818336,
+        "osm_type": "node",
+        "name": "Institut Curie",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Institut Curie",
+          "ref:FR:FINESS": "750160012",
+          "type:FR:FINESS": "131",
+          "wikidata": "Q2451973"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3435197,
+          48.8426449
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1685650816,
+        "osm_type": "node",
+        "name": "Centre Luxembourg",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "emergency": "no",
+          "healthcare": "clinic",
+          "name": "Centre Luxembourg",
+          "website": "https://www.centre-luxembourg.com/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3394338,
+          48.8440994
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1945941131,
+        "osm_type": "node",
+        "name": "La Cité des Fleurs",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "emergency": "no",
+          "healthcare": "hospital",
+          "healthcare:speciality": "geriatrics",
+          "name": "La Cité des Fleurs",
+          "operator": "Les Diaconnesses de Reuilly",
+          "phone": "+33 1 56 37 57 00",
+          "ref:FR:FINESS": "920150075",
+          "source": "Le ministère des solidarités et de la santé - 03/2019",
+          "type:FR:FINESS": "109",
+          "website": "https://citedesfleurs.fondationdiaconesses.org/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2388567,
+          48.8999756
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2022863169,
+        "osm_type": "node",
+        "name": "Maison de Santé de Bellevue",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "8",
+          "addr:street": "Avenue du 11 Novembre 1918",
+          "amenity": "hospital",
+          "check_date": "2026-04-13",
+          "emergency": "no",
+          "healthcare": "hospital",
+          "name": "Maison de Santé de Bellevue",
+          "phone": "+33 1 41 14 15 00",
+          "ref:FR:FINESS": "920310042",
+          "ref:FR:SIRET": "31177097800014",
+          "type:FR:FINESS": "161",
+          "website": "http://www.clinique-bellevue.com"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2244585,
+          48.8201025
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2089723521,
+        "osm_type": "node",
+        "name": "Hôpital Marmottan",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "contact:website": "http://www.hopital-marmottan.fr/",
+          "healthcare": "hospital",
+          "name": "Hôpital Marmottan",
+          "ref:FR:FINESS": "750006249",
+          "source": "Le ministère des solidarités et de la santé - 03/2019",
+          "wikidata": "Q2945875"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2912675,
+          48.8781498
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2255903945,
+        "osm_type": "node",
+        "name": "Convention - Balard",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "contact:city": "Paris",
+          "contact:housenumber": "52",
+          "contact:postcode": "75015",
+          "contact:street": "Rue Balard",
+          "healthcare:speciality": "radiology",
+          "name": "Convention - Balard",
+          "phone": "+33 1 43 92 00 00"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2776225,
+          48.8413244
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2495910498,
+        "osm_type": "node",
+        "name": "Centre d'Imagerie Médicale Italie",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "6",
+          "addr:postcode": "75013",
+          "addr:street": "Place d'Italie",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "radiology",
+          "name": "Centre d'Imagerie Médicale Italie",
+          "source": "survey"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3546387,
+          48.8320984
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2655889759,
+        "osm_type": "node",
+        "name": "Clinique Implantologie Paris Madeleine",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "contact:city": "Paris",
+          "contact:email": "cliniqueimplantologiemadeleine@yahoo.fr",
+          "contact:housenumber": "5",
+          "contact:mobile": "+33 6 95 86 74 55",
+          "contact:phone": "+33 1 40 07 03 56",
+          "contact:postcode": "75008",
+          "contact:street": "Rue Tronchet",
+          "contact:website": "https://www.clinique-implantologie-paris-madeleine.fr/",
+          "healthcare": "clinic",
+          "healthcare:speciality": "clinic",
+          "name": "Clinique Implantologie Paris Madeleine",
+          "opening_hours": "Mo-Fr 09:00-20:00; Sa-Su 10:00-13:00",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.325077,
+          48.8712921
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2781045630,
+        "osm_type": "node",
+        "name": "hospital",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2024-04-14",
+          "healthcare": "clinic"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.297974,
+          48.885746
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2781164083,
+        "osm_type": "node",
+        "name": "Centre paramédical Paul Adam",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre paramédical Paul Adam"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.295685,
+          48.887501
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2836154901,
+        "osm_type": "node",
+        "name": "Cabinet médical Tocqueville",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet médical Tocqueville"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.306305,
+          48.888294
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2887556973,
+        "osm_type": "node",
+        "name": "Unité de dialyse des Buttes-Chaumont",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "dialysis",
+          "healthcare:speciality": "nephrology",
+          "name": "Unité de dialyse des Buttes-Chaumont",
+          "phone": "+33 1 45 26 53 55",
+          "ref:FR:FINESS": "750814824",
+          "source": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Solidarités et de la Santé - 2021-03",
+          "type:FR:FINESS": "146"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3855589,
+          48.8760901
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2913420188,
+        "osm_type": "node",
+        "name": "Institut Français de Myopie",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "amenity": "clinic",
+          "check_date": "2024-11-06",
+          "healthcare": "clinic",
+          "name": "Institut Français de Myopie",
+          "phone": "+33148036565",
+          "ref:FR:FINESS": "750150229;750000549",
+          "ref:FR:SIRET": "78477802900016",
+          "source": "Le ministère des solidarités et de la santé - 2025-11",
+          "type:FR:FINESS": "365",
+          "website": "https://www.fo-rothschild.fr/patient/lhopital/nos-etablissements/institut-francais-de-myopie"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3757629,
+          48.8784351
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2919533537,
+        "osm_type": "node",
+        "name": "Centre Paramedical Cavendish",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Paramedical Cavendish",
+          "opening_hours:signed": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3789869,
+          48.8844081
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2922556549,
+        "osm_type": "node",
+        "name": "Centre Médical et Paramédical",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2024-03-18",
+          "healthcare": "clinic",
+          "name": "Centre Médical et Paramédical",
+          "opening_hours": "Mo-Sa 10:00-18:00"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3866173,
+          48.8832179
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2924827263,
+        "osm_type": "node",
+        "name": "Clinique Canal de L'ourcq",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "check_date": "2024-03-18",
+          "healthcare": "hospital",
+          "name": "Clinique Canal de L'ourcq",
+          "opening_hours": "Mo-Fr 09:00-19:00; Sa-Su 13:00-19:00",
+          "operator": "Inicea",
+          "phone": "+33 1 55 56 53 00",
+          "ref:FR:FINESS": "750003378",
+          "ref:FR:SIRET": "44305571000018",
+          "source": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "109",
+          "website": "https://www.inicea.fr/smr/clinique-canal-de-l-ourcq-paris-75019"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3878153,
+          48.8856585
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 2935920001,
+        "osm_type": "node",
+        "name": "Espace santé européen",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "4",
+          "addr:postcode": "75017",
+          "addr:street": "Avenue Gourgaud",
+          "amenity": "clinic",
+          "check_date": "2025-09-13",
+          "name": "Espace santé européen",
+          "opening_hours": "Mo-Fr 07:00-18:30; Sa 08:00-12:00",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2974525,
+          48.8857324
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3054369367,
+        "osm_type": "node",
+        "name": "Groupe médical Rampal",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2025-03-02",
+          "healthcare": "clinic",
+          "name": "Groupe médical Rampal",
+          "opening_hours": "Mo-Sa 09:00-12:00, Mo-Fr 14:30-18:00",
+          "wheelchair": "limited"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3798331,
+          48.874063
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3105749276,
+        "osm_type": "node",
+        "name": "Hôpital de Jour pour Enfants",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Hôpital de Jour pour Enfants",
+          "operator": "L'Élan retrouvé",
+          "ref:FR:FINESS": "750007999",
+          "source": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "365",
+          "website": "http://www.elan-retrouve.fr/hopital-jour-enfants-haxo.php"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4028142,
+          48.8747235
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3168734713,
+        "osm_type": "node",
+        "name": "Centre de Santé Polyvalent",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre de Santé Polyvalent",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "439"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4028457,
+          48.8748082
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3189803775,
+        "osm_type": "node",
+        "name": "Centre de Santé Polyvalent",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2023-12-13",
+          "email": "csp.boulogne@croix-rouge.fr",
+          "fax": "+33 1 46 94 08 90",
+          "health_facility:type": "dispensary",
+          "healthcare": "yes",
+          "name": "Centre de Santé Polyvalent",
+          "operator": "Croix-Rouge française",
+          "operator:wikidata": "Q3003244",
+          "phone": "+33 1 46 21 04 54",
+          "ref": "1623",
+          "ref:FR:FINESS": "920010105",
+          "source": "Le ministère des solidarités et de la santé - 10/2018",
+          "type:FR:FINESS": "124",
+          "website": "http://www.centre-de-sante.croix-rouge.fr/index.php/liste-des-centres/boulogne-billancourt"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2455686,
+          48.8308649
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3231694316,
+        "osm_type": "node",
+        "name": "Hôpital de jour Georges Vacola",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Hôpital de jour Georges Vacola",
+          "ref:FR:FINESS": "750810384",
+          "source": "survey",
+          "type:FR:FINESS": "161",
+          "website": "http://www.vacola.asso-gd.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3750552,
+          48.8852964
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3269742332,
+        "osm_type": "node",
+        "name": "Institut Noémie de Rothschild",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2025-06-22",
+          "healthcare": "clinic",
+          "name": "Institut Noémie de Rothschild",
+          "opening_hours": "Mo-Fr 07:00-19:30; Sa 08:00-12:30",
+          "ref:FR:FINESS": "750076390"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3752447,
+          48.8762911
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3501719723,
+        "osm_type": "node",
+        "name": "Hôpital Maison Blanche",
+        "category": "hospital",
+        "tags": {
+          "alt_name": "GHU Paris - Hauteville",
+          "amenity": "hospital",
+          "contact:city": "Paris",
+          "contact:housenumber": "26",
+          "contact:postcode": "75010",
+          "contact:street": "Rue d'Hauteville",
+          "healthcare": "hospital",
+          "healthcare:speciality": "psychiatry",
+          "name": "Hôpital Maison Blanche",
+          "operator": "GHU PARIS PSYCHIATRIE ET NEUROSCIENCES",
+          "operator:type": "public",
+          "phone": "+33 1 40 22 12 69",
+          "ref:FR:FINESS": "750023749",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010/local_knowledge",
+          "website": "https://www.ghu-paris.fr/fr/annuaire-des-structures-medicales?address=&sector=All&categories=All&type_audience=All&type_support=All&keys=hauteville",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3503654,
+          48.8726355
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3624753425,
+        "osm_type": "node",
+        "name": "Centre Santé Dorée",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "67",
+          "addr:street": "Boulevard Soult",
+          "amenity": "clinic",
+          "check_date": "2026-01-25",
+          "healthcare": "clinic",
+          "name": "Centre Santé Dorée",
+          "opening_hours": "Mo-Fr 08:30-19:30",
+          "phone": "+33 1 44 75 60 60",
+          "ref:FR:FINESS": "750053852",
+          "ref:FR:SIRET": "79028311300013",
+          "source": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "439",
+          "website": "https://centre-sante-doree.fr/",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4086013,
+          48.8402311
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 3978165263,
+        "osm_type": "node",
+        "name": "Centre Municipal de Santé Elsa Rustin",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Municipal de Santé Elsa Rustin",
+          "ref:FR:FINESS": "930010756",
+          "source": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "439"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.417718,
+          48.8671266
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 4070148934,
+        "osm_type": "node",
+        "name": "Centre médico-dentaire Pépinière",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre médico-dentaire Pépinière"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.320703,
+          48.8750657
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 4416374303,
+        "osm_type": "node",
+        "name": "Centre de Rééducation Fonctionnelle Port-Royal",
+        "category": "hospital",
+        "tags": {
+          "alt_name": "Clinique Port-Royal",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "physiatry",
+          "name": "Centre de Rééducation Fonctionnelle Port-Royal",
+          "phone": "+33 1 58 52 25 40",
+          "ref:FR:FINESS": "750038739",
+          "ref:FR:SIRET": "30116075000644",
+          "short_name": "CRF Port-Royal",
+          "source": "Le ministère des solidarités et de la santé - 2025-05",
+          "type:FR:FINESS": "109"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3399561,
+          48.8355335
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 4657177274,
+        "osm_type": "node",
+        "name": "Clinalliance",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Clinalliance",
+          "opening_hours": "Mo-Fr 09:00-17:00"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3780226,
+          48.8266353
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 4936398378,
+        "osm_type": "node",
+        "name": "Plateforme Maladies Rares",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Plateforme Maladies Rares"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3141331,
+          48.8275463
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 5023043114,
+        "osm_type": "node",
+        "name": "Med-Ophta Paris",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "95",
+          "addr:postcode": "75011",
+          "addr:street": "Rue du Faubourg Saint-Antoine",
+          "amenity": "clinic",
+          "description": "Cabinet d'ophtalmologie, Paris 11",
+          "facebook": "https://www.facebook.com/medophtaparis/",
+          "healthcare": "clinic",
+          "healthcare:speciality": "ophthalmology",
+          "name": "Med-Ophta Paris",
+          "operator": "Med-Ophta Paris",
+          "phone": "+33184251505",
+          "twitter": "https://twitter.com/medophtaparis",
+          "website": "https://www.med-ophta.paris",
+          "wheelchair": "limited",
+          "wheelchair:description:fr": "Cabinet accessible, mais la porte cochère pour y accéder a un rebord de 7 cm."
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3754468,
+          48.8515639
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 5213203524,
+        "osm_type": "node",
+        "name": "Clinique Internationale du Parc Monceau",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "contact:city": "Paris",
+          "contact:housenumber": "21",
+          "contact:phone": "+33 1 48 88 25 25",
+          "contact:postcode": "75017",
+          "contact:street": "Rue de Chazelles",
+          "contact:website": "http://www.clinique-monceau.com/",
+          "healthcare": "hospital",
+          "name": "Clinique Internationale du Parc Monceau",
+          "name:en": "Clinical International du Parc Monceau",
+          "opening_hours": "24/7",
+          "ref:FR:FINESS": "750300915",
+          "type:FR:FINESS": "365",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.304237,
+          48.8800182
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 5555915321,
+        "osm_type": "node",
+        "name": "Centre Pierre Cherest",
+        "category": "hospital",
+        "tags": {
+          "addr:postcode": "92000",
+          "amenity": "clinic",
+          "fax": "+33146418980",
+          "healthcare": "clinic",
+          "name": "Centre Pierre Cherest",
+          "phone": "+33826200300",
+          "ref:FR:FINESS": "920300712",
+          "ref:FR:SIRET": "33137801800021",
+          "source": "Le ministère des solidarités et de la santé - 03/2019",
+          "type:FR:FINESS": "128",
+          "website": "https://www.ambroisepare.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2797959,
+          48.8832434
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 5666973595,
+        "osm_type": "node",
+        "name": "CK13",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2026-04-26",
+          "email": "ck13.rdv@gmail.com",
+          "healthcare": "clinic",
+          "name": "CK13",
+          "opening_hours:signed": "no",
+          "phone": "+33 1 45 81 67 21"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3461801,
+          48.8216453
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 5719766166,
+        "osm_type": "node",
+        "name": "Institut de radiothérapie Hartmann",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "4",
+          "amenity": "clinic",
+          "fax": "+33 1 47 58 05 96",
+          "healthcare": "clinic",
+          "healthcare:speciality": "oncology",
+          "name": "Institut de radiothérapie Hartmann",
+          "opening_hours": "Mo-Fr 7:30-20:00",
+          "phone": "+33 1 47 57 67 10",
+          "ref:FR:FINESS": "920028917",
+          "source": "cadastre-dgi-fr source : Direction Générale des Finances Publiques - Cadastre. Mise à jour : 2017;local knowledge",
+          "website": "https://horg.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2787553,
+          48.8921572
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 5839393990,
+        "osm_type": "node",
+        "name": "Centre de santé médical et dentaire",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2025-08-23",
+          "check_date:opening_hours": "2025-08-23",
+          "contact:city": "Paris",
+          "contact:housenumber": "1",
+          "contact:postcode": "75010",
+          "contact:street": "Place de la Bataille de Stalingrad",
+          "healthcare": "clinic",
+          "healthcare:speciality": "general;dentiste",
+          "name": "Centre de santé médical et dentaire",
+          "official_name": "Médico Dentaire Jaurès Stalingrad",
+          "opening_hours": "Mo-Fr 09:00-19:00",
+          "operator": "Médident",
+          "phone": "+33185736161",
+          "ref:FR:SIRET": "83296037100017",
+          "website": "https://www.centres-medident.com/centre/centre-jaures-stalingrad/",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3694779,
+          48.8827539
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 5841674493,
+        "osm_type": "node",
+        "name": "Clinadent",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "contact:city": "Paris",
+          "contact:facebook": "https://www.facebook.com/biocbonfrance/",
+          "contact:housenumber": "88",
+          "contact:phone": "+33 1 57 97 82 80",
+          "contact:postcode": "75015",
+          "contact:street": "Avenue Félix Faure",
+          "disused:shop": "yes",
+          "healthcare": "clinic",
+          "healthcare:speciality": "dentist",
+          "name": "Clinadent",
+          "opening_hours": "Mo-Fr 09:00-19:00",
+          "organic": "only"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2837852,
+          48.8395835
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 6053263519,
+        "osm_type": "node",
+        "name": "Centre Médico Psychologique Télégraphe",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Médico Psychologique Télégraphe",
+          "website": "http://www.ch-maison-blanche.fr/Trouver-une-structure/Centre-Medico-Psychologique-Telegraphe-75G28"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3996705,
+          48.8718017
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 6314897205,
+        "osm_type": "node",
+        "name": "CMS Romainville Louise-Michel",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Romainville",
+          "addr:housenumber": "91",
+          "addr:postcode": "93230",
+          "addr:street": "Rue Saint-Germain",
+          "amenity": "clinic",
+          "check_date:opening_hours": "2026-02-13",
+          "email": "prevention.cms@ville-romainville.fr",
+          "healthcare": "yes",
+          "name": "CMS Romainville Louise-Michel",
+          "opening_hours": "Mo 08:30-12:30,14:00-19:00; Tu-Fr 08:30-12:30,13:30-19:00, Sa 09:00-12:00",
+          "phone": "+33141831770",
+          "ref:FR:FINESS": "930702311",
+          "type:FR:FINESS": "124"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4303592,
+          48.8802645
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 6315948009,
+        "osm_type": "node",
+        "name": "Hopsoin",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Hopsoin",
+          "opening_hours": "Mo-Sa 10:00-22:00",
+          "wheelchair": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3097484,
+          48.8160648
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 6616357595,
+        "osm_type": "node",
+        "name": "CMS Cornet",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Pantin",
+          "addr:housenumber": "12",
+          "addr:postcode": "93500",
+          "addr:street": "Rue Eugène et Marie-Louise Cornet",
+          "amenity": "clinic",
+          "healthcare": "centre",
+          "healthcare:speciality": "general;gynaecology;ophthalmology;paediatrics;dermatology;radiology;dentist",
+          "name": "CMS Cornet",
+          "operator": "Ville de Pantin",
+          "operator:type": "public",
+          "website": "https://pratique.pantin.fr/sante-et-prevention/sante/centres-municipaux-de-sante/cms-cornet"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.406116,
+          48.8927972
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 6987051305,
+        "osm_type": "node",
+        "name": "Clinique médico-universitaire Georges Heuyer",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Clinique médico-universitaire Georges Heuyer",
+          "name:etymology:wikidata": "Q3102883"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3756397,
+          48.8275194
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7131500262,
+        "osm_type": "node",
+        "name": "Pole de Consultations Chirurgie Vasculaire",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2024-11-08",
+          "healthcare": "clinic",
+          "name": "Pole de Consultations Chirurgie Vasculaire",
+          "operator": "Clinique Geoffroy Saint-Hilaire"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3539781,
+          48.8437425
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7131526972,
+        "osm_type": "node",
+        "name": "Centre Européen d'Explorations Gynécologiques",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2026-05-02",
+          "healthcare": "clinic",
+          "name": "Centre Européen d'Explorations Gynécologiques",
+          "phone": "+33 155431490",
+          "short_name": "CEEG"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3533192,
+          48.8436022
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7415766970,
+        "osm_type": "node",
+        "name": "Centre médical Santé+",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2025-08-18",
+          "contact:city": "Paris",
+          "contact:email": "saintmartin@sante-plus.com",
+          "contact:housenumber": "12",
+          "contact:phone": "+33 1 42 00 20 20",
+          "contact:postcode": "75010",
+          "contact:street": "Rue du Faubourg Saint-Martin",
+          "contact:website": "https://www.sante-plus.com/ile-de-france/saintmartin/",
+          "healthcare": "clinic",
+          "name": "Centre médical Santé+",
+          "official_name": "Centre médical Saint-Martin",
+          "ref:FR:FINESS": "750058190",
+          "ref:FR:SIRET": "81431236900022",
+          "source": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Solidarités et de la Santé - 03/2020",
+          "type:FR:FINESS": "124"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3560662,
+          48.8695889
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7553939050,
+        "osm_type": "node",
+        "name": "Centre d'Imagerie Médicale de Fontenay-sous-Bois",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "check_date": "2026-04-27",
+          "healthcare": "hospital",
+          "name": "Centre d'Imagerie Médicale de Fontenay-sous-Bois"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4667653,
+          48.8438335
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7556925407,
+        "osm_type": "node",
+        "name": "Clinique du Trocadéro",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "contact:city": "Paris",
+          "contact:fax": "+33 1 40 72 40 68",
+          "contact:housenumber": "62",
+          "contact:phone": "+33 1 40 72 40 40",
+          "contact:postcode": "75016",
+          "contact:street": "Rue de la Tour",
+          "healthcare": "hospital",
+          "name": "Clinique du Trocadéro",
+          "ref:FR:FINESS": "750300881",
+          "ref:FR:SIRET": "35050813100025",
+          "source": "Le ministère des solidarités et de la santé - 03/2019",
+          "type:FR:FINESS": "128"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2809606,
+          48.8604049
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7568123336,
+        "osm_type": "node",
+        "name": "Unité de Soins de Suite de la Fondation Rothschild",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "check_date": "2023-04-02",
+          "fax": "+33144687226",
+          "healthcare": "hospital",
+          "name": "Unité de Soins de Suite de la Fondation Rothschild",
+          "phone": "+33144687298",
+          "ref:FR:FINESS": "750042830",
+          "ref:FR:SIRET": "77568109100127",
+          "source": "Le ministère des solidarités et de la santé - 03/2019",
+          "type:FR:FINESS": "109"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3980305,
+          48.8416639
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7603808418,
+        "osm_type": "node",
+        "name": "Centre de santé Yvonne Pouzin",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "14",
+          "addr:postcode": "75003",
+          "addr:street": "Rue Volta",
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Centre de santé Yvonne Pouzin",
+          "old_name": "Centre Au Maire Volta",
+          "opening_hours": "Mo-Fr 08:30-19:00",
+          "operator": "Ville de Paris",
+          "phone": "+33 1 48 87 49 87",
+          "website": "https://paris.fr/centresdesante",
+          "wheelchair": "yes",
+          "wheelchair:description:fr": "Centre de plain pied"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3573815,
+          48.8647994
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7683602679,
+        "osm_type": "node",
+        "name": "Espace Santé Hoche",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Pantin",
+          "addr:housenumber": "5-7",
+          "addr:postcode": "93500",
+          "addr:street": "Avenue Jean Lolive",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Espace Santé Hoche",
+          "website": "https://www.espace-sante-hoche.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3994938,
+          48.8907118
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7731681596,
+        "osm_type": "node",
+        "name": "Pôle santé la Défense",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Nanterre",
+          "addr:housenumber": "46",
+          "addr:postcode": "92000",
+          "addr:street": "Boulevard des Bouvets",
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Pôle santé la Défense",
+          "phone": "+33 1 46141414"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2274643,
+          48.8954906
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7888322743,
+        "osm_type": "node",
+        "name": "Centre d'imagerie médicale Nollet",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "114",
+          "addr:postcode": "75017",
+          "addr:street": "Rue Nollet",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "radiology",
+          "name": "Centre d'imagerie médicale Nollet",
+          "operator": "Imagerie Maussins-Nollet",
+          "survey:date": "2020-09-05",
+          "website": "https://radiologue.paris/",
+          "wheelchair": "limited"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3176086,
+          48.8892589
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7921483847,
+        "osm_type": "node",
+        "name": "Clinique Bizet",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Clinique Bizet",
+          "website": "https://www.bizet-cliniques-paris.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2969191,
+          48.8675555
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7923610498,
+        "osm_type": "node",
+        "name": "Capillo",
+        "category": "hospital",
+        "tags": {
+          "addr:floor": "0",
+          "addr:housenumber": "41",
+          "addr:street": "Rue de Turbigo",
+          "amenity": "clinic",
+          "brand": "Peugeot",
+          "check_date": "2025-06-04",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Capillo",
+          "operator": "Peugeot",
+          "wheelchair": "limited"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3526665,
+          48.8648188
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 7923610571,
+        "osm_type": "node",
+        "name": "Clinique Villa Montsouris",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2026-03-19",
+          "healthcare": "clinic",
+          "name": "Clinique Villa Montsouris",
+          "opening_hours:signed": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3418006,
+          48.8286955
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8068619004,
+        "osm_type": "node",
+        "name": "Clinique du sport",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Clinique du sport"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3589466,
+          48.8392909
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8120508731,
+        "osm_type": "node",
+        "name": "Pôle Santé Bergère",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "9",
+          "addr:postcode": "75009",
+          "addr:street": "Rue Bergère",
+          "amenity": "clinic",
+          "check_date": "2025-08-01",
+          "check_date:opening_hours": "2025-02-12",
+          "healthcare": "clinic",
+          "healthcare:speciality": "general;ophthalmology;cardiology;urology;gynaecology;nutrition;dermatology;paediatrics;otolaryngology;radiology;gastroenterology;allergology;rheumatology;neurology;pain_control;biology;dentist;acupuncture;osteopathy;pulmonology",
+          "name": "Pôle Santé Bergère",
+          "opening_hours:signed": "no",
+          "operator": "Audiens",
+          "operator:type": "private"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3468328,
+          48.8719615
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8144049359,
+        "osm_type": "node",
+        "name": "Cabinet infirmier",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "nurses",
+          "name": "Cabinet infirmier"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4088952,
+          48.8825119
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8236688539,
+        "osm_type": "node",
+        "name": "Clinique de jour Tolbiac",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2024-03-29",
+          "healthcare": "clinic",
+          "name": "Clinique de jour Tolbiac",
+          "name:etymology:wikidata": "Q264737",
+          "opening_hours:signed": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3714834,
+          48.8285584
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8269359942,
+        "osm_type": "node",
+        "name": "Cabinet paramédical",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:postcode": "75013",
+          "addr:street": "Boulevard Masséna",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet paramédical"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3715915,
+          48.8220764
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8269359960,
+        "osm_type": "node",
+        "name": "Pôle de santé Paris XIII sud-est",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Pôle de santé Paris XIII sud-est"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3676805,
+          48.8295903
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8345219618,
+        "osm_type": "node",
+        "name": "Clinique de La Montagne entrée Victor Hugo",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "53",
+          "addr:street": "Victor Hugo",
+          "amenity": "clinic",
+          "description": "Entrée de la Clinique et consultations privées",
+          "healthcare": "clinic",
+          "name": "Clinique de La Montagne entrée Victor Hugo"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2602375,
+          48.8953481
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8354199443,
+        "osm_type": "node",
+        "name": "Au Fond des Yeux",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2025-07-07",
+          "healthcare": "clinic",
+          "healthcare:speciality": "ophthalmology",
+          "level": "0",
+          "name": "Au Fond des Yeux",
+          "phone": "+33 1 40 01 95 94",
+          "toilets": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3781925,
+          48.8269601
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8402437219,
+        "osm_type": "node",
+        "name": "Cabinet paramédical Tolbiac",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2023-10-01",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Cabinet paramédical Tolbiac"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.374956,
+          48.8297371
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8468075817,
+        "osm_type": "node",
+        "name": "Cabinet paramédical Epione",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2024-09-01",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Cabinet paramédical Epione"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3574955,
+          48.8326123
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8514412758,
+        "osm_type": "node",
+        "name": "CTAR",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2026-02-19",
+          "healthcare": "clinic",
+          "name": "CTAR",
+          "opening_hours:signed": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3091699,
+          48.8447138
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8921286644,
+        "osm_type": "node",
+        "name": "Clinique de la Vision",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Clinique de la Vision"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3081938,
+          48.8610077
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8977444617,
+        "osm_type": "node",
+        "name": "Centre Ophtalmique Paris 17",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "33",
+          "addr:postcode": "75017",
+          "addr:street": "Rue de Chazelles",
+          "amenity": "clinic",
+          "check_date:opening_hours": "2024-08-19",
+          "healthcare": "clinic",
+          "name": "Centre Ophtalmique Paris 17",
+          "opening_hours:signed": "no",
+          "phone": "+33 1 47 64 46 75"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3054687,
+          48.880568
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 8990393545,
+        "osm_type": "node",
+        "name": "cabinet infirmier",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "cabinet infirmier"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3402071,
+          48.8834849
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9082433473,
+        "osm_type": "node",
+        "name": "IRM Paris Hoche",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "IRM Paris Hoche"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3054816,
+          48.8751
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9247842736,
+        "osm_type": "node",
+        "name": "Maison de santé Chevaleret",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "general",
+          "level": "0",
+          "name": "Maison de santé Chevaleret",
+          "opening_hours": "Mo-Fr 08:00-20:00, Sa 09:00-13:00",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3780186,
+          48.8252616
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9292308904,
+        "osm_type": "node",
+        "name": "Centre de psychologie Ponthieu",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "psychology",
+          "name": "Centre de psychologie Ponthieu"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3068649,
+          48.8716178
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9383539582,
+        "osm_type": "node",
+        "name": "Dermo Medical Center",
+        "category": "hospital",
+        "tags": {
+          "addr:floor": "0",
+          "addr:housenumber": "35",
+          "addr:street": "Rue de Turbigo",
+          "amenity": "clinic",
+          "check_date": "2025-08-07",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Dermo Medical Center",
+          "note": "choix du tag difficile : \"WYW Care propose des espaces de travail pour les professionnels de santé et du bien-être\"",
+          "opening_hours": "Mo-Fr 09:00-19:00",
+          "wheelchair": "limited"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3523677,
+          48.8647452
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9426779806,
+        "osm_type": "node",
+        "name": "Maison de santé pluriprofessionnelle des Deux Portes",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2026-01-30",
+          "contact:city": "Paris",
+          "contact:housenumber": "8",
+          "contact:phone": "+33 1 81 70 25 70",
+          "contact:postcode": "75010",
+          "contact:street": "Rue de Saint-Quentin",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Maison de santé pluriprofessionnelle des Deux Portes",
+          "source": "survey 01/2022"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3556128,
+          48.877666
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9572792637,
+        "osm_type": "node",
+        "name": "Cabinet infirmier",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet infirmier"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2955786,
+          48.849155
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9667186287,
+        "osm_type": "node",
+        "name": "Centre d'ophtalmologie",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "ophthalmology",
+          "level": "3",
+          "name": "Centre d'ophtalmologie",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3550038,
+          48.828953
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9695226064,
+        "osm_type": "node",
+        "name": "Centre para-médical Jean Jaurès",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "17",
+          "addr:postcode": "75019",
+          "addr:street": "Avenue Jean Jaurès",
+          "amenity": "clinic",
+          "check_date:opening_hours": "2025-09-22",
+          "healthcare": "clinic",
+          "name": "Centre para-médical Jean Jaurès",
+          "opening_hours": "Mo-Sa 09:00-13:00,14:00-20:00",
+          "source": "survey",
+          "website": "https://www.jean-jaures-podologie.fr/",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3725164,
+          48.8835636
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9713637904,
+        "osm_type": "node",
+        "name": "Centre Médical et Dentaire Balard",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Médical et Dentaire Balard",
+          "opening_hours": "Mo-Fr 09:00-19:00",
+          "phone": "+33 1 40 60 88 10",
+          "ref:FR:FINESS": "750061202"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2781528,
+          48.8409614
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9754136514,
+        "osm_type": "node",
+        "name": "Hopital La Boissiere",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "13",
+          "addr:postcode": "93130",
+          "addr:street": "Boulevard de la Boissière",
+          "amenity": "clinic",
+          "fax": "+33141551079",
+          "healthcare": "clinic",
+          "name": "Hopital La Boissiere",
+          "phone": "+33141551070",
+          "ref:FR:FINESS": "930700018",
+          "ref:FR:SIRET": "48026601400533",
+          "type:FR:FINESS": "109",
+          "website": "https://idf.vyv3.fr/soins/soins-medicaux-et-readaptation/hopital-la-boissiere/",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4502747,
+          48.8787531
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9770695140,
+        "osm_type": "node",
+        "name": "Cabinet Médical",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "8",
+          "addr:postcode": "75003",
+          "addr:street": "Rue Saint-Gilles",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet Médical",
+          "opening_hours": "+33 7 69 44 66 30"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3668717,
+          48.8578464
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9788775053,
+        "osm_type": "node",
+        "name": "Cabinet médical des Minimes",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "médecine_générale",
+          "name": "Cabinet médical des Minimes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3671753,
+          48.8571142
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9876027322,
+        "osm_type": "node",
+        "name": "Hdj Boissière Noisy Le Sec",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "emergency": "no",
+          "healthcare": "hospital",
+          "healthcare:speciality": "psychiatry",
+          "name": "Hdj Boissière Noisy Le Sec",
+          "ref:FR:FINESS": "930021696",
+          "ref:FR:SIRET": "26930093500930",
+          "source": "Le ministère des solidarités et de la santé - 2022-03;survey",
+          "type:FR:FINESS": "292",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4521363,
+          48.8786051
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 9990056555,
+        "osm_type": "node",
+        "name": "Cabinet infirmier",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "7",
+          "addr:postcode": "75020",
+          "addr:street": "Rue du Docteur Paquelin",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet infirmier",
+          "opening_hours": "Mo-Fr 18:00-19:30; Sa-Su 18:00-18:30",
+          "phone": "+33 1 43 48 62 43"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4028781,
+          48.8692487
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10061970658,
+        "osm_type": "node",
+        "name": "CPNDO",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2024-09-14",
+          "healthcare": "clinic",
+          "healthcare:speciality": "child_psychiatry",
+          "name": "CPNDO",
+          "opening_hours:signed": "no",
+          "wheelchair": "limited"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3346701,
+          48.8339677
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10120715123,
+        "osm_type": "node",
+        "name": "Institut De Chirurgie",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2026-04-14",
+          "healthcare": "clinic",
+          "healthcare:speciality": "surgery",
+          "level": "0",
+          "name": "Institut De Chirurgie",
+          "opening_hours": "\"sur rendez vous\""
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3541081,
+          48.8436062
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10198325274,
+        "osm_type": "node",
+        "name": "Diaverum",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "dialysis",
+          "healthcare:speciality": "nephrology",
+          "name": "Diaverum",
+          "website": "https://fr.diaverum.com/fr/fr/clinic-container/centre-de-dialyse-diaverum-paris-saint-maur"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3828718,
+          48.8595111
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10594499020,
+        "osm_type": "node",
+        "name": "Clinique du Louvre",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "17",
+          "addr:postcode": "75001",
+          "addr:street": "Rue des Prêtres Saint-Germain l'Auxerrois",
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Clinique du Louvre"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3411286,
+          48.8592105
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10696951905,
+        "osm_type": "node",
+        "name": "Clinique Sainte Thérèse",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "9",
+          "addr:postcode": "75017",
+          "addr:street": "Rue Gustave Doré",
+          "amenity": "clinic",
+          "check_date:opening_hours": "2025-02-26",
+          "healthcare": "clinic",
+          "name": "Clinique Sainte Thérèse",
+          "name:fr": "Clinique Sainte Thérèse (maternité)",
+          "opening_hours:signed": "no",
+          "website": "https://www.cliniquesaintetherese.fr/fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3024731,
+          48.8865147
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10736464005,
+        "osm_type": "node",
+        "name": "Centre médical de l'institut Pasteur",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "211",
+          "addr:postcode": "75015",
+          "addr:street": "Rue de Vaugirard",
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Centre médical de l'institut Pasteur",
+          "opening_hours": "Su-Fr 09:00-17:00",
+          "phone": "+33 1 45 68 80 88",
+          "website": "https://www.pasteur.fr"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3096451,
+          48.8419867
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10833345427,
+        "osm_type": "node",
+        "name": "Institut du cerveau Trocadéro",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Institut du cerveau Trocadéro"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2804988,
+          48.8625061
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10862749332,
+        "osm_type": "node",
+        "name": "Centre paramédical du Mont Louis",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "20",
+          "addr:postcode": "75011",
+          "addr:street": "Rue de Belfort",
+          "amenity": "clinic",
+          "check_date": "2025-12-09",
+          "healthcare": "clinic",
+          "name": "Centre paramédical du Mont Louis"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3847413,
+          48.8568717
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10870383270,
+        "osm_type": "node",
+        "name": "Centre laser Victor Hugo",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "6",
+          "addr:postcode": "75116",
+          "addr:street": "Rue du Dôme",
+          "amenity": "clinic",
+          "email": "laservictorhugo@gmail.com",
+          "healthcare": "clinic",
+          "healthcare:speciality": "surgery",
+          "name": "Centre laser Victor Hugo",
+          "phone": "+33 1 55 73 02 02",
+          "website": "https://operation-yeux-laser.com/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2914888,
+          48.8715214
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 10883369653,
+        "osm_type": "node",
+        "name": "Clinique Sainte-Geneviève",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Clinique Sainte-Geneviève",
+          "opening_hours": "24/7",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3293782,
+          48.8262255
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11030459989,
+        "osm_type": "node",
+        "name": "Benhamou",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "plastic_surgery",
+          "name": "Benhamou"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2798403,
+          48.8618533
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11172077375,
+        "osm_type": "node",
+        "name": "Centre dentaire & ophtalmologique",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre dentaire & ophtalmologique"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.371564,
+          48.8904073
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11172086314,
+        "osm_type": "node",
+        "name": "UrgenceMed",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2024-11-12",
+          "healthcare": "clinic",
+          "name": "UrgenceMed",
+          "opening_hours": "Mo-Su 09:00-22:00",
+          "wheelchair": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3727644,
+          48.8921068
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11185949609,
+        "osm_type": "node",
+        "name": "Ramsay santé, pôle de consultations",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date": "2025-11-29",
+          "healthcare": "clinic",
+          "name": "Ramsay santé, pôle de consultations"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3528911,
+          48.8435853
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11219814813,
+        "osm_type": "node",
+        "name": "hospital",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3158574,
+          48.885717
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11258071493,
+        "osm_type": "node",
+        "name": "MLS Centre de médecine esthétique",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "MLS Centre de médecine esthétique",
+          "opening_hours": "Mo-Fr 10:00-13:00,14:00-19:00",
+          "wheelchair": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3195042,
+          48.8801727
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11263303023,
+        "osm_type": "node",
+        "name": "Le Prevost",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Le Prevost",
+          "ref:FR:FINESS": "920011988",
+          "ref:FR:SIRET": "26950008800373",
+          "source": "Le ministère des solidarités et de la santé - 2023-09",
+          "type:FR:FINESS": "292"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3162206,
+          48.9012167
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11573359157,
+        "osm_type": "node",
+        "name": "Le 236 Vaugirard",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "236",
+          "addr:street": "Rue de Vaugirard",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Le 236 Vaugirard"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3036451,
+          48.8403958
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11590185315,
+        "osm_type": "node",
+        "name": "Diaverum",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "dialysis",
+          "healthcare:speciality": "nephrology",
+          "name": "Diaverum"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3727057,
+          48.8821999
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11675997433,
+        "osm_type": "node",
+        "name": "Centre Liberté",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Liberté",
+          "ref:FR:SIRET": "82925813600011",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4417213,
+          48.8492874
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11808213995,
+        "osm_type": "node",
+        "name": "Cabinet Paramédical",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet Paramédical"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3219099,
+          48.8315783
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11874951516,
+        "osm_type": "node",
+        "name": "Centre de soins Vulpian",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre de soins Vulpian",
+          "wheelchair": "limited"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3469092,
+          48.8324022
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11926421037,
+        "osm_type": "node",
+        "name": "hospital",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3018589,
+          48.8820761
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 11949796939,
+        "osm_type": "node",
+        "name": "hospital",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2837167,
+          48.8659149
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12017209367,
+        "osm_type": "node",
+        "name": "Centre médical Hahnemann",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre médical Hahnemann",
+          "website": "https://www.cm-hahnemann.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3459727,
+          48.8300624
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12043096544,
+        "osm_type": "node",
+        "name": "Clinique des Champs Elysées",
+        "category": "hospital",
+        "tags": {
+          "addr:floor": ";0",
+          "addr:housenumber": "86",
+          "addr:street": "Boulevard de Sébastopol",
+          "amenity": "clinic",
+          "check_date": "2026-04-10",
+          "healthcare": "clinic",
+          "level": "0;0",
+          "name": "Clinique des Champs Elysées"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3524923,
+          48.865651
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12192611550,
+        "osm_type": "node",
+        "name": "Cabinet de soins infirmiers",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet de soins infirmiers"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3591264,
+          48.8351922
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12196752342,
+        "osm_type": "node",
+        "name": "Centre Cortambert",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "radiology",
+          "level": "0",
+          "name": "Centre Cortambert"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2790615,
+          48.8607958
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12196752348,
+        "osm_type": "node",
+        "name": "Chirurgie du Sport",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "level": "0",
+          "name": "Chirurgie du Sport"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2780798,
+          48.8599932
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12198581893,
+        "osm_type": "node",
+        "name": "Institut de la Vue Paris Saint-Joseph",
+        "category": "hospital",
+        "tags": {
+          "alt_name": "Institut du Glaucome",
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "healthcare:speciality": "ophthalmology",
+          "name": "Institut de la Vue Paris Saint-Joseph"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3102741,
+          48.8301458
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12202383031,
+        "osm_type": "node",
+        "name": "MSP Vincent Auriol",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "check_date:opening_hours": "2024-11-23",
+          "healthcare": "clinic",
+          "name": "MSP Vincent Auriol",
+          "opening_hours:signed": "no",
+          "toilets": "yes",
+          "wheelchair": "designated"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3607869,
+          48.8321301
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12219352655,
+        "osm_type": "node",
+        "name": "Centre Medico-dentaire Pépinière",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Medico-dentaire Pépinière",
+          "opening_hours": "Mo-Fr 09:00-19:30"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3206264,
+          48.8747957
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12272845413,
+        "osm_type": "node",
+        "name": "Centre d'imagerie médicale Oudinot",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "radiology",
+          "level": "0",
+          "name": "Centre d'imagerie médicale Oudinot"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3172695,
+          48.8499665
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12314443974,
+        "osm_type": "node",
+        "name": "Centre Médical Des 2 Communes",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Médical Des 2 Communes",
+          "opening_hours": "Mo-Fr 09:00-19:00",
+          "phone": "+33 1 88 59 09 00",
+          "ref:FR:SIRET": "91239055600013",
+          "survey:date": "2024-11-05"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4293515,
+          48.8499957
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12339154901,
+        "osm_type": "node",
+        "name": "Jeen Consult'",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "103",
+          "addr:postcode": "75011",
+          "addr:street": "Avenue de la République",
+          "amenity": "clinic",
+          "contact:instagram": "jeen_raconte",
+          "email": "paris11@jeen.care",
+          "healthcare": "clinic",
+          "internet_access": "wlan",
+          "name": "Jeen Consult'",
+          "website": "https://www.jeen.care/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3857847,
+          48.8633021
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12366242198,
+        "osm_type": "node",
+        "name": "Cabinet Médecine Générale",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet Médecine Générale"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3409349,
+          48.8928909
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12400623852,
+        "osm_type": "node",
+        "name": "Centre Pereire",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Pereire"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3087837,
+          48.8868892
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12409989612,
+        "osm_type": "node",
+        "name": "Centre Passy",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Passy"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2845854,
+          48.8583011
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12532274630,
+        "osm_type": "node",
+        "name": "Crntre Échographie Et Doppler",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "radiology",
+          "name": "Crntre Échographie Et Doppler"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.307463,
+          48.8712394
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12603927991,
+        "osm_type": "node",
+        "name": "Imagerie médicale Manin-Crimée",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "90 bis",
+          "addr:postcode": "75019",
+          "addr:street": "Rue de Crimée",
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Imagerie médicale Manin-Crimée",
+          "ref:FR:SIRET": "83422816500017"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.385058,
+          48.8835533
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12641087774,
+        "osm_type": "node",
+        "name": "Centre Médico Psychologique",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre Médico Psychologique"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3835441,
+          48.8844227
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12693045761,
+        "osm_type": "node",
+        "name": "EllaSanté",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "EllaSanté",
+          "website": "https://ellasante.paris/",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3193915,
+          48.8740561
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12695378174,
+        "osm_type": "node",
+        "name": "Institut de neuropsychologie, neurovision et neurocognition",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Institut de neuropsychologie, neurovision et neurocognition",
+          "operator": "Hôpital Fondation Adolphe de Rothschild",
+          "short_name": "I3N"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3815488,
+          48.8835151
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12707677332,
+        "osm_type": "node",
+        "name": "Centre de santé des Épinettes",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Issy-les-Moulineaux",
+          "addr:housenumber": "44",
+          "addr:postcode": "92130",
+          "addr:street": "Rue d'Erevan",
+          "amenity": "hospital",
+          "contact:housenumber": "54",
+          "contact:street": "Rue d'Erevan",
+          "dispensing": "yes",
+          "emergency": "no",
+          "healthcare": "hospital",
+          "name": "Centre de santé des Épinettes",
+          "opening_hours": "Mo-Fr 08:30-19:30",
+          "operator": "Mairie d'Issy/Hôpital suisse",
+          "operator:type": "local_authority",
+          "phone": "+33 1 41 23 92 46",
+          "ref:FR:FINESS": "920015211"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2597413,
+          48.8185886
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12787050311,
+        "osm_type": "node",
+        "name": "CMP Adolescents La Roquette",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "healthcare:speciality": "child_psychiatry",
+          "name": "CMP Adolescents La Roquette",
+          "website": "https://www.hpevm.fr/CAP-Bastille/5/138/89"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3759039,
+          48.8565318
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12787050334,
+        "osm_type": "node",
+        "name": "CAP Bastille",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "level": "1",
+          "name": "CAP Bastille",
+          "website": "https://www.hpevm.fr/CAP-Bastille/5/138/89",
+          "wheelchair": "no"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3761402,
+          48.8563228
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 12978210693,
+        "osm_type": "node",
+        "name": "Centre médico-social Elio Habib",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Centre médico-social Elio Habib",
+          "opening_hours": "Mo-Th 08:30-19:30; Fr 08:30-17:00"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4010722,
+          48.8427615
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13008573998,
+        "osm_type": "node",
+        "name": "Clinique du Musicien et de la Performance Musicale",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "65",
+          "addr:street": "Rue de l'Ourcq",
+          "amenity": "clinic",
+          "check_date": "2025-07-18",
+          "email": "contact@cliniquedumusicien.com",
+          "healthcare": "clinic",
+          "name": "Clinique du Musicien et de la Performance Musicale",
+          "phone": "+33 1 40 35 29 37",
+          "website": "https://cliniquedumusicien.com/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3796884,
+          48.8919354
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13086410063,
+        "osm_type": "node",
+        "name": "Protection Civile Courbevoie / Neuilly-sur-Seine / La Garenne-Colombes",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Courbevoie",
+          "addr:housenumber": "48",
+          "addr:postcode": "92400",
+          "addr:street": "Rue de Colombes",
+          "amenity": "hospital",
+          "emergency": "no",
+          "healthcare": "hospital",
+          "healthcare:speciality": "secourisme",
+          "name": "Protection Civile Courbevoie / Neuilly-sur-Seine / La Garenne-Colombes",
+          "operator": "Protection Civile Paris Seine",
+          "operator:type": "association"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2567977,
+          48.9007505
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13510562101,
+        "osm_type": "node",
+        "name": "Centre de santé Saint Jacques",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "37",
+          "addr:postcode": "75015",
+          "addr:street": "Rue des Volontaires",
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Centre de santé Saint Jacques"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3088476,
+          48.8406631
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13682753293,
+        "osm_type": "node",
+        "name": "Institut Médical Sport Santé",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare:speciality": "cardiology;orthopaedics;physiatry",
+          "name": "Institut Médical Sport Santé",
+          "short_name": "IMSS",
+          "source": "survey"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2541439,
+          48.8433066
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13714331424,
+        "osm_type": "node",
+        "name": "soin infirmier",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "soin infirmier",
+          "opening_hours": "Mo-Su 10:00-11:00"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3410156,
+          48.8913727
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13753328910,
+        "osm_type": "node",
+        "name": "Cabinet infirmier",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Cabinet infirmier"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3902013,
+          48.8522122
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13794273859,
+        "osm_type": "node",
+        "name": "Omecare",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Omecare"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.376414,
+          48.8618178
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 13794277995,
+        "osm_type": "node",
+        "name": "Soon",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "healthcare": "clinic",
+          "name": "Soon"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3771836,
+          48.8621611
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 14577452,
+        "osm_type": "way",
+        "name": "Hôpital Tenon",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Sorbonne Université",
+          "emergency": "yes",
+          "fax": "+33 1 56 01 64 90",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital Tenon",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33 1 56 01 70 00",
+          "ref:FR:FINESS": "750100273",
+          "ref:FR:SIRET": "26750045200235",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2014",
+          "type:FR:FINESS": "101",
+          "website": "https://tenon.aphp.fr/",
+          "wikidata": "Q3145241",
+          "wikipedia": "fr:Hôpital Tenon"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4020047,
+          48.8663639
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 21001145,
+        "osm_type": "way",
+        "name": "GHU Paris Psychiatrie & neurosciences - site Sainte-Anne",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "1",
+          "addr:street": "Rue Cabanis",
+          "amenity": "hospital",
+          "architect": "Charles-Auguste Questel",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "GHU Paris Psychiatrie & neurosciences - site Sainte-Anne",
+          "operator": "GHU Paris Psychiatrie & neurosciences",
+          "operator:type": "public",
+          "ref:FR:FINESS": "750000499",
+          "source": "Le ministère des solidarités et de la santé - 03/2019",
+          "type:FR:FINESS": "355",
+          "website": "https://www.ghu-paris.fr/",
+          "wikidata": "Q88885968",
+          "wikipedia": "fr:Groupe hospitalier universitaire Paris psychiatrie & neurosciences"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3390837,
+          48.8284833
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 22661892,
+        "osm_type": "way",
+        "name": "Hôpital Corentin Celton",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Centre - Université Paris Cité",
+          "emergency": "no",
+          "healthcare": "hospital",
+          "name": "Hôpital Corentin Celton",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33 1 58 00 40 00",
+          "ref:FR:FINESS": "920100062",
+          "ref:FR:SIRET": "26750045200409",
+          "source": "Le ministère des solidarités et de la santé - 03/2019",
+          "type:FR:FINESS": "101",
+          "wikidata": "Q3145150",
+          "wikipedia": "fr:Hôpital Corentin-Celton"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2786271,
+          48.8282044
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 22690619,
+        "osm_type": "way",
+        "name": "Fondation ophtalmologique Adolphe de Rothschild",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "check_date": "2024-08-18",
+          "emergency": "yes",
+          "fax": "+33 1 48 03 69 23",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Fondation ophtalmologique Adolphe de Rothschild",
+          "operator": "Fondation ophtalmologique Adolphe de Rothschild",
+          "operator:type": "private",
+          "phone": "+33 1 48 03 65 65",
+          "ref:FR:FINESS": "750000549",
+          "ref:FR:SIRET": "78477802900016",
+          "short_name": "Fondation de Rothschild",
+          "source": "http://www.fo-rothschild.fr/",
+          "type:FR:FINESS": "365",
+          "website": "https://www.fo-rothschild.fr/",
+          "wikidata": "Q3075356"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3776344,
+          48.8782542
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 22996283,
+        "osm_type": "way",
+        "name": "Hôpital du Val de Grâce",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Hôpital du Val de Grâce",
+          "type:FR:FINESS": "114"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.343123,
+          48.8395602
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 22996354,
+        "osm_type": "way",
+        "name": "Hôpital Cochin",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:housenumber": "27",
+          "addr:postcode": "75014",
+          "addr:street": "Rue du Faubourg Saint-Jacques",
+          "amenity": "hospital",
+          "branch": "Centre - Université Paris Cité",
+          "emergency": "yes",
+          "fax": "+33 1 58 41 10 05",
+          "healthcare": "hospital",
+          "healthcare:speciality": "ophthalmology;orthopaedics;emergency;psychiatry;cardiology;dermatology;gynaecology;oncology;radiology;biology;internal;surgery;maternity;urology;pharmacovigilance;hematology;hepatology;gastroenterology;intensive",
+          "name": "Hôpital Cochin",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33 1 58 41 41 41",
+          "ref:FR:FINESS": "750100166",
+          "ref:FR:SIRET": "38304765100013",
+          "type:FR:FINESS": "101",
+          "website": "https://hopital-cochin-port-royal.aphp.fr",
+          "wikidata": "Q1131080",
+          "wikipedia": "fr:Hôpital Cochin"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3399281,
+          48.8370175
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 22996358,
+        "osm_type": "way",
+        "name": "Maternité Port Royal",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Maternité Port Royal",
+          "ref:FR:FINESS": "750100182",
+          "source": "Le ministère des solidarités et de la santé - 10/2018"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.338173,
+          48.8381233
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 23032886,
+        "osm_type": "way",
+        "name": "Centre Hospitalier National d'Ophtalmologie des Quinze-Vingts",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "28",
+          "addr:postcode": "75012",
+          "addr:street": "Rue de Charenton",
+          "alt_name": "Centre hospitalier national d'ophtalmologie des Quinze-Vingts",
+          "amenity": "hospital",
+          "contact:twitter": "Quinze_Vingts",
+          "description": "Centre hospitalier national d’ophtalmologie des Quinze-Vingts",
+          "emergency": "yes",
+          "fax": "+33 1 46 28 60 66",
+          "healthcare": "hospital",
+          "name": "Centre Hospitalier National d'Ophtalmologie des Quinze-Vingts",
+          "operator:type": "public",
+          "phone": "+33 1 40 02 15 20",
+          "ref:FR:FINESS": "750000481",
+          "short_name": "CHNO",
+          "type:FR:FINESS": "355",
+          "website": "https://www.quinze-vingts.fr/",
+          "wikidata": "Q1460618",
+          "wikipedia": "fr:Hôpital des Quinze-Vingts"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3719619,
+          48.8503229
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 23115060,
+        "osm_type": "way",
+        "name": "Hôpital Saint-Joseph",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "contact:city": "Paris",
+          "contact:fax": "+33 1 44 12 33 33",
+          "contact:housenumber": "185",
+          "contact:postcode": "75014",
+          "contact:street": "Rue Raymond Losserand",
+          "contact:website": "https://www.hpsj.fr/",
+          "emergency": "yes",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital Saint-Joseph",
+          "note": "Plan de Masse : https://www.hpsj.fr/wp-content/uploads/2014/11/Plan_juin_2017.pdf",
+          "operator": "Groupe hospitalier Paris Saint-Joseph",
+          "operator:type": "private",
+          "ref:FR:FINESS": "750000523",
+          "type:FR:FINESS": "365",
+          "wheelchair": "yes",
+          "wikidata": "Q3117857"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3117253,
+          48.8294228
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 23172825,
+        "osm_type": "way",
+        "name": "Institut Mutualiste Montsouris",
+        "category": "hospital",
+        "tags": {
+          "alt_name": "IMM",
+          "amenity": "hospital",
+          "contact:fax": "+33 1 45 80 60 41",
+          "contact:phone": "+33 1 56 61 62 63",
+          "contact:website": "http://imm.fr/",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive;maternity",
+          "name": "Institut Mutualiste Montsouris",
+          "name:zh": "蒙苏里互助研究所",
+          "ref:FR:FINESS": "750150104",
+          "ref:FR:SIRET": "44357773900081",
+          "source:ref:FR:FINESS": "Le ministère des solidarités et de la santé - 03/2019",
+          "type:FR:FINESS": "365",
+          "wikidata": "Q3152361",
+          "wikipedia": "fr:Institut mutualiste Montsouris"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3325473,
+          48.8227046
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 23243040,
+        "osm_type": "way",
+        "name": "Hôpital européen Georges-Pompidou",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Centre - Université Paris Cité",
+          "emergency": "yes",
+          "fax": "+33 1 56 09 21 19",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital européen Georges-Pompidou",
+          "name:zh": "乔治·蓬皮杜欧洲医院",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "operator:wikipedia": "fr:Assistance publique - Hôpitaux de Paris",
+          "phone": "+33 1 56 09 20 00",
+          "ref:FR:FINESS": "750803447",
+          "ref:FR:SIRET": "26750045201191",
+          "short_name": "HEGP",
+          "type:FR:FINESS": "101",
+          "website": "https://hopital-georgespompidou.aphp.fr/",
+          "wikidata": "Q3145336",
+          "wikipedia": "fr:Hôpital européen Georges-Pompidou"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2739885,
+          48.8387697
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 23245093,
+        "osm_type": "way",
+        "name": "Hôpital Privé des Peupliers",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Hôpital Privé des Peupliers",
+          "ref:FR:FINESS": "750300360",
+          "type:FR:FINESS": "365",
+          "wikidata": "Q3145358"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3520352,
+          48.8233712
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 23757822,
+        "osm_type": "way",
+        "name": "Hôpital Armand-Trousseau",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Sorbonne Université",
+          "emergency": "yes",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital Armand-Trousseau",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "operator:wikipedia": "fr:Assistance publique - Hôpitaux de Paris",
+          "phone": "+33 1 44 73 74 75",
+          "ref:FR:FINESS": "750100109",
+          "ref:FR:SIRET": "26750045200243",
+          "type:FR:FINESS": "101",
+          "website": "https://trousseau.aphp.fr/",
+          "wheelchair": "limited",
+          "wikidata": "Q3145133",
+          "wikipedia": "fr:Hôpital Armand-Trousseau"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4066858,
+          48.8419046
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 24026124,
+        "osm_type": "way",
+        "name": "Hôpital Lariboisière",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "barrier": "wall",
+          "branch": "Nord - Université Paris Cité",
+          "emergency": "yes",
+          "fax": "+33 1 49 95 82 12",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "heritage": "2",
+          "heritage:operator": "mhs",
+          "mhs:inscription_date": "1975-01-15",
+          "name": "Hôpital Lariboisière",
+          "name:zh": "拉里博瓦西埃医院",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "operator:wikipedia": "fr:Assistance publique - Hôpitaux de Paris",
+          "phone": "+33 1 49 95 65 65",
+          "ref:FR:FINESS": "750100042",
+          "ref:FR:SIRET": "26750045200474",
+          "ref:mhs": "PA00086493",
+          "source:heritage": "Ministère de la Culture - 06/2019",
+          "type:FR:FINESS": "101",
+          "website": "https://hopital-lariboisiere.aphp.fr/",
+          "wheelchair": "yes",
+          "wikidata": "Q1130784",
+          "wikipedia": "fr:Hôpital Lariboisière"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3533116,
+          48.8829019
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 24277446,
+        "osm_type": "way",
+        "name": "Hôpital Vaugirard - Gabriel Pallez",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Centre - Université Paris Cité",
+          "healthcare": "hospital",
+          "name": "Hôpital Vaugirard - Gabriel Pallez",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33140458000",
+          "ref:FR:FINESS": "750100216",
+          "ref:FR:SIRET": "26750045201274",
+          "source": "Le ministère des solidarités et de la santé - 10/2018",
+          "type:FR:FINESS": "101",
+          "wikidata": "Q3145243"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2940843,
+          48.8344405
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 24659998,
+        "osm_type": "way",
+        "name": "Hôpital Fernand Widal",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Nord - Université Paris Cité",
+          "contact:city": "Paris",
+          "contact:housenumber": "200",
+          "contact:postcode": "75010",
+          "contact:street": "Rue du Faubourg Saint-Denis",
+          "healthcare": "hospital",
+          "name": "Hôpital Fernand Widal",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33 1 40 05 45 45",
+          "ref:FR:FINESS": "750100067",
+          "ref:FR:SIRET": "26750045200516",
+          "short_name": "Hôpital Widal",
+          "source": "Le ministère des solidarités et de la santé - 10/2018",
+          "website": "https://hopital-lariboisiere.aphp.fr/",
+          "wikidata": "Q1643033",
+          "wikipedia": "fr:Hôpital Fernand-Widal"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3596777,
+          48.8815039
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26255700,
+        "osm_type": "way",
+        "name": "Hôpital Broca",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Centre - Université Paris Cité",
+          "healthcare": "hospital",
+          "name": "Hôpital Broca",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33144083000",
+          "ref:FR:FINESS": "750801441",
+          "ref:FR:SIRET": "26750045200698",
+          "source": "Le ministère des solidarités et de la santé - 10/2018",
+          "type:FR:FINESS": "101",
+          "wheelchair": "yes",
+          "wikidata": "Q3145143"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3469901,
+          48.8343403
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26953361,
+        "osm_type": "way",
+        "name": "Hôpital Saint-Louis",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Nord - Université Paris Cité",
+          "check_date": "2022-10-19",
+          "emergency": "yes",
+          "fax": "+33 1 42 38 50 10",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital Saint-Louis",
+          "name:zh": "圣路易医院",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33 1 42 49 49 49",
+          "ref:FR:FINESS": "750100075",
+          "ref:FR:SIRET": "26750045200466",
+          "type:FR:FINESS": "101",
+          "website": "https://hopital-saintlouis.aphp.fr/",
+          "wikidata": "Q1569396",
+          "wikipedia": "fr:Hôpital Saint-Louis"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3676232,
+          48.8738281
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 29996344,
+        "osm_type": "way",
+        "name": "Hôpital Robert Debré",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Nord - Université Paris Cité",
+          "emergency": "yes",
+          "fax": "+33 1 40 03 47 77",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital Robert Debré",
+          "name:etymology:wikidata": "Q743684",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33140032385",
+          "ref:FR:FINESS": "750803454",
+          "ref:FR:SIRET": "26750045200995",
+          "type:FR:FINESS": "101",
+          "website": "https://robertdebre.aphp.fr/",
+          "wikidata": "Q3145204",
+          "wikipedia": "fr:Hôpital Robert-Debré"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4029431,
+          48.8799331
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 35051383,
+        "osm_type": "way",
+        "name": "Centre hospitalier intercommunal André Grégoire",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "emergency": "yes",
+          "fax": "+33 1 49 20 31 23",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Centre hospitalier intercommunal André Grégoire",
+          "operator:type": "public",
+          "phone": "+33 1 49 20 30 40",
+          "ref:FR:FINESS": "930000302",
+          "short_name": "CHI André Grégoire",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre;mise à jour : 2008",
+          "type:FR:FINESS": "355",
+          "website": "https://www.chi-andre-gregoire.fr/",
+          "wikidata": "Q30293552"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4531978,
+          48.8776064
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 37099012,
+        "osm_type": "way",
+        "name": "Hôpital d'Instruction des Armées Bégin",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "landuse": "military",
+          "name": "Hôpital d'Instruction des Armées Bégin",
+          "ref:FR:FINESS": "940120017",
+          "short_name": "Hôpital Bégin",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre ; mise à jour : 2009",
+          "type:FR:FINESS": "114",
+          "wikidata": "Q3145267",
+          "wikipedia": "fr:Hôpital d'instruction des armées Bégin"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4265211,
+          48.8439535
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 38072526,
+        "osm_type": "way",
+        "name": "Hôpital Bichat-Claude Bernard",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:country": "FR",
+          "addr:housenumber": "46",
+          "addr:street": "Rue Henri Huchard",
+          "alt_name": "Hopital Xavier Bichat",
+          "amenity": "hospital",
+          "branch": "Nord - Université Paris Cité",
+          "emergency": "yes",
+          "fax": "+33 1 40 25 83 05",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital Bichat-Claude Bernard",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "phone": "+33 1 40 25 80 80",
+          "postal_code": "75877",
+          "ref:FR:FINESS": "750100232",
+          "ref:FR:SIRET": "26750045200201",
+          "type:FR:FINESS": "101",
+          "website": "https://hopital-bichat.aphp.fr/",
+          "wheelchair": "yes",
+          "wikidata": "Q3145138"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.331758,
+          48.899013
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 41833194,
+        "osm_type": "way",
+        "name": "Maison médicale Jeanne Garnier",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "building": "yes",
+          "emergency": "no",
+          "fax": "+33 143922110",
+          "name": "Maison médicale Jeanne Garnier",
+          "phone": "+33 143922100",
+          "ref:FR:FINESS": "750150187",
+          "ref:FR:SIRET": "78461537900020",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre ; mise à jour : 2009",
+          "type:FR:FINESS": "129",
+          "wikidata": "Q20971354"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2898151,
+          48.8463859
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 44445763,
+        "osm_type": "way",
+        "name": "Centre hospitalier Rives de Seine - Neuilly-sur-Seine",
+        "category": "hospital",
+        "tags": {
+          "alt_name": "Hôpital de Courbevoie-Neuilly",
+          "amenity": "hospital",
+          "emergency": "yes",
+          "fax": "+33 1 40 88 60 30",
+          "healthcare": "hospital",
+          "loc_name": "Hôpital de Neuilly",
+          "name": "Centre hospitalier Rives de Seine - Neuilly-sur-Seine",
+          "old_name": "Centre hospitalier de Courbevoie - Neuilly-sur-Seine",
+          "operator:type": "public",
+          "phone": "+33 1 40 88 60 00",
+          "ref:FR:FINESS": "920000585",
+          "source": "Microsoft Bing orbital imagery",
+          "type:FR:FINESS": "355",
+          "website": "https://chrds.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2623451,
+          48.8903176
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 46432067,
+        "osm_type": "way",
+        "name": "Hôpital Ambroise Paré",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Boulogne-Billancourt",
+          "addr:housenumber": "9",
+          "addr:postcode": "92100",
+          "addr:street": "Avenue Charles de Gaulle",
+          "amenity": "hospital",
+          "branch": "Université Paris Saclay",
+          "emergency": "yes",
+          "fax": "+33 1 49 09 57 99",
+          "healthcare": "hospital",
+          "healthcare:speciality": "intensive",
+          "name": "Hôpital Ambroise Paré",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "operator:wikipedia": "fr:Assistance publique - Hôpitaux de Paris",
+          "phone": "+33 1 49 09 50 00",
+          "ref:FR:FINESS": "920100013",
+          "ref:FR:SIRET": "26750045200375",
+          "type:FR:FINESS": "101",
+          "website": "https://ambroisepare.aphp.fr/",
+          "wikidata": "Q3145128"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2354703,
+          48.8488016
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 50281616,
+        "osm_type": "way",
+        "name": "Hôpital Henri Dunant",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Hôpital Henri Dunant",
+          "opening_hours": "Mo-Sa 10:00-12:00,14:00-16:00",
+          "operator": "Croix Rouge française",
+          "phone": "+33140712424",
+          "ref:FR:FINESS": "750150377",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "type:FR:FINESS": "365",
+          "website": "https://www.croix-rouge.fr/hopital-mco-ssr-henry-dunant",
+          "wikidata": "Q16508253"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2586544,
+          48.8402142
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 50306873,
+        "osm_type": "way",
+        "name": "Ramsay Santé – Clinique Jouvenet",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Ramsay Santé – Clinique Jouvenet",
+          "operator": "Ramsay Santé",
+          "operator:type": "private",
+          "operator:wikidata": "Q3123085",
+          "ref:FR:FINESS": "750300774",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "survey:date": "2024-11-07",
+          "type:FR:FINESS": "128",
+          "website": "https://clinique-jouvenet-paris.ramsaysante.fr/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2663692,
+          48.8424746
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 50308255,
+        "osm_type": "way",
+        "name": "Clinique Edouard Rist",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Clinique Edouard Rist",
+          "ref:FR:FINESS": "750150252",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "type:FR:FINESS": "101"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2647803,
+          48.8465172
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 51266521,
+        "osm_type": "way",
+        "name": "Hôpital des Diaconesses",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "check_date": "2026-04-08",
+          "healthcare": "hospital",
+          "name": "Hôpital des Diaconesses",
+          "ref:FR:FINESS": "750150260",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Solidarités et de la Santé - 03/2020",
+          "type:FR:FINESS": "365",
+          "website": "https://hopital-dcss.org/",
+          "wheelchair": "limited",
+          "wikidata": "Q15989047",
+          "wikipedia": "fr:Hôpital des Diaconesses de Reuilly"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3918219,
+          48.8446305
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 52528228,
+        "osm_type": "way",
+        "name": "Via Sana Corentin Celton",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Issy-les-Moulineaux",
+          "addr:housenumber": "28",
+          "addr:postcode": "92130",
+          "addr:street": "Rue Ernest Renan",
+          "amenity": "clinic",
+          "building": "yes",
+          "healthcare": "clinic",
+          "name": "Via Sana Corentin Celton",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre;mise à jour : 2010",
+          "website": "https://www.centreviasana.com/centres/corentin-celton"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2819353,
+          48.8287612
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 53602684,
+        "osm_type": "way",
+        "name": "Hôtel-Dieu",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "branch": "Centre - Université Paris Cité",
+          "construction_date": "mid C19",
+          "emergency": "yes",
+          "fax": "+33 1 42 34 80 78",
+          "healthcare": "hospital",
+          "mhs:inscription_date": "2023",
+          "name": "Hôtel-Dieu",
+          "name:zh": "主宫医院",
+          "operator": "Assistance publique - Hôpitaux de Paris",
+          "operator:short": "APHP",
+          "operator:type": "public",
+          "operator:wikidata": "Q2867205",
+          "operator:wikipedia": "fr:Assistance publique - Hôpitaux de Paris",
+          "phone": "+33 1 42 34 82 34",
+          "ref:FR:FINESS": "750100018",
+          "ref:FR:SIRET": "26750045200599",
+          "ref:mhs": "PA75040010",
+          "ref:structurae": "20027249",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "type:FR:FINESS": "101",
+          "website": "http://hopitaux-paris-centre.aphp.fr/",
+          "wheelchair": "yes",
+          "wikidata": "Q1294736",
+          "wikipedia": "fr:Hôtel-Dieu de Paris"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3488485,
+          48.8546261
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 53727548,
+        "osm_type": "way",
+        "name": "Hôpital Cognacq-Jay",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "healthcare": "hospital",
+          "name": "Hôpital Cognacq-Jay",
+          "ref:FR:FINESS": "750150344",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre ; mise à jour : 2010",
+          "type:FR:FINESS": "109"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2928279,
+          48.8376349
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 63198169,
+        "osm_type": "way",
+        "name": "Hôpital de jour Léopold Bellan",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "addr:country": "FR",
+          "addr:full": "16 rue de l'Aqueduc 75010 Paris",
+          "addr:housenumber": "16",
+          "addr:postcode": "75010",
+          "addr:street": "Rue de l'Aqueduc",
+          "amenity": "hospital",
+          "building": "hospital",
+          "building:levels": "4",
+          "healthcare": "hospital",
+          "name": "Hôpital de jour Léopold Bellan",
+          "operator": "Fondation Léopold Bellan",
+          "operator:wikidata": "Q37669450",
+          "payment:coins": "yes",
+          "payment:discover_card": "no",
+          "payment:mastercard": "yes",
+          "payment:notes": "yes",
+          "payment:visa": "yes",
+          "phone": "+33 1 53 26 22 22",
+          "ref:FR:FINESS": "750700015",
+          "ref:FR:SIRET": "77567216500344",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "type:FR:FINESS": "109",
+          "website": "http://www.hopital.bellan.fr"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3601905,
+          48.8804815
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 63201284,
+        "osm_type": "way",
+        "name": "Les Cariatides d'Abbeville",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "contact:city": "Paris",
+          "contact:housenumber": "11",
+          "contact:phone": "+33 1 53 20 41 80",
+          "contact:postcode": "75010",
+          "contact:street": "Rue d'Abbeville",
+          "contact:website": "https://www.ghu-paris.fr/fr/annuaire-des-structures-medicales/centre-daccueil-therapeutique-temps-partiel-cattp-les-cariatides",
+          "healthcare": "hospital",
+          "name": "Les Cariatides d'Abbeville",
+          "opening_hours": "Mo-Th 09:30-17:00; Fr 09:00-16:30; Sa,Su off",
+          "operator": "Hôpital Maison Blanche",
+          "ref:FR:FINESS": "750002230",
+          "ref:FR:SIRET": "20008210500335",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3503089,
+          48.8785401
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 63233208,
+        "osm_type": "way",
+        "name": "Clinique des Buttes-Chaumont",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Paris",
+          "amenity": "clinic",
+          "building": "hospital",
+          "building:levels": "6",
+          "healthcare": "clinic",
+          "name": "Clinique des Buttes-Chaumont",
+          "operator": "Clinalliance",
+          "ref:FR:FINESS": "750014128",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "109"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.384574,
+          48.8766576
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 63234971,
+        "osm_type": "way",
+        "name": "Clinique Maussins-Nollet",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "check_date": "2026-04-15",
+          "email": "groupe@maussins.com",
+          "fax": "+33 1 40 03 12 00",
+          "healthcare": "hospital",
+          "name": "Clinique Maussins-Nollet",
+          "phone": "+33 1 42 03 47 37",
+          "ref:FR:FINESS": "750301160",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "128",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4044967,
+          48.8772899
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 63240688,
+        "osm_type": "way",
+        "name": "Centre médical Atlas",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "building": "yes",
+          "building:colour": "white",
+          "building:levels": "3",
+          "building:material": "glass",
+          "healthcare": "clinic",
+          "name": "Centre médical Atlas",
+          "opening_hours": "Mo-Fr 08:00-19:00; Sa 09:00-18:00",
+          "operator": "COSEM",
+          "roof:colour": "tan",
+          "roof:shape": "flat",
+          "website": "https://www.centre-medical-atlas.com/",
+          "wheelchair": "yes"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3758843,
+          48.8749512
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 63645731,
+        "osm_type": "way",
+        "name": "Hôpital Mère-Enfant de l'Est parisien",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "architect": "William Girth",
+          "building": "yes",
+          "building:levels": "5",
+          "check_date": "2025-03-23",
+          "healthcare": "clinic",
+          "name": "Hôpital Mère-Enfant de l'Est parisien",
+          "operator": "Estrelia",
+          "operator:type": "private",
+          "ref:FR:FINESS": "750032229",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "start_date": "1993",
+          "type:FR:FINESS": "109",
+          "website": "https://estrelia.org/hopital-mere-enfant-de-lest-parisien/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3818674,
+          48.8645848
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 63826738,
+        "osm_type": "way",
+        "name": "Hôpital Tarnier",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "healthcare": "hospital",
+          "name": "Hôpital Tarnier",
+          "phone": "+33158411811",
+          "ref:FR:FINESS": "750100026",
+          "ref:FR:SIRET": "78428191700012",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "type:FR:FINESS": "101",
+          "wikidata": "Q109039037"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3358191,
+          48.8415376
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 64103830,
+        "osm_type": "way",
+        "name": "Clinique Marcel Sembat",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "building:levels": "7",
+          "email": "marcelsembat@gsante.fr",
+          "healthcare": "hospital",
+          "name": "Clinique Marcel Sembat",
+          "phone": "+33 1 47 11 99 99",
+          "ref:FR:FINESS": "920300191",
+          "ref:FR:SIRET": "65201664300015",
+          "source": "https://www.data.gouv.fr/fr/datasets/entreprises-de-grand-paris-seine-ouest-de-plus-de-50-salaries-2013/",
+          "source:amenity": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "128",
+          "website": "http://www.generale-de-sante.fr"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2448566,
+          48.8351916
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 67502989,
+        "osm_type": "way",
+        "name": "Clinique Montevideo",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "44",
+          "addr:street": "Rue de la Tourelle",
+          "amenity": "hospital",
+          "building": "yes",
+          "building:levels": "4",
+          "email": "montevideo@montevideoclinic.net",
+          "healthcare": "hospital",
+          "name": "Clinique Montevideo",
+          "phone": "+33 1 41 22 98 88",
+          "ref:FR:FINESS": "920004058",
+          "ref:FR:SIRET": "43929553600015",
+          "source": "https://www.data.gouv.fr/fr/datasets/entreprises-de-grand-paris-seine-ouest-de-plus-de-50-salaries-2013/",
+          "source:amenity": "survey",
+          "type:FR:FINESS": "109",
+          "website": "http://www.montevideoclinic.net"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2502069,
+          48.8410171
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 68853303,
+        "osm_type": "way",
+        "name": "Hopital Communal de Puteaux",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "emergency": "no",
+          "healthcare": "hospital",
+          "name": "Hopital Communal de Puteaux",
+          "ref:FR:FINESS": "920000593",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2415376,
+          48.8783569
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 69049367,
+        "osm_type": "way",
+        "name": "La Clinique de l'Alma",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "architect": "J. Blanc",
+          "building": "yes",
+          "building:levels": "9",
+          "healthcare": "clinic",
+          "name": "La Clinique de l'Alma",
+          "ref:FR:FINESS": "750300139",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:amenity": "survey",
+          "source:architect": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 05/2014",
+          "type:FR:FINESS": "365",
+          "website": "https://clinique-alma.com/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3057402,
+          48.8613305
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 70001062,
+        "osm_type": "way",
+        "name": "Clinique du Parc de Belleville",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "building": "yes",
+          "building:colour": "#ffebcd",
+          "building:levels": "4",
+          "building:material": "brick",
+          "healthcare": "clinic",
+          "name": "Clinique du Parc de Belleville",
+          "ref:FR:FINESS": "750047128",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "109",
+          "website": "https://www.clinea.fr/clinique-du-parc-de-belleville-paris-75"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.38901,
+          48.870747
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 70004172,
+        "osm_type": "way",
+        "name": "Centre post-cure de la Métairie",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "building": "hospital",
+          "fax": "+33 144621620",
+          "healthcare": "clinic",
+          "name": "Centre post-cure de la Métairie",
+          "phone": "+33 144621616",
+          "ref:FR:FINESS": "750003295",
+          "ref:FR:RNB": "4X631HQ99DKX",
+          "ref:FR:SIRET": "20008210500400",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "292"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3859895,
+          48.8735079
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 72230856,
+        "osm_type": "way",
+        "name": "Institut Européen de Chirurgie Esthétique et Plastique",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "building:levels": "3",
+          "check_date": "2025-08-02",
+          "healthcare": "hospital",
+          "name": "Institut Européen de Chirurgie Esthétique et Plastique",
+          "phone": "+33 1 46 05 05 05",
+          "ref:FR:FINESS": "920003670",
+          "ref:FR:SIRET": "40311221200010",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:amenity": "survey",
+          "type:FR:FINESS": "630"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2317083,
+          48.8449263
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 72859402,
+        "osm_type": "way",
+        "name": "Clinique du Pont de Sèvres",
+        "category": "hospital",
+        "tags": {
+          "addr:housenumber": "76",
+          "addr:street": "Rue de Silly",
+          "amenity": "clinic",
+          "building": "yes",
+          "building:levels": "9",
+          "description": "Hôpitaux - Cliniques - Centres de soins",
+          "email": "orpea@orpea.net",
+          "fax": "+33155605290",
+          "name": "Clinique du Pont de Sèvres",
+          "operator": "Clinea",
+          "phone": "+33155605252",
+          "ref:FR:FINESS": "920005238",
+          "ref:FR:SIRET": "30116075000404",
+          "source": "https://www.data.gouv.fr/fr/datasets/entreprises-de-grand-paris-seine-ouest-de-plus-de-50-salaries-2013/",
+          "type:FR:FINESS": "109",
+          "website": "https://www.orpea.com/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2315913,
+          48.83641
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 73246687,
+        "osm_type": "way",
+        "name": "Clinique du Pré Saint-Gervais",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "healthcare": "hospital",
+          "name": "Clinique du Pré Saint-Gervais",
+          "operator": "Clinea",
+          "operator:type": "private",
+          "ref:FR:FINESS": "930019203",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "109"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4010811,
+          48.8849967
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 73431260,
+        "osm_type": "way",
+        "name": "Clinique Paris Lilas",
+        "category": "hospital",
+        "tags": {
+          "addr:city": "Les Lilas",
+          "addr:housenumber": "41;43;45;47;49",
+          "addr:postcode": "93260",
+          "addr:street": "Avenue du Maréchal Juin",
+          "amenity": "clinic",
+          "building": "clinic",
+          "building:levels": "5",
+          "healthcare": "clinic",
+          "healthcare:speciality": "orthopaedics;surgery;radiology",
+          "name": "Clinique Paris Lilas",
+          "opening_hours": "Mo-Sa 07:00-20:00",
+          "operator": "Clinique Paris Lilas – SAS – RCS Bobigny 702 010 091",
+          "ref:FR:FINESS": "930300264",
+          "source": "extraction vectorielle v1 cadastre-dgi-fr source : Direction Générale des Impôts - Cadas. Mise à jour : 2010",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Affaires sociales et de la Santé - 2014-05-05",
+          "type:FR:FINESS": "128",
+          "url": "https://www.clinique-paris-lilas.com/"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4225945,
+          48.8789212
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 78000154,
+        "osm_type": "way",
+        "name": "Hôpital Pierre Rouquès - Les Bluets",
+        "category": "hospital",
+        "tags": {
+          "alt_name": "Maternité Les Bluets",
+          "amenity": "hospital",
+          "building": "hospital",
+          "building:levels": "5",
+          "healthcare": "hospital",
+          "name": "Hôpital Pierre Rouquès - Les Bluets",
+          "ref:FR:FINESS": "750150013",
+          "roof:levels": "0",
+          "roof:shape": "flat",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "type:FR:FINESS": "365",
+          "website": "https://www.bluets.org/",
+          "wheelchair": "yes",
+          "wikidata": "Q3145196"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.4063207,
+          48.8429738
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 78470329,
+        "osm_type": "way",
+        "name": "Centre de santé",
+        "category": "hospital",
+        "tags": {
+          "amenity": "clinic",
+          "architect": "P. Y. Duclos",
+          "building": "yes",
+          "building:levels": "9",
+          "check_date:opening_hours": "2022-08-13",
+          "healthcare": "clinic",
+          "name": "Centre de santé",
+          "opening_hours:signed": "no",
+          "ref:FR:FINESS": "750011215",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "source:architect": "survey",
+          "source:name": "survey",
+          "source:ref:FR:FINESS": "data.gouv.fr:Ministère des Solidarités et de la Santé - 06/2018",
+          "start_date": "1959",
+          "type:FR:FINESS": "124"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3555227,
+          48.8269318
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 79717313,
+        "osm_type": "way",
+        "name": "Les Colombages",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "building:levels": "5",
+          "check_date": "2024-04-11",
+          "healthcare": "hospital",
+          "name": "Les Colombages",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3144557,
+          48.8276297
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 79717630,
+        "osm_type": "way",
+        "name": "Fondation Hospitalière Sainte-Marie",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "hospital",
+          "check_date": "2025-05-15",
+          "healthcare": "hospital",
+          "name": "Fondation Hospitalière Sainte-Marie",
+          "operator:wikidata": "Q3075673",
+          "ref:FR:FINESS": "750100141",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3135996,
+          48.8290796
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 80152146,
+        "osm_type": "way",
+        "name": "Clinique Alleray Labrouste",
+        "category": "hospital",
+        "tags": {
+          "amenity": "hospital",
+          "building": "yes",
+          "building:levels": "8",
+          "healthcare": "hospital",
+          "name": "Clinique Alleray Labrouste",
+          "ref:FR:FINESS": "750301137",
+          "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+          "type:FR:FINESS": "128",
+          "website": "https://www.alleray-labrouste.com"
+        }
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.3065068,
+          48.8324596
+        ]
+      }
+    }
+  ]
+}

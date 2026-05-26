@@ -31,9 +31,10 @@ router = APIRouter(tags=["layers"])
 async def list_layers(
     include_inactive: bool = Query(True, alias="includeInactive"),
     session_id: str | None = Query(None, alias="sessionId"),
+    thread_id: str | None = Query(None, alias="threadId"),
     layer_repository: PostGISLayerRepository = Depends(get_layer_repository),
 ):
-    return layer_repository.list_layers(include_inactive=include_inactive, session_id=session_id)
+    return layer_repository.list_layers(include_inactive=include_inactive, session_id=session_id, thread_id=thread_id)
 
 
 @router.post("/api/v1/layers")

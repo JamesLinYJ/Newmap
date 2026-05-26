@@ -11,13 +11,14 @@
 # 模块职责
 #
 # 在图层目录之上封装面向分析任务的高层空间分析服务，并把地点检索
-# 收敛到独立 provider，而不是继续保留零散 fallback 逻辑。
+# 收敛到独立 provider，避免远程目录调用散落在分析逻辑里。
 
 from __future__ import annotations
 
 from typing import Any
 
 from shapely.ops import unary_union
+from pyproj import Geod
 
 from gis_common.crs import (
     choose_local_metric_epsg,
@@ -161,11 +162,197 @@ class SpatialAnalysisService:
     def distance_query(self, source: dict[str, Any], target: dict[str, Any], distance_m: float) -> dict[str, Any]:
         return self.layer_repository.distance_query_collection(source, target, distance_m)
 
+    # ── 新增空间分析工具 ──────────────────────────────────────────────
+
+    def centroid(self, collection: dict[str, Any]) -> dict[str, Any]:
+        """计算面要素的质心，返回点集合。"""
+        features = []
+        for f in collection.get("features", []):
+            geom = shape_from_feature(f)
+            if geom is None:
+                continue
+            c = geom.centroid
+            features.append(feature_from_shape(c, properties=f.get("properties", {})))
+        return {"type": "FeatureCollection", "features": features}
+
+    def convex_hull(self, collection: dict[str, Any]) -> dict[str, Any]:
+        """计算所有要素的凸包，返回单个面要素。"""
+        shapes = [shape_from_feature(f) for f in collection.get("features", [])]
+        shapes = [s for s in shapes if s is not None and not s.is_empty]
+        if not shapes:
+            return {"type": "FeatureCollection", "features": []}
+        hull = unary_union(shapes).convex_hull
+        return {"type": "FeatureCollection", "features": [feature_from_shape(hull)]}
+
+    def dissolve(self, collection: dict[str, Any], field: str | None = None) -> dict[str, Any]:
+        """融合重叠或相邻的面要素。可指定字段按属性分组融合。"""
+        features = collection.get("features", [])
+        if not features:
+            return {"type": "FeatureCollection", "features": []}
+        if field:
+            groups: dict[str, list[Any]] = {}
+            for f in features:
+                key = str(f.get("properties", {}).get(field, ""))
+                groups.setdefault(key, []).append(shape_from_feature(f))
+            result = []
+            for key, shapes in groups.items():
+                merged = unary_union([s for s in shapes if s is not None and not s.is_empty])
+                if merged.is_empty:
+                    continue
+                props = {field: key} if key else {}
+                result.append(feature_from_shape(merged, properties=props))
+            return {"type": "FeatureCollection", "features": result}
+        shapes = [shape_from_feature(f) for f in features]
+        merged = unary_union([s for s in shapes if s is not None and not s.is_empty])
+        return {"type": "FeatureCollection", "features": [feature_from_shape(merged, properties=features[0].get("properties", {}))] if not merged.is_empty else []}
+
+    def simplify(self, collection: dict[str, Any], tolerance: float) -> dict[str, Any]:
+        """使用 Douglas-Peucker 算法简化要素几何。tolerance 单位为度（EPSG:4326）。"""
+        result_features = []
+        for f in collection.get("features", []):
+            geom = shape_from_feature(f)
+            if geom is None or geom.is_empty:
+                result_features.append(f)
+                continue
+            simplified = geom.simplify(tolerance, preserve_topology=True)
+            if simplified.is_empty:
+                continue
+            result_features.append(feature_from_shape(simplified, properties=f.get("properties", {})))
+        return {"type": "FeatureCollection", "features": result_features}
+
+    def difference(self, left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+        """从 left 中减去 right 的几何部分（差集）。"""
+        left_shapes = [shape_from_feature(f) for f in left.get("features", [])]
+        right_shape = unary_union([shape_from_feature(f) for f in right.get("features", []) if shape_from_feature(f) is not None])
+        left_union = unary_union([s for s in left_shapes if s is not None and not s.is_empty])
+        diff = left_union.difference(right_shape)
+        if diff.is_empty:
+            return {"type": "FeatureCollection", "features": []}
+        return {"type": "FeatureCollection", "features": [feature_from_shape(diff)]}
+
+    def area_stats(self, collection: dict[str, Any]) -> dict[str, Any]:
+        """计算面要素的面积统计（投影到局部米制CRS后计算）。返回总面积、平均面积、最大/最小面积（km²）。"""
+        features = collection.get("features", [])
+        if not features:
+            return {"type": "FeatureCollection", "features": [], "stats": {}}
+        # 投影到局部米制 CRS
+        transformed = transform_feature_collection(collection, 4326, choose_local_metric_epsg(collection))
+        areas_m2 = []
+        for f in transformed.get("features", []):
+            s = shape_from_feature(f)
+            if s is not None and not s.is_empty and s.area > 0:
+                areas_m2.append(s.area)
+        if not areas_m2:
+            return {"type": "FeatureCollection", "features": features, "stats": {"total_km2": 0, "count": 0}}
+        total_km2 = sum(areas_m2) / 1_000_000
+        stats = {
+            "total_km2": round(total_km2, 3),
+            "avg_km2": round((sum(areas_m2) / len(areas_m2)) / 1_000_000, 3),
+            "max_km2": round(max(areas_m2) / 1_000_000, 3),
+            "min_km2": round(min(areas_m2) / 1_000_000, 3),
+            "count": len(areas_m2),
+        }
+        return {"type": "FeatureCollection", "features": features, "stats": stats}
+
+    def length_stats(self, collection: dict[str, Any]) -> dict[str, Any]:
+        """计算线要素的长度统计。返回总长度、平均长度、最大/最小长度（km）。"""
+        features = collection.get("features", [])
+        if not features:
+            return {"type": "FeatureCollection", "features": [], "stats": {}}
+        transformed = transform_feature_collection(collection, 4326, choose_local_metric_epsg(collection))
+        lengths_m = []
+        for f in transformed.get("features", []):
+            s = shape_from_feature(f)
+            if s is not None and not s.is_empty and s.length > 0:
+                lengths_m.append(s.length)
+        if not lengths_m:
+            return {"type": "FeatureCollection", "features": features, "stats": {"total_km": 0, "count": 0}}
+        total_km = sum(lengths_m) / 1000
+        stats = {
+            "total_km": round(total_km, 3),
+            "avg_km": round((sum(lengths_m) / len(lengths_m)) / 1000, 3),
+            "max_km": round(max(lengths_m) / 1000, 3),
+            "min_km": round(min(lengths_m) / 1000, 3),
+            "count": len(lengths_m),
+        }
+        return {"type": "FeatureCollection", "features": features, "stats": stats}
+
+    def ellipsoidal_area(self, collection: dict[str, Any]) -> dict[str, Any]:
+        """计算面要素在 WGS84 椭球面上的真实面积（km²）。使用 pyproj.Geod 进行测地线计算。"""
+        features = collection.get("features", [])
+        if not features:
+            return {"type": "FeatureCollection", "features": [], "stats": {}}
+        geod = Geod(ellps="WGS84")
+        areas_km2: list[float] = []
+        for f in features:
+            s = shape_from_feature(f)
+            if s is None or s.is_empty:
+                continue
+            if s.geom_type == "Polygon":
+                polys = [s]
+            elif s.geom_type == "MultiPolygon":
+                polys = list(s.geoms)
+            else:
+                continue
+            total = 0.0
+            for poly in polys:
+                coords = list(poly.exterior.coords)
+                if len(coords) < 3:
+                    continue
+                lons = [c[0] for c in coords]
+                lats = [c[1] for c in coords]
+                poly_area_m2, _ = geod.polygon_area_perimeter(lons, lats)
+                total += abs(poly_area_m2)
+            if total > 0:
+                areas_km2.append(total / 1_000_000)
+        if not areas_km2:
+            return {"type": "FeatureCollection", "features": features, "stats": {"total_km2": 0, "count": 0}}
+        stats = {
+            "total_km2": round(sum(areas_km2), 3),
+            "avg_km2": round(sum(areas_km2) / len(areas_km2), 3),
+            "max_km2": round(max(areas_km2), 3),
+            "min_km2": round(min(areas_km2), 3),
+            "count": len(areas_km2),
+        }
+        return {"type": "FeatureCollection", "features": features, "stats": stats}
+
+    def planar_area(self, collection: dict[str, Any]) -> dict[str, Any]:
+        """计算面要素在投影平面坐标系下的面积（km²）。使用局部米制投影，适合小范围精确计算。"""
+        features = collection.get("features", [])
+        if not features:
+            return {"type": "FeatureCollection", "features": [], "stats": {}}
+        transformed = transform_feature_collection(collection, 4326, choose_local_metric_epsg(collection))
+        areas_km2: list[float] = []
+        for f in transformed.get("features", []):
+            s = shape_from_feature(f)
+            if s is not None and not s.is_empty and s.area > 0:
+                areas_km2.append(s.area / 1_000_000)
+        if not areas_km2:
+            return {"type": "FeatureCollection", "features": features, "stats": {"total_km2": 0, "count": 0}}
+        stats = {
+            "total_km2": round(sum(areas_km2), 3),
+            "avg_km2": round(sum(areas_km2) / len(areas_km2), 3),
+            "max_km2": round(max(areas_km2), 3),
+            "min_km2": round(min(areas_km2), 3),
+            "count": len(areas_km2),
+        }
+        return {"type": "FeatureCollection", "features": features, "stats": stats}
+
+    def symmetric_difference(self, left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+        """计算两个图层的对称差集（XOR）。返回只在一个图层中存在而不在两者交集中的区域。"""
+        left_union = unary_union([shape_from_feature(f) for f in left.get("features", []) if shape_from_feature(f) is not None])
+        right_union = unary_union([shape_from_feature(f) for f in right.get("features", []) if shape_from_feature(f) is not None])
+        result = left_union.symmetric_difference(right_union)
+        if result.is_empty:
+            return {"type": "FeatureCollection", "features": []}
+        return {"type": "FeatureCollection", "features": [feature_from_shape(result)]}
+
     def geometry_bounds(self, collection: dict[str, Any]) -> list[float] | None:
         # bounds 用于地图定位与结果面板概览，不改变原始几何。
-        if not collection["features"]:
+        features = collection.get("features") or []
+        if not features:
             return None
-        union = unary_union([shape_from_feature(feature) for feature in collection["features"]])
+        union = unary_union([shape_from_feature(feature) for feature in features])
         return [round(value, 6) for value in union.bounds]
 
     def normalize_to_4326(self, collection: dict[str, Any], source_epsg: int) -> dict[str, Any]:
@@ -248,5 +435,3 @@ def _nominatim_match_to_feature(match: dict[str, Any]) -> dict[str, Any] | None:
         "geometry": geometry,
     }
     return ensure_feature_collection(feature)["features"][0]
-
-

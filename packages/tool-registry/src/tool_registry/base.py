@@ -20,7 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from shared_types.schemas import ArtifactRef
+from shared_types.schemas import ArtifactRef, ToolValueRef
 
 
 # ToolExecutionResult
@@ -40,6 +40,7 @@ class ToolExecutionResult:
     crs: dict[str, Any] = field(default_factory=dict)
     geometry_type: str | None = None
     feature_count: int | None = None
+    value_refs: list[ToolValueRef] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -55,8 +56,12 @@ class ToolRuntimeContext:
 class ToolRuntimeState:
     # 当前 run 的可变状态。
     alias_map: dict[str, dict[str, Any]] = field(default_factory=dict)
+    value_map: dict[str, ToolValueRef] = field(default_factory=dict)
     latest_collection_ref: str | None = None
     latest_artifact_id: str | None = None
+    latest_value_ref: str | None = None
+    latest_coordinate_ref: str | None = None
+    latest_bbox_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,9 +71,8 @@ class ToolRuntimeStore:
     layer_repository: Any
     artifact_export_store: Any
     spatial_service: Any
-    qgis_runner: Any
-    publisher: Any
     runtime_root: Path
+    weather_service: Any = None
 
 
 @dataclass

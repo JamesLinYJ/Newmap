@@ -45,9 +45,10 @@ class PostGISLayerCatalog(LayerCatalog):
             cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
             self._create_metadata_table(cur)
 
-    def list_layers(self, *, include_inactive: bool = True, session_id: str | None = None) -> list[LayerDescriptor]:
+    def list_layers(self, *, include_inactive: bool = True, session_id: str | None = None, thread_id: str | None = None) -> list[LayerDescriptor]:
         with self._connect() as conn, conn.cursor() as cur:
             self._create_metadata_table(cur)
+            self._backfill_missing_layer_profiles(cur)
             conditions: list[str] = []
             params: list[Any] = []
             if not include_inactive:
@@ -57,10 +58,17 @@ class PostGISLayerCatalog(LayerCatalog):
                     "(metadata_json->>'session_id' = %s OR source_type IN ('managed', 'managed_import'))"
                 )
                 params.append(session_id)
+            if thread_id is not None:
+                conditions.append(
+                    "(metadata_json->>'thread_id' = %s OR metadata_json->>'thread_id' IS NULL)"
+                )
+                params.append(thread_id)
             where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
             cur.execute(
                 f"""
-                SELECT layer_key, name, source_type, geometry_type, srid, description, feature_count, tags, metadata_json
+                SELECT
+                    layer_key, name, source_type, geometry_type, srid, description,
+                    feature_count, tags, metadata_json, created_at, updated_at
                 FROM layers_metadata
                 {where_sql}
                 ORDER BY
@@ -88,9 +96,12 @@ class PostGISLayerCatalog(LayerCatalog):
         resolved = self.resolve_layer_key(layer_key)
         with self._connect() as conn, conn.cursor() as cur:
             self._create_metadata_table(cur)
+            self._backfill_missing_layer_profiles(cur, layer_key=resolved)
             cur.execute(
                 """
-                SELECT layer_key, name, source_type, geometry_type, srid, description, feature_count, tags, metadata_json
+                SELECT
+                    layer_key, name, source_type, geometry_type, srid, description,
+                    feature_count, tags, metadata_json, created_at, updated_at
                 FROM layers_metadata
                 WHERE layer_key = %s
                 """,
@@ -538,6 +549,8 @@ class PostGISLayerCatalog(LayerCatalog):
 
     def _upsert_metadata(self, cur, descriptor: LayerDescriptor, table_name: str) -> None:
         self._create_metadata_table(cur)
+        data_profile = self._profile_layer_table(cur, table_name)
+        feature_count = data_profile.get("feature_count")
         metadata_payload = {
             "table_name": table_name,
             "category": descriptor.category,
@@ -545,6 +558,9 @@ class PostGISLayerCatalog(LayerCatalog):
             "analysis_capabilities": descriptor.analysis_capabilities,
             "source_config_summary": descriptor.source_config_summary,
             "session_id": descriptor.session_id,
+            "thread_id": descriptor.thread_id,
+            "bounds": data_profile.get("bounds"),
+            "property_schema": data_profile.get("property_schema", []),
         }
         cur.execute(
             """
@@ -571,11 +587,112 @@ class PostGISLayerCatalog(LayerCatalog):
                 descriptor.srid,
                 table_name,
                 descriptor.description,
-                descriptor.feature_count,
+                int(feature_count) if feature_count is not None else descriptor.feature_count,
                 json.dumps(descriptor.tags, ensure_ascii=False),
                 json.dumps(metadata_payload, ensure_ascii=False),
             ),
         )
+
+    def _profile_layer_table(self, cur, table_name: str) -> dict[str, Any]:
+        # 图层数据画像。
+        #
+        # 管理面板需要边界和字段概览，但目录接口不能把完整要素集合顺手吐出去。
+        # 因此在落库/更新时把轻量画像写入 metadata_json，列表查询只读这份事实快照。
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    COUNT(*)::integer AS feature_count,
+                    ST_AsGeoJSON(ST_Envelope(ST_Collect(geom))) AS extent_geojson
+                FROM {table_name}
+                WHERE geom IS NOT NULL
+                """
+            ).format(table_name=sql.Identifier(table_name))
+        )
+        row = cur.fetchone()
+        feature_count = int(row[0]) if row and row[0] is not None else 0
+        bounds = _bounds_from_extent_geojson(row[1] if row else None)
+
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    key,
+                    string_agg(DISTINCT jsonb_typeof(value), ', ' ORDER BY jsonb_typeof(value)) AS data_type,
+                    COUNT(*)::integer AS populated_count,
+                    COALESCE(
+                        (array_agg(DISTINCT left(value #>> '{{}}', 80))
+                            FILTER (WHERE jsonb_typeof(value) IN ('string', 'number', 'boolean')))[1:4],
+                        ARRAY[]::text[]
+                    ) AS sample_values
+                FROM {table_name}
+                CROSS JOIN LATERAL jsonb_each(properties)
+                WHERE value IS NOT NULL AND value <> 'null'::jsonb
+                GROUP BY key
+                ORDER BY key
+                LIMIT 48
+                """
+            ).format(table_name=sql.Identifier(table_name))
+        )
+        property_schema = [
+            {
+                "name": str(item[0]),
+                "data_type": str(item[1] or "unknown"),
+                "populated_count": int(item[2] or 0),
+                "sample_values": [str(value) for value in (item[3] or []) if value not in (None, "")],
+            }
+            for item in cur.fetchall()
+        ]
+        return {
+            "feature_count": feature_count,
+            "bounds": bounds,
+            "property_schema": property_schema,
+        }
+
+    def _backfill_missing_layer_profiles(self, cur, *, layer_key: str | None = None) -> None:
+        # 旧目录画像回填。
+        #
+        # 只修补 metadata_json 里缺少画像 key 的历史行；已经写入过画像的图层不重算，
+        # 保证列表接口既能展示完整管理信息，又不会在每次刷新时扫描全库。
+        conditions = [
+            "(NOT (metadata_json ? 'bounds') OR NOT (metadata_json ? 'property_schema'))"
+        ]
+        params: list[Any] = []
+        if layer_key is not None:
+            conditions.append("layer_key = %s")
+            params.append(layer_key)
+        cur.execute(
+            f"""
+            SELECT layer_key, table_name
+            FROM layers_metadata
+            WHERE {' AND '.join(conditions)}
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+        for current_layer_key, table_name in rows:
+            profile = self._profile_layer_table(cur, str(table_name))
+            cur.execute(
+                """
+                UPDATE layers_metadata
+                SET
+                    feature_count = %s,
+                    metadata_json = metadata_json || %s::jsonb,
+                    updated_at = updated_at
+                WHERE layer_key = %s
+                """,
+                (
+                    int(profile["feature_count"]),
+                    json.dumps(
+                        {
+                            "bounds": profile.get("bounds"),
+                            "property_schema": profile.get("property_schema", []),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    current_layer_key,
+                ),
+            )
 
     def delete_layer(self, layer_key: str) -> bool:
         resolved = self.resolve_layer_key(layer_key)
@@ -609,12 +726,17 @@ class PostGISLayerCatalog(LayerCatalog):
             srid=row[4],
             description=row[5],
             feature_count=row[6],
+            bounds=_coerce_bounds(metadata.get("bounds")),
+            property_schema=metadata.get("property_schema") if isinstance(metadata.get("property_schema"), list) else [],
             tags=row[7] or [],
             category=str(metadata.get("category") or "general"),
             status=str(metadata.get("status") or "active"),
             analysis_capabilities=[str(item) for item in metadata.get("analysis_capabilities", [])],
             source_config_summary=str(metadata.get("source_config_summary")) if metadata.get("source_config_summary") else None,
             session_id=str(metadata.get("session_id")) if metadata.get("session_id") else None,
+            thread_id=str(metadata.get("thread_id")) if metadata.get("thread_id") else None,
+            created_at=row[9],
+            updated_at=row[10],
         )
 
     def _select_feature_collection_sql(self, table_name: str, where_sql: str | None = None):
@@ -687,3 +809,37 @@ def _redact_database_url(database_url: str) -> str:
     username = parts.username or ""
     netloc = f"{username}:***@{hostname}{port}" if username else f"{hostname}{port}"
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+
+def _bounds_from_extent_geojson(value: str | None) -> list[float] | None:
+    if not value:
+        return None
+    try:
+        geometry = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    positions = list(_iter_positions(geometry.get("coordinates")))
+    if not positions:
+        return None
+    xs = [position[0] for position in positions]
+    ys = [position[1] for position in positions]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _iter_positions(value: Any):
+    if not isinstance(value, list):
+        return
+    if len(value) >= 2 and all(isinstance(item, (int, float)) for item in value[:2]):
+        yield (float(value[0]), float(value[1]))
+        return
+    for item in value:
+        yield from _iter_positions(item)
+
+
+def _coerce_bounds(value: Any) -> list[float] | None:
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    try:
+        return [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None

@@ -85,7 +85,7 @@ function runReducer(state: RunState, action: RunAction): RunState {
         intent: action.intent,
         executionPlan: action.plan,
         artifacts: action.artifacts ?? [],
-        placeResolution: action.agentState.placeResolution ?? state.placeResolution,
+        placeResolution: action.agentState?.placeResolution ?? state.placeResolution,
         isSubmitting: isDifferentRun ? isRunning : isRunning ? state.isSubmitting : false,
         uiError: isDifferentRun ? undefined : state.uiError,
         events: isDifferentRun ? [] : state.events,
@@ -215,13 +215,36 @@ export function useRunState() {
 
   // SSE connection
   useEffect(() => {
-    if (!runId) return
+    if (!runId || runStatus !== 'running') return
 
     let source: EventSource | undefined
     let reconnectTimer: number | undefined
     let disposed = false
     let reconnectAttempts = 0
     const MAX_RECONNECT_ATTEMPTS = 10
+
+    // 流式事件按动画帧批量提交，避免每个 token 触发一次全量 re-render
+    let pendingEvents: RunEvent[] = []
+    let rafId = 0
+
+    const flushEvents = () => {
+      rafId = 0
+      if (pendingEvents.length === 0) return
+      const batch = pendingEvents
+      pendingEvents = []
+      startTransition(() => {
+        for (const evt of batch) {
+          dispatch({ type: 'APPEND_EVENT', event: evt })
+        }
+      })
+    }
+
+    const enqueueEvent = (event: RunEvent) => {
+      pendingEvents.push(event)
+      if (rafId === 0) {
+        rafId = requestAnimationFrame(flushEvents)
+      }
+    }
 
     const connect = () => {
       if (disposed) return
@@ -230,7 +253,13 @@ export function useRunState() {
         runId,
         (event) => {
           reconnectAttempts = 0
-          startTransition(() => dispatch({ type: 'APPEND_EVENT', event }))
+
+          const isStreaming = event.type === 'message.delta' || event.type === 'thinking.delta' || event.type === 'loop.updated'
+          if (isStreaming) {
+            enqueueEvent(event)
+          } else {
+            startTransition(() => dispatch({ type: 'APPEND_EVENT', event }))
+          }
 
           if (event.type === 'intent.parsed') {
             startTransition(() => dispatch({ type: 'SET_INTENT', intent: event.payload as unknown as UserIntent }))
@@ -261,7 +290,7 @@ export function useRunState() {
           if (event.type === 'warning.raised') {
             dispatch({ type: 'SET_ERROR', error: undefined })
           }
-          if (event.type === 'run.completed' || event.type === 'run.failed') {
+          if (event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'approval.required' || event.type === 'clarification.required') {
             if (event.type === 'run.failed') {
               const payload = event.payload as Record<string, unknown> | undefined
               dispatch({
@@ -269,7 +298,7 @@ export function useRunState() {
                 error: String((payload?.errors as string[] | undefined)?.join('；') || event.message),
               })
             }
-            // hydrate full state on completion
+            // 终止态统一 hydrate；人工等待事件会落到对应的 waiting_* 快照。
             getRun(runId)
               .then((latestRun) => {
                 if (disposed) return
@@ -289,6 +318,7 @@ export function useRunState() {
                 dispatch({ type: 'SET_ERROR', error: formatHydrationError(error) })
               })
               .finally(() => {
+                if (disposed) return
                 dispatch({ type: 'SET_SUBMITTING', value: false })
               })
           }
@@ -337,6 +367,8 @@ export function useRunState() {
       disposed = true
       source?.close()
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (rafId) cancelAnimationFrame(rafId)
+      pendingEvents = []
     }
   }, [runId, runStatus])
 

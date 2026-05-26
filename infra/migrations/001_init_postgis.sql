@@ -22,41 +22,45 @@ CREATE TABLE IF NOT EXISTS platform_sessions (
   payload_json JSONB NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS platform_runs (
-  run_id TEXT PRIMARY KEY,
-  thread_id TEXT,
-  session_id TEXT NOT NULL REFERENCES platform_sessions(session_id) ON DELETE CASCADE,
-  status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL,
-  payload_json JSONB NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS platform_threads (
-  thread_id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES platform_sessions(session_id) ON DELETE CASCADE,
-  status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL,
-  payload_json JSONB NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS platform_events (
-  event_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES platform_runs(run_id) ON DELETE CASCADE,
-  occurred_at TIMESTAMPTZ NOT NULL,
-  payload_json JSONB NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS platform_artifacts (
   artifact_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES platform_runs(run_id) ON DELETE CASCADE,
+  run_id TEXT NOT NULL,
   artifact_type TEXT NOT NULL,
   name TEXT NOT NULL,
   uri TEXT NOT NULL,
   metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   geojson_relative_path TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS platform_runtime_config (
+  config_key TEXT PRIMARY KEY,
+  updated_at TIMESTAMPTZ NOT NULL,
+  payload_json JSONB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_weather_datasets (
+  dataset_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES platform_sessions(session_id) ON DELETE CASCADE,
+  thread_id TEXT,
+  filename TEXT NOT NULL,
+  status TEXT NOT NULL,
+  storage_relative_path TEXT NOT NULL,
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_weather_jobs (
+  job_id TEXT PRIMARY KEY,
+  dataset_id TEXT NOT NULL REFERENCES platform_weather_datasets(dataset_id) ON DELETE CASCADE,
+  job_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  result_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tool_catalog_entries (
@@ -67,14 +71,11 @@ CREATE TABLE IF NOT EXISTS tool_catalog_entries (
   PRIMARY KEY (tool_name, tool_kind)
 );
 
-CREATE INDEX IF NOT EXISTS idx_platform_runs_session_updated
-  ON platform_runs(session_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_platform_artifacts_run_id
+  ON platform_artifacts(run_id);
 
-CREATE INDEX IF NOT EXISTS idx_platform_runs_thread_updated
-  ON platform_runs(thread_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_weather_datasets_session_updated
+  ON platform_weather_datasets(session_id, updated_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_platform_threads_session_updated
-  ON platform_threads(session_id, updated_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_platform_events_run_occurred
-  ON platform_events(run_id, occurred_at, event_id);
+CREATE INDEX IF NOT EXISTS idx_weather_jobs_status_updated
+  ON platform_weather_jobs(status, updated_at);

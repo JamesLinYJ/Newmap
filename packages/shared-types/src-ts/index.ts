@@ -29,6 +29,7 @@ export type EventType =
   | 'todo.updated'
   | 'tool.started'
   | 'tool.completed'
+  | 'clarification.required'
   | 'approval.required'
   | 'warning.raised'
   | 'run.completed'
@@ -101,6 +102,18 @@ export interface ExecutionPlan {
   steps: PlanStep[]
 }
 
+export interface ToolValueRef {
+  refId: string
+  kind: string
+  label: string
+  value: unknown
+  unit?: string | null
+  sourceTool?: string | null
+  sourceResultId?: string | null
+  metadata: Record<string, unknown>
+  createdAt?: string | null
+}
+
 export interface ToolCall {
   stepId: string
   tool: string
@@ -117,6 +130,7 @@ export interface ToolCall {
   crs?: Record<string, unknown>
   geometryType?: string | null
   featureCount?: number | null
+  valueRefs?: ToolValueRef[]
 }
 
 export interface ContextReference {
@@ -141,6 +155,29 @@ export interface ContextResolution {
   sourceRunId?: string | null
   reason?: string | null
   candidates: ContextReference[]
+}
+
+export interface ContextEntryRecord {
+  contextEntryId: string
+  sessionId: string
+  threadId: string
+  sourceRunId?: string | null
+  kind: string
+  label: string
+  summary: string
+  reference?: ContextReference | null
+  searchText: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ThreadContextRecord {
+  threadId: string
+  sessionId: string
+  summaryText: string
+  entryCount: number
+  payload: Record<string, unknown>
+  updatedAt: string
 }
 
 export interface RunLifecycle {
@@ -189,6 +226,31 @@ export interface ArtifactRef {
   name: string
   uri: string
   metadata: Record<string, unknown>
+  isIntermediate?: boolean
+}
+
+export interface WeatherDatasetRecord {
+  datasetId: string
+  sessionId: string
+  threadId?: string | null
+  filename: string
+  status: 'uploaded' | 'queued' | 'running' | 'completed' | 'failed' | string
+  storageRelativePath: string
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WeatherJobRecord {
+  jobId: string
+  datasetId: string
+  jobType: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | string
+  payload: Record<string, unknown>
+  result: Record<string, unknown>
+  error?: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface RuntimeSubAgentConfig {
@@ -224,6 +286,15 @@ export interface RuntimeContextConfig {
   toolCallWindow: number
   artifactWindow: number
   warningWindow: number
+  promptMaxChars: number
+  contextEntryWindow: number
+  memoryFileCharLimit: number
+}
+
+export interface AgentSessionLogRecord {
+  timestamp: string
+  type: string
+  payload: Record<string, unknown>
 }
 
 export interface RuntimeGeosearchConfig {
@@ -251,7 +322,6 @@ export interface RuntimePlanningConfig {
 }
 
 export interface AgentRuntimeConfig {
-  defaultPublishProjectKey: string
   loopTraceLimit: number
   supervisor: SupervisorRuntimeConfig
   subAgents: RuntimeSubAgentConfig[]
@@ -285,6 +355,13 @@ export interface RunEvent {
   payload?: Record<string, unknown>
 }
 
+export interface LayerPropertyDescriptor {
+  name: string
+  dataType: string
+  populatedCount: number
+  sampleValues: string[]
+}
+
 export interface LayerDescriptor {
   layerKey: string
   name: string
@@ -293,12 +370,17 @@ export interface LayerDescriptor {
   srid: number
   description: string
   featureCount?: number
+  bounds?: [number, number, number, number] | null
+  propertySchema: LayerPropertyDescriptor[]
   category: string
   status: string
   tags: string[]
   analysisCapabilities: string[]
   sourceConfigSummary?: string | null
   sessionId?: string | null
+  threadId?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
 }
 
 export interface BasemapDescriptor {
@@ -311,10 +393,6 @@ export interface BasemapDescriptor {
   labelTileUrls: string[]
   available: boolean
   isDefault: boolean
-}
-
-export interface PublishRequest {
-  projectKey?: string
 }
 
 export interface AgentState {
@@ -338,6 +416,7 @@ export interface AgentState {
   subAgents: SubAgentState[]
   approvals: ApprovalRequest[]
   toolResults: ToolCall[]
+  toolValueRefs?: ToolValueRef[]
   artifacts: ArtifactRef[]
   selectedDataSources: string[]
   planRepairAttempts: number
@@ -378,6 +457,7 @@ export interface AgentThreadRecord {
   latestArtifactName?: string | null
   historyPreview?: string | null
   runCount: number
+  sessionLogPath?: string | null
 }
 
 export interface AnalysisRun {
@@ -391,6 +471,7 @@ export interface AnalysisRun {
   createdAt: string
   updatedAt: string
   state: AgentState
+  sessionLogPath?: string | null
 }
 
 export interface ModelProviderDescriptor {
@@ -434,16 +515,6 @@ export interface ToolDescriptor {
 export interface SystemComponentsStatus {
   catalogBackend: string
   postgisEnabled: boolean
-  qgisRuntimeAvailable: boolean
-  qgisServerAvailable: boolean
-  ogcApiAvailable: boolean
-  publishCapabilities: string[]
-  qgisServerBaseUrl: string
+  sessionLogRoot?: string | null
   providers: ModelProviderDescriptor[]
-}
-
-export interface QgisModelsResponse {
-  available: boolean
-  models: string[]
-  error?: string
 }

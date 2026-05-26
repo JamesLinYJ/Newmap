@@ -15,8 +15,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'framer-motion'
-import { ArrowUp, ChevronDown, LoaderCircle, Pencil, Plus, Settings2, Square, Trash2 } from 'lucide-react'
-import type { AgentRuntimeConfig, AgentThreadRecord, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
+import { ArrowUp, ChevronDown, FolderUp, LoaderCircle, Pencil, Plus, Settings2, Square, Trash2 } from 'lucide-react'
+import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationState, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants } from '../motion'
 import { deriveConversationEntries, type ConversationCommand, type ConversationEntry, type TranscriptEntry } from '../runTranscript'
 import { AppIcon } from './AppIcon'
@@ -35,6 +35,7 @@ interface ChatPanelProps {
   errorMessage?: string
   uploadedLayerName?: string
   intent?: UserIntent
+  clarification?: ClarificationState | null
   sessionThreads: AgentThreadRecord[]
   transcriptEntries: ReadonlyArray<TranscriptEntry>
   runtimeConfig?: AgentRuntimeConfig
@@ -45,16 +46,27 @@ interface ChatPanelProps {
   onFillSample: (value: string) => void
   onSelectClarification: (value: string, id?: string | null) => void
   onUseTemplate: () => void
-  onUpload: (file: File) => void
+  onUploadFiles: (files: File[]) => void
   onSelectArtifact: (id: string) => void
   onSelectTask: (id: string) => void
   onRenameTask: (id: string, title: string) => void
   onDeleteTask: (id: string) => void
   onResolveApproval: (id: string, approved: boolean) => void
+  dataReferences: DataReferenceSummary[]
 }
 
 type TaskView = 'chat' | 'summary' | 'all'
 type TaskDialog = { mode: 'rename' | 'delete'; task: AgentThreadRecord } | null
+interface DataReferenceSummary {
+  id: string
+  kind: 'layer' | 'weather' | 'artifact'
+  name: string
+  status: string
+  detail: string
+  relativePath?: string
+}
+
+const DIRECTORY_PICKER_PROPS = { webkitdirectory: '', directory: '' } as Record<string, string>
 
 const SAMPLES = [
   '查询巴黎地铁站 1 公里范围内的医院',
@@ -94,6 +106,7 @@ export function ChatPanel(props: ChatPanelProps) {
     errorMessage,
     uploadedLayerName,
     intent,
+    clarification,
     sessionThreads,
     transcriptEntries,
     availableTools = [],
@@ -103,12 +116,13 @@ export function ChatPanel(props: ChatPanelProps) {
     onFillSample,
     onSelectClarification,
     onUseTemplate,
-    onUpload,
+    onUploadFiles,
     onSelectArtifact,
     onSelectTask,
     onRenameTask,
     onDeleteTask,
     onResolveApproval,
+    dataReferences,
   } = props
   const [taskViewState, setTaskViewState] = useState<{ mode: TaskView; bound?: string }>({
     mode: 'chat',
@@ -159,6 +173,10 @@ export function ChatPanel(props: ChatPanelProps) {
     [availableTools, runStatus, transcriptEntries],
   )
   const errorTitle = useMemo(() => errorCardTitle(errorMessage), [errorMessage])
+  const activeClarification = useMemo(
+    () => buildActiveClarification(clarification, intent),
+    [clarification, intent],
+  )
 
   // 新消息到达时自动滚到底部，除非用户手动上滚
   useEffect(() => {
@@ -291,7 +309,7 @@ export function ChatPanel(props: ChatPanelProps) {
             <AnimatePresence initial={false}>
               {(!isThought || thoughtExpanded) && (
                 <m.div className={`cc-assistant-copy ${isThought ? 'cc-assistant-copy--thought' : ''}`} {...(isThought ? buildFadeUpMotion(reducedMotion, 0, 6) : {})}>
-                  <Markdown>{entry.body}</Markdown>
+                  <Markdown streaming={entry.status === 'running'}>{entry.body}</Markdown>
                 </m.div>
               )}
             </AnimatePresence>
@@ -387,7 +405,7 @@ export function ChatPanel(props: ChatPanelProps) {
           <AnimatePresence initial={false}>
             {isExpanded && (
               <m.div className="cc-assistant-copy" {...buildFadeUpMotion(reducedMotion, 0, 6)}>
-                <Markdown>{entry.body}</Markdown>
+                <Markdown streaming={entry.status === 'running'}>{entry.body}</Markdown>
               </m.div>
             )}
           </AnimatePresence>
@@ -471,16 +489,16 @@ export function ChatPanel(props: ChatPanelProps) {
             ) : (
               <m.div key={`chat-${currentRunId ?? 'idle'}`} className="cc-chat-mode" layout {...buildFadeMotion(reducedMotion)}>
                 <m.div ref={timelineRef} onScroll={handleTimelineScroll} className="cc-timeline" aria-label="对话" aria-live="polite" variants={feedVariants} initial="hidden" animate="visible">
-                  {intent?.clarificationRequired && (
+                  {activeClarification && (
                     <m.div className="cc-timeline-item cc-timeline-item--notice" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
                       <span className="cc-timeline-dot" />
                       <div className="cc-timeline-body">
                         <div className="cc-approval-copy">
                           <strong>需要确认</strong>
-                          <span>{intent.clarificationQuestion}</span>
+                          <span>{activeClarification.question}</span>
                         </div>
                         <div className="cc-approval-actions">
-                          {intent.clarificationOptions?.map((option) => (
+                          {activeClarification.options.map((option) => (
                             <button
                               key={option.optionId ?? option.label}
                               className="cc-mini-button"
@@ -525,15 +543,21 @@ export function ChatPanel(props: ChatPanelProps) {
                     </m.div>
                   ) : (
                     <m.div className="cc-empty cc-empty--chat" layout {...buildFadeUpMotion(reducedMotion, 0, 12)}>
-                      <strong>有什么可以帮你分析？</strong>
-                      <span>输入一个地点、范围、图层或空间关系，我会把过程放在这条时间线上。</span>
+                      {dataReferences.length ? (
+                        <DataReferenceCard references={dataReferences} />
+                      ) : (
+                        <>
+                          <strong>有什么可以帮你分析？</strong>
+                          <span>输入一个地点、范围、图层或空间关系，我会把过程放在这条时间线上。</span>
+                        </>
+                      )}
                     </m.div>
                   )}
                 </m.div>
 
                 <div className="cc-run-footer">
                   <span>{runCreatedAt && runStatus === 'running' ? `运行中 ${fmtElapsed(runCreatedAt)}` : '输入空间问题，按回车开始分析'}</span>
-                  {uploadedLayerName && <span>已接入 {uploadedLayerName}</span>}
+                  {dataReferences.length ? <span>引用 {dataReferences.length} 个数据</span> : uploadedLayerName && <span>已接入 {uploadedLayerName}</span>}
                 </div>
               </m.div>
             )}
@@ -558,11 +582,29 @@ export function ChatPanel(props: ChatPanelProps) {
                 id="chat-file-upload"
                 type="file"
                 hidden
-                accept=".geojson,.json,.gpkg"
+                multiple
+                accept=".geojson,.json,.gpkg,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
                 onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  if (file) {
-                    onUpload(file)
+                  const files = Array.from(event.target.files ?? [])
+                  if (files.length) {
+                    onUploadFiles(files)
+                  }
+                  event.target.value = ''
+                }}
+              />
+              <label className="cc-composer-tool" htmlFor="chat-folder-upload" aria-label="上传文件夹">
+                <FolderUp size={18} />
+              </label>
+              <input
+                id="chat-folder-upload"
+                type="file"
+                hidden
+                multiple
+                {...DIRECTORY_PICKER_PROPS}
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? [])
+                  if (files.length) {
+                    onUploadFiles(files)
                   }
                   event.target.value = ''
                 }}
@@ -645,6 +687,52 @@ export function ChatPanel(props: ChatPanelProps) {
   )
 }
 
+function DataReferenceCard({ references }: { references: DataReferenceSummary[] }) {
+  const visible = references.slice(0, 8)
+  const hiddenCount = Math.max(0, references.length - visible.length)
+  return (
+    <div className="cc-data-context">
+      <div className="cc-data-context__head">
+        <strong>当前引用的数据</strong>
+        <span>{references.length} 个文件/结果</span>
+      </div>
+      <div className="cc-data-context__list">
+        {visible.map((reference) => (
+          <div key={reference.id} className="cc-data-reference">
+            <span className={`cc-data-reference__kind cc-data-reference__kind--${reference.kind}`}>{formatReferenceKind(reference.kind)}</span>
+            <span className="cc-data-reference__main">
+              <strong title={reference.relativePath ?? reference.name}>{reference.relativePath ?? reference.name}</strong>
+              <small>{reference.detail}</small>
+            </span>
+            <span className="cc-data-reference__status">{reference.status}</span>
+          </div>
+        ))}
+      </div>
+      {hiddenCount > 0 && <span className="cc-data-context__more">还有 {hiddenCount} 个文件已接入，可在数据源面板查看。</span>}
+    </div>
+  )
+}
+
+function buildActiveClarification(clarification: ClarificationState | null | undefined, intent: UserIntent | undefined) {
+  // 澄清显示事实源。
+  //
+  // request_clarification 工具写入 agentState.clarification；解析器早期歧义
+  // 写入 intent。UI 优先展示运行态事实，避免工具成功但前端只看 intent 而空白。
+  if (clarification && !clarification.selectedOptionId) {
+    return {
+      question: clarification.question,
+      options: clarification.options,
+    }
+  }
+  if (intent?.clarificationRequired) {
+    return {
+      question: intent.clarificationQuestion ?? '请确认下一步。',
+      options: intent.clarificationOptions ?? [],
+    }
+  }
+  return null
+}
+
 function ToolCommandCard({
   command,
   expanded,
@@ -676,6 +764,12 @@ function ToolCommandCard({
       </AnimatePresence>
     </div>
   )
+}
+
+function formatReferenceKind(kind: DataReferenceSummary['kind']) {
+  if (kind === 'weather') return '气象'
+  if (kind === 'artifact') return '结果'
+  return '图层'
 }
 
 function isThoughtEntry(entry: ConversationEntry) {

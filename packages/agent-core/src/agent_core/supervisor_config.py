@@ -40,7 +40,6 @@ LOOP_PHASES = {
 
 def build_default_runtime_config() -> AgentRuntimeConfig:
     return AgentRuntimeConfig(
-        default_publish_project_key="geo-agent-workspace",
         loop_trace_limit=80,
         supervisor=SupervisorRuntimeConfig(
             name="geo_agent_supervisor",
@@ -48,10 +47,12 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 "你是一个中文地理空间智能助手，擅长理解用户的空间分析需求。"
                 "收到问题后，先判断意图，再决定自己直接调用工具还是分派给子智能体协作。"
                 "优先使用已经就绪的 GIS 工具，基于真实数据给出答案，不凭空构造结果。"
+                "如果用户提到 nc、GRIB、GeoTIFF、HDF5、雷达、降雨、温度、风速等气象数据，先查看已上传气象数据集，再选择统计、热力图、阈值区或等值线工具。"
+                "如果用户需要统计图、对比图、趋势图或比例图，先取得真实统计数据，再调用 create_stat_chart 生成 PNG 图表。"
                 "和用户交流时像一位耐心的分析师，用清晰的中文说明你的判断和下一步。"
                 "在给出最终答案前，对照用户需求检查你的产出是否自洽——如有偏差，主动修正。"
             ),
-            approval_interrupt_tools=["publish_to_qgis_project"],
+            approval_interrupt_tools=[],
         ),
         sub_agents=[
             RuntimeSubAgentConfig(
@@ -61,7 +62,8 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 summary="负责边界、图层与空间分析。",
                 system_prompt=(
                     "你是空间分析子智能体，负责执行具体的 GIS 计算任务。"
-                    "你的工具箱里有边界加载、图层加载、缓冲区分析、相交分析、裁剪、点面判断、距离查询和结果导出。"
+                    "你的工具箱里有边界加载、图层加载、缓冲区分析、相交分析、裁剪、差集、对称差集、点面判断、"
+                    "距离查询、路线规划、质心计算、凸包生成、要素融合、几何简化、面积/长度统计（椭球面/平面）和结果导出。"
                     "收到任务后直接动手执行，完成时用简洁的中文说明你做了什么、结果是什么。"
                 ),
                 tools=[
@@ -74,27 +76,58 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                     "buffer",
                     "intersect",
                     "clip",
+                    "difference",
+                    "symmetric_difference",
                     "spatial_join",
                     "point_in_polygon",
                     "distance_query",
+                    "route_plan",
+                    "centroid",
+                    "convex_hull",
+                    "dissolve",
+                    "simplify",
+                    "area_stats",
+                    "ellipsoidal_area",
+                    "planar_area",
+                    "length_stats",
                     "publish_result_geojson",
                 ],
             ),
             RuntimeSubAgentConfig(
-                agent_id="qgis_operator",
-                name="QGIS Operator",
-                role="QGIS 执行",
-                summary="负责 QGIS Processing / model 执行。",
-                system_prompt="你是 QGIS 执行子智能体，负责运行 QGIS 处理算法和模型。收到调用指令后执行，完成时用中文简短汇报结果。",
-                tools=["run_qgis_model", "run_qgis_processing_algorithm"],
+                agent_id="weather_analyst",
+                name="Meteorological Analyst",
+                role="气象分析",
+                summary="负责气象数据集检查、渲染、统计、阈值区、等值线和 DOCX 解读报告。",
+                system_prompt=(
+                    "你是气象数据分析子智能体。"
+                    "收到 NetCDF、GRIB、GeoTIFF、HDF5 或雷达类任务时，先用 list_meteorological_datasets / inspect_meteorological_dataset 确认 dataset、变量、时间片、level 和地图范围。"
+                    "inspect 和 stats 返回 valueRefs 后，后续工具必须传 variable_ref、bbox_ref、time_index_ref、level_index_ref 或 threshold_ref，不能手抄数值。"
+                    "连续场展示优先 render_meteorological_raster；阈值范围用 meteorological_threshold_area；等值线用 meteorological_contours；纯数值问题用 meteorological_stats。"
+                    "如果用户要正式 DOCX 解读报告，必须先由你根据 inspect/stats 结果撰写 llm_interpretation，再调用 generate_meteorological_report。"
+                    "没有地理坐标时要说明只能做元数据或统计，不能叠加地图。"
+                ),
+                tools=[
+                    "list_meteorological_datasets",
+                    "inspect_meteorological_dataset",
+                    "render_meteorological_raster",
+                    "meteorological_stats",
+                    "meteorological_threshold_area",
+                    "meteorological_contours",
+                    "generate_meteorological_report",
+                ],
             ),
             RuntimeSubAgentConfig(
-                agent_id="publisher",
-                name="Publisher",
-                role="发布交付",
-                summary="负责服务发布与交付整理。",
-                system_prompt="你是发布交付子智能体，在用户希望把分析结果发布为在线地图服务时介入，将 GeoJSON 成果推送到 QGIS Server。",
-                tools=["publish_to_qgis_project"],
+                agent_id="chart_designer",
+                name="Chart Designer",
+                role="统计制图",
+                summary="负责把统计结果整理成美观图表。",
+                system_prompt=(
+                    "你是统计图表子智能体。"
+                    "只有在已有真实统计数据时才调用 create_stat_chart，不要编造数据。"
+                    "分类排名优先柱状图，时间序列优先折线图，占比结构优先饼图，离散对比可用散点图。"
+                    "图表标题、单位和字段名要清晰，输出后用中文说明图表表达了什么。"
+                ),
+                tools=["create_stat_chart"],
             ),
         ],
         ui=RuntimeUiConfig(
@@ -118,6 +151,9 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
             tool_call_window=8,
             artifact_window=6,
             warning_window=6,
+            prompt_max_chars=12000,
+            context_entry_window=18,
+            memory_file_char_limit=4000,
         ),
         geosearch=RuntimeGeosearchConfig(
             provider="nominatim",

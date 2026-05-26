@@ -18,7 +18,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # 命名转换
@@ -54,6 +54,7 @@ class EventType(str, Enum):
     TODO_UPDATED = "todo.updated"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
+    CLARIFICATION_REQUIRED = "clarification.required"
     APPROVAL_REQUIRED = "approval.required"
     WARNING_RAISED = "warning.raised"
     RUN_COMPLETED = "run.completed"
@@ -127,6 +128,22 @@ class ExecutionPlan(CamelModel):
     steps: list[PlanStep] = Field(default_factory=list)
 
 
+class ToolValueRef(CamelModel):
+    # 工具值引用
+    #
+    # 坐标、bbox、阈值、统计量等工具派生值统一进入运行时黑板；
+    # 后续工具只传 ref_id，由工具层解析真实值，避免模型手抄数值。
+    ref_id: str
+    kind: str
+    label: str
+    value: Any
+    unit: str | None = None
+    source_tool: str | None = None
+    source_result_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+
 class ToolCall(CamelModel):
     step_id: str
     tool: str
@@ -143,6 +160,7 @@ class ToolCall(CamelModel):
     crs: dict[str, Any] = Field(default_factory=dict)
     geometry_type: str | None = None
     feature_count: int | None = None
+    value_refs: list[ToolValueRef] = Field(default_factory=list)
 
 
 class ContextReference(CamelModel):
@@ -171,6 +189,46 @@ class ContextResolution(CamelModel):
     source_run_id: str | None = None
     reason: str | None = None
     candidates: list[ContextReference] = Field(default_factory=list)
+
+
+class ContextEntryRecord(CamelModel):
+    # 上下文索引条目
+    #
+    # JSONL 会话日志中的 context_entry 是 Agent prompt 上下文的事实源；
+    # run/event 只负责执行快照和实时叙事，不再被运行时临时扫描拼接。
+    context_entry_id: str
+    session_id: str
+    thread_id: str
+    source_run_id: str | None = None
+    kind: str
+    label: str
+    summary: str
+    reference: ContextReference | None = None
+    search_text: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
+class ThreadContextRecord(CamelModel):
+    # 线程上下文快照
+    #
+    # 保存线程级有界摘要和上下文统计，供 supervisor prompt 快速恢复任务背景。
+    thread_id: str
+    session_id: str
+    summary_text: str = ""
+    entry_count: int = 0
+    payload: dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime
+
+
+class AgentSessionLogRecord(CamelModel):
+    # Agent 会话日志行
+    #
+    # 持久化文件每行只允许 timestamp/type/payload 三个顶层字段；
+    # 具体 run、event、context 快照都进入 payload。
+    timestamp: datetime
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunLifecycle(CamelModel):
@@ -219,6 +277,38 @@ class ArtifactRef(CamelModel):
     name: str
     uri: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    is_intermediate: bool = False
+
+
+class WeatherDatasetRecord(CamelModel):
+    # 气象数据集事实
+    #
+    # 原始文件保存在 runtime/weather，数据库只保存解析状态和轻量 metadata，
+    # 避免把多维数组塞进平台业务表。
+    dataset_id: str
+    session_id: str
+    thread_id: str | None = None
+    filename: str
+    status: str = "uploaded"
+    storage_relative_path: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class WeatherJobRecord(CamelModel):
+    # 气象后台任务事实
+    #
+    # worker 只认 job 状态推进；API 和前端通过这份记录观察解析进度。
+    job_id: str
+    dataset_id: str
+    job_type: str = "parse"
+    status: str = "queued"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class AgentFinalResponse(CamelModel):
@@ -260,6 +350,9 @@ class RuntimeContextConfig(CamelModel):
     tool_call_window: int = 8
     artifact_window: int = 6
     warning_window: int = 6
+    prompt_max_chars: int = 12000
+    context_entry_window: int = 18
+    memory_file_char_limit: int = 4000
 
 
 class RuntimeGeosearchConfig(CamelModel):
@@ -287,7 +380,6 @@ class RuntimePlanningConfig(CamelModel):
 
 
 class AgentRuntimeConfig(CamelModel):
-    default_publish_project_key: str = "geo-agent-workspace"
     loop_trace_limit: int = 80
     supervisor: SupervisorRuntimeConfig = Field(default_factory=SupervisorRuntimeConfig)
     sub_agents: list[RuntimeSubAgentConfig] = Field(default_factory=list)
@@ -311,7 +403,20 @@ class LoopTraceEntry(CamelModel):
     step_id: str | None = None
 
 
+class LayerPropertyDescriptor(CamelModel):
+    # 图层字段摘要
+    #
+    # 图层管理面板只展示字段事实，不拉取完整要素集合，避免目录列表成为隐式数据下载接口。
+    name: str
+    data_type: str
+    populated_count: int = 0
+    sample_values: list[str] = Field(default_factory=list)
+
+
 class LayerDescriptor(CamelModel):
+    # 图层目录事实
+    #
+    # 这是 API、Agent 上下文和前端图层管理的统一视图；边界和字段概览来自真实落库数据。
     layer_key: str
     name: str
     source_type: str
@@ -319,12 +424,17 @@ class LayerDescriptor(CamelModel):
     srid: int = 4326
     description: str
     feature_count: int | None = None
+    bounds: list[float] | None = None
+    property_schema: list[LayerPropertyDescriptor] = Field(default_factory=list)
     category: str = "general"
     status: str = "active"
     tags: list[str] = Field(default_factory=list)
     analysis_capabilities: list[str] = Field(default_factory=list)
     source_config_summary: str | None = None
     session_id: str | None = None
+    thread_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class BasemapDescriptor(CamelModel):
@@ -337,24 +447,6 @@ class BasemapDescriptor(CamelModel):
     label_tile_urls: list[str] = Field(default_factory=list)
     available: bool = True
     is_default: bool = False
-
-
-class PublishRequest(CamelModel):
-    project_key: str | None = None
-
-    @field_validator("project_key")
-    @classmethod
-    def validate_project_key(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        candidate = value.strip()
-        if not candidate:
-            return None
-        if not candidate.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("projectKey 只能包含字母、数字、短横线和下划线。")
-        if candidate in {".", ".."} or "/" in candidate or "\\" in candidate:
-            raise ValueError("projectKey 不能包含路径分隔符。")
-        return candidate
 
 
 class RunEvent(CamelModel):
@@ -388,6 +480,7 @@ class AgentStateModel(CamelModel):
     sub_agents: list[SubAgentState] = Field(default_factory=list)
     approvals: list[ApprovalRequest] = Field(default_factory=list)
     tool_results: list[ToolCall] = Field(default_factory=list)
+    tool_value_refs: list[ToolValueRef] = Field(default_factory=list)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
     selected_data_sources: list[str] = Field(default_factory=list)
     plan_repair_attempts: int = 0
@@ -424,6 +517,7 @@ class AgentThreadRecord(CamelModel):
     latest_artifact_name: str | None = None
     history_preview: str | None = None
     run_count: int = 0
+    session_log_path: str | None = None
 
 
 class AnalysisRunRecord(CamelModel):
@@ -437,6 +531,7 @@ class AnalysisRunRecord(CamelModel):
     created_at: datetime
     updated_at: datetime
     state: AgentStateModel
+    session_log_path: str | None = None
 
 
 class ModelProviderDescriptor(CamelModel):
@@ -483,12 +578,8 @@ class ToolDescriptor(CamelModel):
 class SystemComponentsStatus(CamelModel):
     # 系统组件状态
     #
-    # 汇总 catalog、QGIS、OGC API 与模型 provider 的当前可用性。
+    # 汇总 catalog、PostGIS、会话日志与模型 provider 的当前可用性。
     catalog_backend: str
     postgis_enabled: bool
-    qgis_runtime_available: bool
-    qgis_server_available: bool
-    ogc_api_available: bool
-    publish_capabilities: list[str] = Field(default_factory=list)
-    qgis_server_base_url: str
+    session_log_root: str | None = None
     providers: list[ModelProviderDescriptor] = Field(default_factory=list)

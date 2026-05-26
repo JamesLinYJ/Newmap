@@ -47,7 +47,7 @@ class PostGISLayerRepository(PostGISLayerCatalog):
             return by_name[0]
         return candidate
 
-    def register_upload(self, session_id: str, filename: str, payload: bytes) -> LayerDescriptor:
+    def register_upload(self, session_id: str, filename: str, payload: bytes, *, thread_id: str | None = None) -> LayerDescriptor:
         collection = _parse_upload_payload(filename, payload)
         layer_key = f"upload_{session_id[-6:]}_{make_id('layer')[-6:]}"
         table_name = self._table_name_for(layer_key, prefix="upload")
@@ -65,6 +65,7 @@ class PostGISLayerRepository(PostGISLayerCatalog):
             analysis_capabilities=_infer_analysis_capabilities(collection),
             source_config_summary=f"会话上传 · {filename}",
             session_id=session_id,
+            thread_id=thread_id,
         )
         with self._connect() as conn, conn.cursor() as cur:
             self._replace_table_collection(cur, table_name, collection)

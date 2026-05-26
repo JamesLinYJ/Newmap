@@ -17,7 +17,32 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
+
+AgentsSdkFinalOutputContract = Literal["unsupported", "sdk_structured", "json_object", "plain_text"]
+
+
+@dataclass(frozen=True)
+class AgentsSdkCapabilities:
+    # Agents SDK 能力声明
+    #
+    # live_supervisor 表示该 provider 可以接入 Agents SDK 的 agent loop / tools。
+    # structured_output 表示可以使用 SDK output_type 触发的 json_schema response_format。
+    # json_object_output 表示可以使用 Chat Completions JSON mode 的 json_object response_format。
+    live_supervisor: bool = False
+    structured_output: bool = False
+    json_object_output: bool = False
+
+    @property
+    def final_output_contract(self) -> AgentsSdkFinalOutputContract:
+        if not self.live_supervisor:
+            return "unsupported"
+        if self.structured_output:
+            return "sdk_structured"
+        if self.json_object_output:
+            return "json_object"
+        return "plain_text"
 
 
 # BaseModelAdapter
@@ -61,6 +86,9 @@ class BaseModelAdapter(ABC):
 
     def capabilities(self) -> list[str]:
         return ["chat", "structured", "stream", "repair_tool_json"]
+
+    def agents_sdk_capabilities(self, model_name: str | None = None) -> AgentsSdkCapabilities:
+        return AgentsSdkCapabilities()
 
     def _extract_text(self, response: dict[str, Any]) -> str:
         return str(response.get("content", "")).strip()

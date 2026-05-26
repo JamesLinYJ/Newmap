@@ -45,11 +45,11 @@ class PlaceSearchProvider(Protocol):
     def health(self) -> dict[str, Any]: ...
 
 
-# Nominatim 镜像列表
+# Nominatim 端点 failover 列表
 #
-# 当默认 nominatim.openstreetmap.org 不可达时自动尝试这些镜像。
-# 按优先级排列，会依次尝试直到成功或全部失败。
-_NOMINATIM_FALLBACK_BASE_URLS = [
+# 这是同语义的外部服务端点切换，不会把失败检索伪装成本地结果。
+# 按优先级排列，会依次尝试直到成功或明确抛出最后一个网络错误。
+_NOMINATIM_FAILOVER_BASE_URLS = [
     "https://nominatim.openstreetmap.org",
     "https://nominatim.articque.com",
     "https://nominatim.geocoding.ai",
@@ -82,7 +82,7 @@ class NominatimPlaceSearchProvider:
 
     def _request_with_retry(self, path, params, parse):
         # 按优先级尝试多个 Nominatim 端点，使用相对路径让 client base_url 生效。
-        urls = [self.base_url] + [u for u in _NOMINATIM_FALLBACK_BASE_URLS if u != self.base_url]
+        urls = [self.base_url] + [u for u in _NOMINATIM_FAILOVER_BASE_URLS if u != self.base_url]
 
         last_error: Exception | None = None
         for base_url in urls:
@@ -92,13 +92,15 @@ class NominatimPlaceSearchProvider:
                         response = client.get(path, params=params)
                         response.raise_for_status()
                         return parse(response)
-                except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.TimeoutException, json.JSONDecodeError) as exc:
+                except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.TimeoutException, httpx.HTTPStatusError, json.JSONDecodeError) as exc:
                     last_error = exc
                     if attempt < 1:
                         time.sleep(0.3)
                         continue
                 break
-        raise last_error  # type: ignore[misc]
+        if last_error is None:
+            raise RuntimeError("地理检索请求未执行。")
+        raise last_error
 
     def search(self, query: str) -> list[dict[str, Any]]:
         if not self.config.enabled:

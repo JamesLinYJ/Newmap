@@ -50,14 +50,16 @@ async def list_session_threads(session_id: str, store: PostgresPlatformStore = D
 async def register_layer(
     request: Request,
     session_id: Annotated[str, Form(...)],
+    thread_id: Annotated[str | None, Form(alias="threadId")] = None,
     file: UploadFile = File(...),
     store: PostgresPlatformStore = Depends(get_store),
     catalog: PostGISLayerRepository = Depends(get_layer_repository),
 ):
     payload = await _read_upload_payload(file, max_bytes=settings.upload_max_bytes)
     try:
-        descriptor = catalog.register_upload(session_id=session_id, filename=file.filename or "upload.geojson", payload=payload)
+        descriptor = catalog.register_upload(session_id=session_id, filename=file.filename or "upload.geojson", payload=payload, thread_id=thread_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_format_component_error("Layer catalog", f"register upload '{file.filename or 'upload.geojson'}'", exc)) from exc
     store.update_session(session_id, latest_uploaded_layer_key=descriptor.layer_key)
+    store.index_layer_context(session_id=session_id, thread_id=thread_id, layer=descriptor)
     return descriptor

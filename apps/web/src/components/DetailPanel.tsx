@@ -10,10 +10,10 @@
 
 // 模块职责
 //
-// 展示当前结果对象、发布入口、运行摘要与系统状态等辅助信息。
+// 展示当前结果对象、导出入口、运行摘要与系统状态等辅助信息。
 
 import { memo, useMemo } from 'react'
-import { CloudUpload, ExternalLink, Eye, EyeOff, Lightbulb, LoaderCircle, LocateFixed, MapPin, RefreshCw, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
+import { CloudUpload, Eye, EyeOff, Lightbulb, LocateFixed, MapPin, RefreshCw, Sparkles, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
 
 import type {
   AgentState,
@@ -21,9 +21,9 @@ import type {
   ArtifactRef,
   LayerDescriptor,
   ModelProviderDescriptor,
-  QgisModelsResponse,
   RunEvent,
   SystemComponentsStatus,
+  WeatherDatasetRecord,
 } from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../api'
@@ -47,34 +47,33 @@ interface DetailPanelProps {
   artifacts: ArtifactRef[]
   artifactData: Record<string, GeoJSON.FeatureCollection>
   mapLayers: Array<{
+    kind: 'geojson' | 'raster'
     artifact: ArtifactRef
-    data: GeoJSON.FeatureCollection
+    data?: GeoJSON.FeatureCollection
+    imageUrl?: string
+    coordinates?: [[number, number], [number, number], [number, number], [number, number]]
     visible: boolean
     opacity: number
     featureCount: number
     geometrySummary: string
   }>
   layers: LayerDescriptor[]
+  weatherDatasets: WeatherDatasetRecord[]
   events: RunEvent[]
   sessionRuns: AnalysisRun[]
   progressItems: ReadonlyArray<ProgressItem>
   selectedArtifactId?: string
-  publishResult?: Record<string, unknown> | null
   uploadedLayerName?: string
   selectedBasemapName?: string
   provider: string
   model: string
   providers: ModelProviderDescriptor[]
   systemComponents?: SystemComponentsStatus
-  qgisModels?: QgisModelsResponse
-  isQgisSubmitting: boolean
+  isToolSubmitting: boolean
   onSelectArtifact: (artifactId: string) => void
   onToggleArtifactVisibility: (artifactId: string) => void
   onChangeArtifactOpacity: (artifactId: string, opacity: number) => void
   onSelectHistoryRun: (runId: string) => void
-  onPublish: (artifactId: string) => void
-  onRunQgisProcess: (algorithmId: string, distance?: number) => void
-  onRunQgisModel: (modelName: string, overlayArtifactId?: string) => void
   onCopyShareLink: () => void
   onProviderChange: (value: string) => void
   onModelChange: (value: string) => void
@@ -94,26 +93,22 @@ export const DetailPanel = memo(function DetailPanel({
   artifactData,
   mapLayers,
   layers,
+  weatherDatasets,
   events,
   sessionRuns,
   progressItems,
   selectedArtifactId,
-  publishResult,
   uploadedLayerName,
   selectedBasemapName,
   provider,
   model,
   providers,
   systemComponents,
-  qgisModels,
-  isQgisSubmitting,
+  isToolSubmitting,
   onSelectArtifact,
   onToggleArtifactVisibility,
   onChangeArtifactOpacity,
   onSelectHistoryRun,
-  onPublish,
-  onRunQgisProcess,
-  onRunQgisModel,
   onCopyShareLink,
   onProviderChange,
   onModelChange,
@@ -126,21 +121,23 @@ export const DetailPanel = memo(function DetailPanel({
   // 右侧详情面板
   //
   // 根据当前导航模式切换摘要、图层、历史、计算、配置等内容，
-  // 并承接 artifact、运行历史和 QGIS 二次处理入口。
+  // 并承接 artifact、运行历史和结果消费入口。
   // 这里不是纯展示区，而是“结果消费与后续动作面板”：
-  // 用户看摘要、切换结果、回看历史、执行二次处理和发布结果都在这层完成。
+  // 用户看摘要、切换结果、回看历史、执行二次处理和导出结果都在这层完成。
   const selectedArtifact = useMemo(
     () => artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) ?? artifacts[0],
     [artifacts, selectedArtifactId],
   )
+  const selectedFileUrl = selectedArtifact && selectedArtifact.artifactType !== 'geojson'
+    ? `${apiBaseUrl}${typeof selectedArtifact.metadata.imageUrl === 'string' ? selectedArtifact.metadata.imageUrl : selectedArtifact.uri}`
+    : null
   const selectedCollection = selectedArtifact ? artifactData[selectedArtifact.artifactId] : undefined
   const featureCount = selectedCollection?.features.length ?? 0
-  const publishLinks = useMemo(() => buildPublishLinks(publishResult), [publishResult])
   const summaryTitle = deriveSummaryTitle(agentState?.parsedIntent?.area ?? undefined, selectedArtifact?.name)
   const summaryBody =
     agentState?.finalResponse?.summary ??
     (selectedArtifact
-      ? `当前结果图层“${selectedArtifact.name}”已经生成，你可以继续查看对象分布、下载 GeoJSON，或发布为在线地图服务。`
+      ? `当前结果图层“${selectedArtifact.name}”已经生成，你可以继续查看对象分布、下载数据，或复制当前工作区链接。`
       : '分析完成后，这里会用更容易理解的语言总结地图结果和可执行建议。')
   const nextActions = agentState?.finalResponse?.nextActions?.slice(0, 2) ?? []
   const metricScore = featureCount ? (92 + Math.min(featureCount, 8) * 0.55).toFixed(1) : '--'
@@ -157,18 +154,16 @@ export const DetailPanel = memo(function DetailPanel({
     [layers],
   )
   const layerSummary = useMemo(() => buildLayerSummary(layers), [layers])
-  const qgisRuntimeReady = systemComponents?.qgisRuntimeAvailable === true || qgisModels?.available === true
-  const availableModelName =
-    qgisModels?.models.find((item) => item === 'buffer_and_intersect') ?? qgisModels?.models[0] ?? null
-  const overlayCandidates = useMemo(
-    () => artifacts.filter((artifact) => artifact.artifactId !== selectedArtifact?.artifactId),
-    [artifacts, selectedArtifact?.artifactId],
-  )
   const primaryItems = useMemo(() => artifacts.slice(0, 2), [artifacts])
   const cardLabels = useMemo(
     () => primaryItems.map((artifact, index) => ({
       title: index === 0 ? artifact.name : `${artifact.name}分布`,
       subtitle:
+        artifact.artifactType === 'chart_png'
+          ? '统计图表已生成，可直接预览或下载 PNG'
+          : artifact.artifactType !== 'geojson'
+            ? '文件结果已生成，可在详情面板预览或下载'
+            :
         index === 0
           ? `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象已生成，可继续查看位置与范围`
           : `当前结果已覆盖 ${Math.max(1.2, (artifactData[artifact.artifactId]?.features.length ?? 1) * 0.8).toFixed(1)}km² 可视区域`,
@@ -223,18 +218,26 @@ export const DetailPanel = memo(function DetailPanel({
               )}
             </div>
 
+            {selectedArtifact?.artifactType === 'chart_png' && selectedFileUrl ? (
+              <img className="mt-4 w-full rounded-lg border border-slate-200 bg-white" src={selectedFileUrl} alt={selectedArtifact.name} />
+            ) : null}
+
             {selectedArtifact ? (
               <div className="dc-card__actions">
                 <a
                   className="dc-link-button"
-                  href={`${apiBaseUrl}/api/v1/results/${selectedArtifact.artifactId}/geojson`}
+                  href={`${apiBaseUrl}/api/v1/results/${selectedArtifact.artifactId}/${selectedArtifact.artifactType === 'geojson' ? 'geojson' : 'file'}`}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  GeoJSON 下载
+                  {selectedArtifact.artifactType === 'geojson' ? 'GeoJSON 下载' : '文件下载'}
                 </a>
-                <button className="dc-link-button dc-link-button--primary" type="button" onClick={() => onPublish(selectedArtifact.artifactId)}>
-                  在线地图服务
+                <button
+                  className="dc-link-button dc-link-button--primary"
+                  type="button"
+                  onClick={onCopyShareLink}
+                >
+                  复制分享链接
                 </button>
               </div>
             ) : null}
@@ -256,7 +259,7 @@ export const DetailPanel = memo(function DetailPanel({
                   <MapPin size={16} aria-hidden="true" />
                   <strong>{nextActions[0] ?? '下一步建议'}</strong>
                 </div>
-                <p>{nextActions[1] ?? '你可以继续切换结果图层、下载数据，或者把当前结果发布成在线地图服务。'}</p>
+                <p>{nextActions[1] ?? '你可以继续切换结果图层、下载数据，或在对话里要求追加缓冲、相交、统计等分析。'}</p>
               </article>
             </div>
           </section>
@@ -338,22 +341,6 @@ export const DetailPanel = memo(function DetailPanel({
             </section>
           ) : null}
 
-          {publishLinks.length ? (
-            <section className="dc-card dc-card--links">
-              <div className="dc-card__eyebrow">发布链接</div>
-              <div className="dc-service-list">
-                {publishLinks.map((item) => (
-                  <a key={item.label} href={item.href} target="_blank" rel="noreferrer" className="dc-service-item">
-                    <div>
-                      <strong>{item.label}</strong>
-                      <span>{item.description}</span>
-                    </div>
-                    <ExternalLink size={16} aria-hidden="true" />
-                  </a>
-                ))}
-              </div>
-            </section>
-          ) : null}
         </>
       ) : null}
 
@@ -405,7 +392,7 @@ export const DetailPanel = memo(function DetailPanel({
                       <button type="button" className="dc-layer-manager__main" onClick={() => onSelectArtifact(layer.artifact.artifactId)}>
                         <strong>{layer.artifact.name}</strong>
                         <span>
-                          {layer.featureCount} 个对象 · {layer.geometrySummary}
+                          {layer.kind === 'raster' ? '1 张栅格' : `${layer.featureCount} 个对象`} · {layer.geometrySummary}
                         </span>
                       </button>
                       <div className="dc-layer-manager__actions">
@@ -623,39 +610,38 @@ export const DetailPanel = memo(function DetailPanel({
             <button
               type="button"
               className="dc-action-button dc-action-button--primary"
-              disabled={!selectedArtifact || isQgisSubmitting || !qgisRuntimeReady}
-              onClick={() => onRunQgisProcess('native:buffer', agentState?.parsedIntent?.distanceM ?? 1000)}
+              disabled={!selectedArtifact || isToolSubmitting}
+              onClick={onCopyShareLink}
             >
-              {isQgisSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
-              生成缓冲区
+              复制分享链接
             </button>
             <button
               type="button"
               className="dc-action-button"
-              disabled={!selectedArtifact || isQgisSubmitting || !availableModelName || !qgisRuntimeReady}
-              onClick={() => availableModelName && onRunQgisModel(availableModelName, overlayCandidates[0]?.artifactId)}
+              disabled={!selectedArtifact}
+              onClick={() => selectedArtifact && onSelectArtifact(selectedArtifact.artifactId)}
             >
-              运行 QGIS 模型
+              定位当前结果
             </button>
             <button
               type="button"
               className="dc-action-button"
-              disabled={!selectedArtifact || isQgisSubmitting || !qgisRuntimeReady}
-              onClick={() => onRunQgisProcess('native:centroids')}
+              disabled={!selectedArtifact}
+              onClick={() => selectedArtifact && onToggleArtifactVisibility(selectedArtifact.artifactId)}
             >
-              生成中心点
+              切换结果可见性
             </button>
           </div>
 
           <div className="dc-panel-section">
             <div className="dc-keyvalue-list">
               <div className="dc-keyvalue-row">
-                <span>QGIS Runtime</span>
-                <strong>{qgisRuntimeReady ? '可用' : '未就绪'}</strong>
+                <span>当前工具状态</span>
+                <strong>{isToolSubmitting ? '执行中' : '待命'}</strong>
               </div>
               <div className="dc-keyvalue-row">
-                <span>模型数量</span>
-                <strong>{qgisModels?.models.length ?? 0}</strong>
+                <span>可见结果</span>
+                <strong>{mapLayers.filter((layer) => layer.visible).length}</strong>
               </div>
             </div>
           </div>
@@ -701,6 +687,10 @@ export const DetailPanel = memo(function DetailPanel({
               <strong>{managedLayers.length} 个</strong>
             </div>
             <div className="dc-keyvalue-row">
+              <span>气象数据</span>
+              <strong>{weatherDatasets.length} 个</strong>
+            </div>
+            <div className="dc-keyvalue-row">
               <span>当前底图</span>
               <strong>{selectedBasemapName ?? '标准地图'}</strong>
             </div>
@@ -717,7 +707,7 @@ export const DetailPanel = memo(function DetailPanel({
               导入后台图层
               <input
                 type="file"
-                accept=".geojson,.json,.gpkg"
+                accept=".geojson,.json,.gpkg,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
                 hidden
                 onChange={(event) => {
                   const file = event.target.files?.[0]
@@ -793,6 +783,26 @@ export const DetailPanel = memo(function DetailPanel({
               )}
             </div>
           </div>
+
+          <div className="dc-panel-section">
+            <div className="dc-panel-section__title">气象数据集</div>
+            <div className="dc-panel-list">
+              {weatherDatasets.length ? (
+                weatherDatasets.map((dataset) => (
+                  <div key={dataset.datasetId} className="dc-panel-item dc-panel-item--static">
+                    <div>
+                      <strong>{dataset.filename}</strong>
+                      <span>{formatWeatherStatus(dataset.status)} · {formatWeatherVariables(dataset.metadata)}</span>
+                      <span>{formatWeatherBounds(dataset.metadata)} · {dataset.datasetId}</span>
+                    </div>
+                    <span className="dc-pill-meta">{dataset.status}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="dc-empty-copy">当前会话还没有上传 NetCDF、GRIB、GeoTIFF、HDF5 或雷达 bz2 数据。</p>
+              )}
+            </div>
+          </div>
         </section>
       ) : null}
 
@@ -802,7 +812,7 @@ export const DetailPanel = memo(function DetailPanel({
             <div className="dc-card__header">
               <div>
                 <div className="dc-card__eyebrow">导出</div>
-                <h3>下载与发布</h3>
+                <h3>下载与分享</h3>
               </div>
               <div className="dc-card__icon">
                 <AppIcon name="ios_share" size={18} />
@@ -813,11 +823,11 @@ export const DetailPanel = memo(function DetailPanel({
               {selectedArtifact ? (
                 <a
                   className="dc-action-button dc-action-button--primary"
-                  href={`${apiBaseUrl}/api/v1/results/${selectedArtifact.artifactId}/geojson`}
+                  href={`${apiBaseUrl}/api/v1/results/${selectedArtifact.artifactId}/${selectedArtifact.artifactType === 'geojson' ? 'geojson' : 'file'}`}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  GeoJSON 下载
+                  {selectedArtifact.artifactType === 'geojson' ? 'GeoJSON 下载' : '文件下载'}
                 </a>
               ) : (
                 <button type="button" className="dc-action-button dc-action-button--primary" disabled>
@@ -825,32 +835,11 @@ export const DetailPanel = memo(function DetailPanel({
                 </button>
               )}
 
-              <button type="button" className="dc-action-button" disabled={!selectedArtifact} onClick={() => selectedArtifact && onPublish(selectedArtifact.artifactId)}>
-                发布在线地图
-              </button>
-
               <button type="button" className="dc-action-button" onClick={onCopyShareLink}>
                 复制分享链接
               </button>
             </div>
           </section>
-
-          {publishLinks.length ? (
-            <section className="dc-card dc-card--links">
-              <div className="dc-card__eyebrow">服务地址</div>
-              <div className="dc-service-list">
-                {publishLinks.map((item) => (
-                  <a key={item.label} href={item.href} target="_blank" rel="noreferrer" className="dc-service-item">
-                    <div>
-                      <strong>{item.label}</strong>
-                      <span>{item.description}</span>
-                    </div>
-                    <ExternalLink size={16} aria-hidden="true" />
-                  </a>
-                ))}
-              </div>
-            </section>
-          ) : null}
         </>
       ) : null}
 
@@ -908,16 +897,8 @@ export const DetailPanel = memo(function DetailPanel({
                 <strong>{systemComponents?.postgisEnabled ? '已接入' : '未接入'}</strong>
               </div>
               <div className="dc-keyvalue-row">
-                <span>QGIS Runtime</span>
-                <strong>{systemComponents?.qgisRuntimeAvailable ? '可用' : '不可用'}</strong>
-              </div>
-              <div className="dc-keyvalue-row">
-                <span>QGIS Server</span>
-                <strong>{systemComponents?.qgisServerAvailable ? '在线' : '未连接'}</strong>
-              </div>
-              <div className="dc-keyvalue-row">
-                <span>发布能力</span>
-                <strong>{systemComponents?.publishCapabilities.join(' / ') || '载入中'}</strong>
+                <span>会话日志</span>
+                <strong>{systemComponents?.sessionLogRoot ? '已启用' : '载入中'}</strong>
               </div>
             </div>
           </section>
@@ -937,27 +918,6 @@ function deriveSummaryTitle(area?: string, artifactName?: string) {
     return artifactName
   }
   return '空间分析结果'
-}
-
-function buildPublishLinks(publishResult?: Record<string, unknown> | null) {
-  if (!publishResult) {
-    return [] as Array<{ label: string; description: string; href: string }>
-  }
-
-  const mapping = [
-    ['geojsonUrl', 'GeoJSON 下载', '继续在 GIS 软件或脚本中使用'],
-    ['wmsCapabilitiesUrl', 'WMS 服务', '适合地图叠加与展示'],
-    ['wfsCapabilitiesUrl', 'WFS 服务', '适合继续获取矢量要素'],
-    ['ogcApiCollectionsUrl', 'OGC API 集合', '查看发布的数据集合'],
-  ] as const
-
-  return mapping.flatMap(([key, label, description]) => {
-    const value = publishResult[key]
-    if (typeof value === 'string' && value.startsWith('http')) {
-      return [{ label, description, href: value }]
-    }
-    return []
-  })
 }
 
 function buildLayerSummary(layers: LayerDescriptor[]) {
@@ -1008,6 +968,63 @@ function formatLayerUpdated(timestamp?: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function formatWeatherStatus(status: string) {
+  if (status === 'uploaded') {
+    return '已上传'
+  }
+  if (status === 'completed') {
+    return '解析完成'
+  }
+  if (status === 'failed') {
+    return '解析失败'
+  }
+  if (status === 'running') {
+    return '解析中'
+  }
+  return '等待解析'
+}
+
+function formatWeatherVariables(metadata: Record<string, unknown>) {
+  const variables = Array.isArray(metadata.variables) ? metadata.variables : []
+  if (!variables.length) {
+    if (metadata.uploadedFilename) {
+      return '开始分析时解析'
+    }
+    return '变量待识别'
+  }
+  const names = variables
+    .map((item) => (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name ?? '') : ''))
+    .filter(Boolean)
+    .slice(0, 3)
+  const capabilityLabel = formatWeatherCapabilities(variables)
+  const nameLabel = names.length ? `${names.join(' / ')}${variables.length > names.length ? ` 等 ${variables.length} 个变量` : ''}` : `${variables.length} 个变量`
+  return capabilityLabel ? `${nameLabel} · ${capabilityLabel}` : nameLabel
+}
+
+function formatWeatherBounds(metadata: Record<string, unknown>) {
+  const bounds = Array.isArray(metadata.bounds) ? metadata.bounds.map(Number).filter(Number.isFinite) : []
+  if (bounds.length === 4) {
+    return bounds.map((item) => item.toFixed(3)).join(', ')
+  }
+  const warnings = Array.isArray(metadata.warnings) ? metadata.warnings.filter((item): item is string => typeof item === 'string') : []
+  return warnings[0] ?? '无地图范围'
+}
+
+function formatWeatherCapabilities(variables: unknown[]) {
+  const mapReady = variables.filter((item) => Boolean((item as { mapReady?: unknown })?.mapReady)).length
+  const analysisReady = variables.filter((item) => Boolean((item as { analysisReady?: unknown })?.analysisReady)).length
+  const maxTimeCount = variables.reduce<number>((maxValue, item) => Math.max(maxValue, Number((item as { timeCount?: unknown })?.timeCount ?? 0) || 0), 0)
+  const maxLevelCount = variables.reduce<number>((maxValue, item) => Math.max(maxValue, Number((item as { levelCount?: unknown })?.levelCount ?? 0) || 0), 0)
+  const parts = [`${analysisReady} 可统计`, `${mapReady} 可制图`]
+  if (maxTimeCount > 0) {
+    parts.push(`${maxTimeCount} 时间片`)
+  }
+  if (maxLevelCount > 0) {
+    parts.push(`${maxLevelCount} 层`)
+  }
+  return parts.join(' · ')
 }
 
 function formatEventTime(timestamp: string) {

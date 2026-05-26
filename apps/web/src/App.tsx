@@ -25,12 +25,13 @@ import type {
   ExecutionPlan,
   LayerDescriptor,
   ModelProviderDescriptor,
-  QgisModelsResponse,
   RunEvent,
   SessionRecord,
   SystemComponentsStatus,
   ToolDescriptor,
   UserIntent,
+  WeatherDatasetRecord,
+  WeatherJobRecord,
 } from '@geo-agent-platform/shared-types'
 
 import {
@@ -44,6 +45,7 @@ import {
   getSession,
   getSystemComponents,
   getThread,
+  getWeatherJob,
   importManagedLayer,
   listBasemaps,
   listLayers,
@@ -51,13 +53,10 @@ import {
   listSessionThreads,
   listTools,
   listToolCatalogEntries,
+  listWeatherDatasets,
   listSessionRuns,
-  listQgisModels,
-  publishArtifact,
   replaceManagedLayer,
   resolveApproval,
-  runQgisModel,
-  runQgisProcess,
   runTool,
   startAnalysis,
   startThreadRun,
@@ -66,9 +65,11 @@ import {
   upsertToolCatalogEntry,
   updateRuntimeConfig,
   uploadLayer,
+  uploadWeatherDataset,
+  apiBaseUrl,
 } from './api'
 import './App.css'
-import { pickArtifactPublishResult, pickPreferredArtifactId } from './artifactSelection'
+import { pickPreferredArtifactId } from './artifactSelection'
 import { buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from './motion'
 import { deriveThreadTranscript, pickTranscriptHeadline } from './runTranscript'
 import { useRunState } from './hooks/useRunState'
@@ -85,12 +86,33 @@ type SidebarItemId = 'assistant' | 'query' | 'sources' | 'config' | 'export'
 type MapLayerPreference = { visible: boolean; opacity: number }
 
 interface MapRenderLayer {
+  kind: 'geojson' | 'raster'
   artifact: ArtifactRef
-  data: GeoJSON.FeatureCollection
+  data?: GeoJSON.FeatureCollection
+  imageUrl?: string
+  coordinates?: [[number, number], [number, number], [number, number], [number, number]]
   visible: boolean
   opacity: number
   featureCount: number
   geometrySummary: string
+}
+
+interface UploadReference {
+  id: string
+  kind: 'layer' | 'weather'
+  name: string
+  relativePath?: string
+  status: 'pending' | 'uploading' | 'queued' | 'running' | 'completed' | 'failed' | 'ready' | string
+  detail?: string
+}
+
+interface DataReferenceSummary {
+  id: string
+  kind: 'layer' | 'weather' | 'artifact'
+  name: string
+  status: string
+  detail: string
+  relativePath?: string
 }
 
 const DebugPage = lazy(() => import('./components/DebugPage').then((module) => ({ default: module.DebugPage })))
@@ -109,6 +131,9 @@ const SAMPLE_QUERIES = [
   '我上传的这些点，哪些在柏林市区里',
   '帮我查一下 Springfield 在哪里',
 ] as const
+
+const LAYER_FILE_SUFFIXES = new Set(['.geojson', '.json', '.gpkg'])
+const WEATHER_FILE_SUFFIXES = new Set(['.nc', '.nc4', '.tif', '.tiff', '.grib', '.grb', '.grb2', '.h5', '.hdf5', '.bz2'])
 
 function formatUiError(error: unknown, defaultMessage: string) {
   if (error instanceof Error && error.message.trim()) {
@@ -138,17 +163,18 @@ function useStableVoid<Args extends unknown[]>(fn: (...args: Args) => Promise<vo
 function App() {
   // 主应用壳
   //
-  // 统一维护会话、运行状态、artifact、QGIS 工具、调试页数据和主工作台导航。
+  // 统一维护会话、运行状态、artifact、工具、调试页数据和主工作台导航。
   // 这里本质上是前端的状态编排中心：负责把 API、SSE、URL、地图与调试页
   // 组织成一个稳定的工作台，而不是只渲染静态页面。
   const location = useLocation()
   const [query, setQuery] = useState('')
   const [session, setSession] = useState<SessionRecord>()
   const [layers, setLayers] = useState<LayerDescriptor[]>([])
-  const [basemaps, setBasemaps] = useState<BasemapDescriptor[]>([FALLBACK_BASEMAP])
+  const [weatherDatasets, setWeatherDatasets] = useState<WeatherDatasetRecord[]>([])
+  const [weatherJobs, setWeatherJobs] = useState<Record<string, WeatherJobRecord>>({})
+  const [basemaps, setBasemaps] = useState<BasemapDescriptor[]>([DEFAULT_BASEMAP])
   const [providers, setProviders] = useState<ModelProviderDescriptor[]>([])
   const [systemComponents, setSystemComponents] = useState<SystemComponentsStatus>()
-  const [qgisModels, setQgisModels] = useState<QgisModelsResponse>()
   const [availableTools, setAvailableTools] = useState<ToolDescriptor[]>([])
   const [toolCatalogEntries, setToolCatalogEntries] = useState<Array<Record<string, unknown>>>([])
   const [runtimeConfig, setRuntimeConfig] = useState<AgentRuntimeConfig>()
@@ -161,8 +187,9 @@ function App() {
   const [mapLayerPreferences, setMapLayerPreferences] = useState<Record<string, MapLayerPreference>>({})
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [uploadedLayerName, setUploadedLayerName] = useState<string>()
+  const [uploadReferences, setUploadReferences] = useState<UploadReference[]>([])
   const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
-  const [isQgisSubmitting, setIsQgisSubmitting] = useState(false)
+  const [isToolSubmitting, setIsToolSubmitting] = useState(false)
   const [isToolCatalogSubmitting, setIsToolCatalogSubmitting] = useState(false)
   const [provider, setProvider] = useState('openai_compatible')
   const [model, setModel] = useState('')
@@ -189,10 +216,6 @@ function App() {
     () => artifacts.find((artifact) => artifact.artifactId === selectedArtifactId),
     [artifacts, selectedArtifactId],
   )
-  const publishResult = useMemo(
-    () => pickArtifactPublishResult(selectedArtifactId, artifacts, artifactMetadata),
-    [artifactMetadata, artifacts, selectedArtifactId],
-  )
   const providerLabel = providers.find((item) => item.provider === provider)?.displayName ?? provider
   const currentThreadId = run?.threadId ?? agentState?.threadId ?? activeThreadId
   const currentThreadTitle = sessionThreads.find((item) => item.id === currentThreadId)?.title
@@ -215,9 +238,13 @@ function App() {
     }),
     [deferredEvents, run, threadRuns, agentState, artifacts, query, runtimeConfig],
   )
+  const dataReferences = useMemo(
+    () => buildDataReferences({ layers, weatherDatasets, uploadReferences, artifacts, threadRuns, currentThreadId }),
+    [artifacts, layers, uploadReferences, weatherDatasets, threadRuns, currentThreadId],
+  )
   const transcriptHeadline = pickTranscriptHeadline(transcriptEntries, run?.status)
   const selectedBasemap = useMemo(
-    () => basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? FALLBACK_BASEMAP,
+    () => basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? DEFAULT_BASEMAP,
     [basemaps, selectedBasemapKey],
   )
   const primaryActionLabel = selectedArtifactId ? '发布结果' : '开始分析'
@@ -240,8 +267,10 @@ function App() {
       //
       // 后端 run.state 里只有 ArtifactRef；真正地图需要的 GeoJSON 和 metadata
       // 需要在这里补拉一次，并拆成两个索引表以便地图和详情面板分别消费。
+      const geojsonArtifacts = artifactList.filter((artifact) => artifact.artifactType === 'geojson')
+      const rasterArtifacts = artifactList.filter((artifact) => artifact.artifactType !== 'geojson')
       const bundles = await Promise.all(
-        artifactList.map(async (artifact) => {
+        geojsonArtifacts.map(async (artifact) => {
           const [data, metadataPayload] = await Promise.all([
             getArtifactGeoJson(artifact.artifactId),
             getArtifactMetadata(artifact.artifactId),
@@ -254,32 +283,56 @@ function App() {
           }
         }),
       )
+      const rasterMetadata = await Promise.all(
+        rasterArtifacts.map(async (artifact) => {
+          const metadataPayload = await getArtifactMetadata(artifact.artifactId)
+          return {
+            artifactId: artifact.artifactId,
+            metadata: (metadataPayload.metadata as Record<string, unknown>) ?? {},
+          }
+        }),
+      )
 
       startTransition(() => {
-        setArtifactData((current) => {
-          const next = { ...current }
-          for (const bundle of bundles) {
-            next[bundle.artifactId] = bundle.data
-          }
-          return next
-        })
-        setArtifactMetadata((current) => {
-          const next = { ...current }
-          for (const bundle of bundles) {
-            next[bundle.artifactId] = bundle.metadata
-          }
-          return next
-        })
+        if (bundles.length) {
+          setArtifactData((current) => {
+            const next = { ...current }
+            for (const bundle of bundles) {
+              next[bundle.artifactId] = bundle.data
+            }
+            return next
+          })
+        }
+        if (bundles.length || rasterMetadata.length) {
+          setArtifactMetadata((current) => {
+            const next = { ...current }
+            for (const bundle of bundles) {
+              next[bundle.artifactId] = bundle.metadata
+            }
+            for (const bundle of rasterMetadata) {
+              next[bundle.artifactId] = bundle.metadata
+            }
+            return next
+          })
+        }
       })
     },
     [],
   )
 
-  const refreshLayers = useCallback(async () => {
-    const layerList = await listLayers()
+  const refreshLayers = useCallback(async (sessionId?: string | null, threadId?: string | null) => {
+    const layerList = await listLayers(sessionId, threadId)
     startTransition(() => {
       setLayers(layerList ?? [])
     })
+  }, [])
+
+  const refreshWeatherDatasets = useCallback(async (sessionId: string, threadId?: string | null) => {
+    const datasets = await listWeatherDatasets(sessionId, threadId)
+    startTransition(() => {
+      setWeatherDatasets(datasets ?? [])
+    })
+    return datasets
   }, [])
 
   const clearActiveRunState = useCallback(() => {
@@ -469,6 +522,7 @@ function App() {
         })
 
         void refreshSessionHistory(sessionRecord.id).catch((error) => reportNonBlockingError('refreshSessionHistory:bootstrap', error))
+        void refreshWeatherDatasets(sessionRecord.id, currentThreadId).catch((error) => reportNonBlockingError('refreshWeatherDatasets:bootstrap', error))
 
         const threadToRestore = threadId || undefined
         const runToRestore = runId || undefined
@@ -517,7 +571,7 @@ function App() {
       .catch((error) => {
         setUiError(formatUiError(error, '图层目录暂时加载不了，请稍后重试。'))
       })
-  }, [clearActiveRunState, hydrateRunState, refreshSessionHistory, setUiError])
+  }, [clearActiveRunState, hydrateRunState, refreshSessionHistory, refreshWeatherDatasets, setUiError])
 
   useEffect(() => {
     // 模型提供方初始化
@@ -580,11 +634,10 @@ function App() {
       return
     }
 
-    void Promise.all([getSystemComponents(), listQgisModels(), listTools(), listToolCatalogEntries(), getRuntimeConfig()])
-      .then(([components, modelList, tools, catalogEntries, loadedRuntimeConfig]) => {
+    void Promise.all([getSystemComponents(), listTools(), listToolCatalogEntries(), getRuntimeConfig()])
+      .then(([components, tools, catalogEntries, loadedRuntimeConfig]) => {
         startTransition(() => {
           setSystemComponents(components)
-          setQgisModels(modelList)
           setAvailableTools(tools ?? [])
           setToolCatalogEntries(catalogEntries ?? [])
           setRuntimeConfig(loadedRuntimeConfig)
@@ -592,64 +645,81 @@ function App() {
       })
       .catch((error) => {
         setUiError(formatUiError(error, '系统状态加载遇到问题，请稍后重试。'))
-      })
+    })
   }, [location.pathname, panelMode, setUiError])
+
+  useEffect(() => {
+    // 气象解析任务轮询
+    //
+    // 兼容手动创建的后台解析 job；普通上传现在只登记 uploaded，
+    // 等用户开始分析或工具消费数据时再解析。
+    const activeJobs = Object.values(weatherJobs).filter((job) => job.status === 'queued' || job.status === 'running')
+    if (!activeJobs.length || !session?.id) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      void Promise.all(activeJobs.map((job) => getWeatherJob(job.jobId)))
+        .then((jobs) => {
+          startTransition(() => {
+            setWeatherJobs((current) => {
+              const next = { ...current }
+              for (const job of jobs) {
+                next[job.jobId] = job
+              }
+              return next
+            })
+          })
+          if (jobs.some((job) => job.status === 'completed' || job.status === 'failed')) {
+            void refreshWeatherDatasets(session.id).catch((error) => reportNonBlockingError('refreshWeatherDatasets:poll', error))
+          }
+        })
+        .catch((error) => reportNonBlockingError('weatherJobPoll', error))
+    }, 2500)
+    return () => window.clearInterval(timer)
+  }, [refreshWeatherDatasets, session?.id, weatherJobs])
+
+  useEffect(() => {
+    const hasPendingDataset = weatherDatasets.some((dataset) => dataset.status === 'queued' || dataset.status === 'running')
+    if (!hasPendingDataset || !session?.id) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      void refreshWeatherDatasets(session.id).catch((error) => reportNonBlockingError('refreshWeatherDatasets:datasetPoll', error))
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshWeatherDatasets, session?.id, weatherDatasets])
 
   const refreshToolingState = useCallback(async () => {
     // 调试页和 compute 面板共用这一条刷新路径，避免各自拉一套不同快照。
-    const [components, modelList, tools, catalogEntries, loadedRuntimeConfig] = await Promise.all([
+    const [components, tools, catalogEntries, loadedRuntimeConfig] = await Promise.all([
       getSystemComponents(),
-      listQgisModels(),
       listTools(),
       listToolCatalogEntries(),
       getRuntimeConfig(),
     ])
     startTransition(() => {
       setSystemComponents(components)
-      setQgisModels(modelList)
       setAvailableTools(tools ?? [])
       setToolCatalogEntries(catalogEntries ?? [])
       setRuntimeConfig(loadedRuntimeConfig)
     })
   }, [])
 
-  // SSE 事件流由 useRunState 内部管理。
-  // artifact.created / run.completed 的副作用（GeoJSON 加载、publish metadata）
-  // 通过监听 events 的最后一个事件来处理。
+  // 新 artifact 到达时自动加载 GeoJSON 或 raster metadata
   useEffect(() => {
-    const last = events.at(-1)
-    if (!last) return
-
-    if (last.type === 'artifact.created' && last.payload) {
-      const artifact = last.payload as unknown as ArtifactRef
-      if (artifact?.artifactId) {
-        void applyArtifactPayload([artifact]).then(() => {
-          startTransition(() => {
-            setSelectedArtifactId(artifact.artifactId)
-          })
-        })
+    const missing = artifacts.filter((artifact) => {
+      if (artifact.artifactType === 'geojson') {
+        return !artifactData[artifact.artifactId]
       }
-    }
-
-    if (last.type === 'run.completed' || last.type === 'run.failed') {
-      const payload = last.payload as Record<string, unknown> | undefined
-      if (payload?.published && typeof payload.published === 'object' && payload.published !== null) {
-        const published = payload.published as Record<string, unknown>
-        const publishedArtifactId = typeof published.artifactId === 'string' ? published.artifactId : undefined
-        if (publishedArtifactId) {
-          startTransition(() => {
-            setArtifactMetadata((current) => ({
-              ...current,
-              [publishedArtifactId]: {
-                ...current[publishedArtifactId],
-                publishResult: published,
-              },
-            }))
-          })
-        }
-      }
-    }
-  }, [events, applyArtifactPayload])
+      return !artifactMetadata[artifact.artifactId]
+    })
+    if (!missing.length) return
+    void applyArtifactPayload(missing).then(() => {
+      startTransition(() => {
+        if (missing.length === 1) setSelectedArtifactId(missing[0].artifactId)
+      })
+    })
+  }, [artifacts, artifactData, artifactMetadata, applyArtifactPayload])
 
   const submitMessage = useCallback(
     async ({
@@ -739,6 +809,7 @@ function App() {
     // 显式新建对话只重置前端 active thread，不提前创建数据库记录。
     //
     // 下一次发送消息时因为没有 activeThreadId，会自然走 startAnalysis 创建新 thread。
+    // 同时清理上一轮的上传数据显示，保证新 thread 看到干净的工作区。
     startTransition(() => {
       setQuery('')
       clearActiveRunState()
@@ -748,6 +819,8 @@ function App() {
       setSelectedArtifactId(undefined)
       setToolRunResult(null)
       setActiveThreadId(undefined)
+      setUploadedLayerName(undefined)
+      setUploadReferences([])
       setActiveNav('analysis')
       setPanelMode('summary')
       setActiveSidebarItem('assistant')
@@ -758,29 +831,144 @@ function App() {
     focusQueryInput()
   }, [clearActiveRunState, focusQueryInput, session?.id])
 
-  const handleUpload = useCallback(
+  const uploadOneFile = useCallback(
     async (file: File) => {
-      // 上传图层后立即刷新 session 和 layer catalog，
-      // 这样 latest_upload 与图层面板能立刻反映新数据。
+      // 单文件上传原子操作。
+      //
+      // 批量/文件夹上传在调用层编排；这里只维护一个文件的引用状态，
+      // 保证聊天面板能立即看到“正在引用什么数据”。
+      if (!session) {
+        throw new Error('当前会话还没有初始化，暂时不能上传文件。')
+      }
+      const kind = classifyUploadFile(file)
+      if (!kind) {
+        throw new Error(`不支持的文件类型：${file.name}`)
+      }
+      const relativePath = getUploadRelativePath(file)
+      const referenceId = makeUploadReferenceId(kind, relativePath, file)
+      const baseReference: UploadReference = {
+        id: referenceId,
+        kind,
+        name: file.name,
+        relativePath,
+        status: 'uploading',
+        detail: `${formatFileSize(file.size)} · 正在上传`,
+      }
+      setUploadReferences((current) => upsertUploadReference(current, baseReference))
+
+      try {
+        if (kind === 'weather') {
+          const { dataset, job } = await uploadWeatherDataset(session.id, file, currentThreadId)
+          startTransition(() => {
+            setUploadedLayerName(dataset.filename)
+            setWeatherDatasets((current) => mergeWeatherDataset(current, dataset))
+            if (job) {
+              setWeatherJobs((current) => ({ ...current, [job.jobId]: job }))
+            }
+            setUploadReferences((current) => upsertUploadReference(current, {
+              ...baseReference,
+              id: referenceId,
+              status: dataset.status,
+              detail: `${formatFileSize(file.size)} · ${formatWeatherUploadDetail(dataset.status)}`,
+            }))
+          })
+          return { kind, name: dataset.filename }
+        }
+
+        const descriptor = await uploadLayer(session.id, file, currentThreadId)
+        startTransition(() => {
+          setUploadedLayerName(descriptor.name)
+          setUploadReferences((current) => upsertUploadReference(current, {
+            ...baseReference,
+            id: referenceId,
+            name: descriptor.name,
+            status: 'ready',
+            detail: `${descriptor.featureCount ?? 0} 个对象 · ${descriptor.geometryType}`,
+          }))
+        })
+        return { kind, name: descriptor.name }
+      } catch (error) {
+        setUploadReferences((current) => upsertUploadReference(current, {
+          ...baseReference,
+          id: referenceId,
+          status: 'failed',
+          detail: formatUiError(error, '上传失败'),
+        }))
+        throw error
+      }
+    },
+    [session, currentThreadId],
+  )
+
+  const handleUploadFiles = useCallback(
+    async (files: File[]) => {
+      // 多文件/文件夹上传编排。
+      //
+      // 浏览器文件夹选择会给出扁平 FileList；逐个走现有上传 API，
+      // 既保留后端单文件事务边界，也让每个文件有独立失败状态。
       if (!session) {
         return
       }
+      const uploadable = files.filter((file) => classifyUploadFile(file))
+      const skippedCount = files.length - uploadable.length
+      if (!uploadable.length) {
+        setUiError('没有找到可上传的 GeoJSON、GPKG、NetCDF、GRIB、GeoTIFF、HDF5 或雷达 bz2 文件。')
+        return
+      }
 
+      setUiError(undefined)
+      setActiveNav('layers')
+      setPanelMode('sources')
+      setActiveSidebarItem('sources')
+
+      let layerUploaded = false
+      let weatherUploaded = false
+      const failures: string[] = []
+      for (const file of uploadable) {
+        try {
+          const result = await uploadOneFile(file)
+          layerUploaded ||= result.kind === 'layer'
+          weatherUploaded ||= result.kind === 'weather'
+        } catch (error) {
+          failures.push(`${getUploadRelativePath(file)}：${formatUiError(error, '上传失败')}`)
+        }
+      }
+
+      const refreshes: Array<Promise<unknown>> = []
+      if (layerUploaded) {
+        refreshes.push(
+          Promise.all([getSession(session.id), listLayers(session.id)]).then(([sessionRecord, layerList]) => {
+            startTransition(() => {
+              setSession(sessionRecord)
+              setLayers(layerList ?? [])
+            })
+          }),
+        )
+      }
+      if (weatherUploaded) {
+        refreshes.push(refreshWeatherDatasets(session.id))
+      }
       try {
-        setUiError(undefined)
-        const descriptor = await uploadLayer(session.id, file)
-        setUploadedLayerName(descriptor.name)
-        setActiveNav('layers')
-        setPanelMode('sources')
-        setActiveSidebarItem('sources')
-        const [sessionRecord, layerList] = await Promise.all([getSession(session.id), listLayers()])
-        setSession(sessionRecord)
-        setLayers(layerList ?? [])
+        await Promise.all(refreshes)
       } catch (error) {
-        setUiError(formatUiError(error, '图层上传没成功，请再试一次。'))
+        setUiError(formatUiError(error, '文件已上传，但数据源列表刷新失败，请手动刷新页面确认。'))
+        return
+      }
+
+      if (failures.length) {
+        setUiError(`部分文件上传失败：${failures.slice(0, 3).join('；')}${failures.length > 3 ? `；另有 ${failures.length - 3} 个失败` : ''}`)
+      } else if (skippedCount > 0) {
+        setUiError(`已上传 ${uploadable.length} 个文件，跳过 ${skippedCount} 个不支持的文件。`)
       }
     },
-    [session, setUiError],
+    [refreshWeatherDatasets, session, setUiError, uploadOneFile],
+  )
+
+  const handleUpload = useCallback(
+    async (file: File) => {
+      await handleUploadFiles([file])
+    },
+    [handleUploadFiles],
   )
 
   const handleImportManagedLayer = useCallback(
@@ -840,25 +1028,6 @@ function App() {
     },
     [refreshLayers, setUiError],
   )
-
-  const handlePublish = useCallback(async (artifactId: string) => {
-    // 发布结果后顺手刷新 system components，
-    // 让详情面板里的服务状态和链接区与最新发布结果保持一致。
-    try {
-      setUiError(undefined)
-      const result = await publishArtifact(artifactId, { projectKey: runtimeConfig?.defaultPublishProjectKey })
-      setArtifactMetadata((current) => ({
-        ...current,
-        [artifactId]: {
-          ...current[artifactId],
-          publishResult: result,
-        },
-      }))
-      setSystemComponents(await getSystemComponents())
-    } catch (error) {
-      setUiError(formatUiError(error, '发布没成功，请稍后重试。'))
-    }
-  }, [runtimeConfig?.defaultPublishProjectKey, setUiError])
 
   const handleResolveApproval = useCallback(
     async (approvalId: string, approved: boolean) => {
@@ -960,100 +1129,23 @@ function App() {
   // 稳定化 ChatPanel 回调引用，避免每次渲染重建导致子树无效重渲染
   const onSubmitStable = useStableVoid(handleSubmit)
   const onSelectClarificationStable = useStableVoid(handleClarificationSelect)
-  const onUploadStable = useStableVoid(handleUpload)
   const onSelectTaskStable = useStableVoid(handleSelectThread)
   const onRenameTaskStable = useStableVoid(handleRenameThread)
   const onDeleteTaskStable = useStableVoid(handleDeleteThread)
   const onResolveApprovalStable = useStableVoid(handleResolveApproval)
 
-  const handleRunQgisProcess = useCallback(
-    async (algorithmId: string, distance?: number) => {
-      // 轻量 QGIS algorithm 调用入口
-      //
-      // 目前主要服务于详情面板里的二次处理按钮，因此默认基于当前选中的 artifact 执行。
-      if (!selectedArtifactId || !run?.id) {
-        return
-      }
-
-      try {
-        setUiError(undefined)
-        setIsQgisSubmitting(true)
-        const result = await runQgisProcess({
-          algorithmId,
-          artifactId: selectedArtifactId,
-          runId: run.id,
-          saveAsArtifact: true,
-          resultName: algorithmId === 'native:buffer' ? 'QGIS 缓冲结果' : 'QGIS 二次分析结果',
-          inputs: distance ? { DISTANCE: distance } : {},
-        })
-        if (result.status === 'failed') {
-          throw new Error(String(result.error || 'QGIS 处理失败。'))
-        }
-        await hydrateRunState(run.id)
-      } catch (error) {
-        setUiError(formatUiError(error, 'QGIS 处理没成功，请检查参数后再试。'))
-      } finally {
-        setIsQgisSubmitting(false)
-      }
-    },
-    [hydrateRunState, run?.id, selectedArtifactId, setUiError],
-  )
-
-  const handleRunQgisModel = useCallback(
-    async (modelName: string, overlayArtifactId?: string) => {
-      // QGIS 模型调用入口
-      //
-      // 与 algorithm 调用相比，模型通常需要额外输入映射，因此这里保留少量
-      // 面向 UI 的输入拼装逻辑，例如 overlay 和默认 DISTANCE。
-      if (!selectedArtifactId || !run?.id) {
-        return
-      }
-
-      try {
-        setUiError(undefined)
-        setIsQgisSubmitting(true)
-        const inputs: Record<string, unknown> = {}
-        if (overlayArtifactId) {
-          inputs.OVERLAY = `artifact:${overlayArtifactId}`
-        }
-        if (modelName === 'buffer_and_intersect') {
-          inputs.DISTANCE = 1000
-        }
-        const result = await runQgisModel({
-          modelName,
-          artifactId: selectedArtifactId,
-          runId: run.id,
-          saveAsArtifact: true,
-          resultName: `QGIS 模型：${modelName}`,
-          outputParameterName: 'output',
-          inputs,
-        })
-        if (result.status === 'failed') {
-          throw new Error(String(result.error || 'QGIS 模型执行失败。'))
-        }
-        await hydrateRunState(run.id)
-      } catch (error) {
-        setUiError(formatUiError(error, 'QGIS 模型没跑通，请检查参数后再试。'))
-      } finally {
-        setIsQgisSubmitting(false)
-      }
-    },
-    [hydrateRunState, run?.id, selectedArtifactId, setUiError],
-  )
-
   const handleRunTool = useCallback(
     async (tool: ToolDescriptor, args: Record<string, unknown>) => {
       // 调试页工具工作台统一入口
       //
-      // 无论是 registry、qgis_algorithm 还是 qgis_model，都在这里统一调度，
-      // 再把返回的 run 重新 hydrate 到主状态树。
+      // 工具执行统一调度，再把返回的 run 重新 hydrate 到主状态树。
       if (!session?.id) {
         return
       }
 
       try {
         setUiError(undefined)
-        setIsQgisSubmitting(true)
+        setIsToolSubmitting(true)
         const result = await runTool({
           sessionId: session.id,
           runId: run?.id,
@@ -1072,7 +1164,7 @@ function App() {
       } catch (error) {
         setUiError(formatUiError(error, `${tool.label} 执行失败。`))
       } finally {
-        setIsQgisSubmitting(false)
+        setIsToolSubmitting(false)
       }
     },
     [currentThreadId, hydrateRunState, run?.id, session?.id, setUiError],
@@ -1167,18 +1259,43 @@ function App() {
   }, [])
 
   const mapLayers: MapRenderLayer[] = useMemo(
-    () =>
-      artifacts
-        .filter((artifact) => artifactData[artifact.artifactId])
-        .map((artifact) => ({
-          artifact,
-          data: artifactData[artifact.artifactId],
-          visible: mapLayerPreferences[artifact.artifactId]?.visible ?? true,
-          opacity: mapLayerPreferences[artifact.artifactId]?.opacity ?? 0.9,
-          featureCount: artifactData[artifact.artifactId]?.features.length ?? 0,
-          geometrySummary: describeCollectionGeometry(artifactData[artifact.artifactId]),
-        })),
-    [artifactData, artifacts, mapLayerPreferences],
+    () => {
+      const isRunning = run?.status === 'running'
+      return artifacts
+        .filter((artifact) => isRunning || !artifact.isIntermediate)
+        .flatMap<MapRenderLayer>((artifact) => {
+        const visible = mapLayerPreferences[artifact.artifactId]?.visible ?? true
+        const opacity = mapLayerPreferences[artifact.artifactId]?.opacity ?? 0.9
+        if (artifact.artifactType === 'geojson' && artifactData[artifact.artifactId]) {
+          return [{
+            kind: 'geojson' as const,
+            artifact,
+            data: artifactData[artifact.artifactId],
+            visible,
+            opacity,
+            featureCount: artifactData[artifact.artifactId]?.features.length ?? 0,
+            geometrySummary: describeCollectionGeometry(artifactData[artifact.artifactId]),
+          }]
+        }
+        const metadata = artifactMetadata[artifact.artifactId] ?? artifact.metadata
+        const coordinates = parseRasterCoordinates(metadata.coordinates)
+        const imageUrl = typeof metadata.imageUrl === 'string' ? `${apiBaseUrl}${metadata.imageUrl}` : `${apiBaseUrl}${artifact.uri}`
+        if (artifact.artifactType === 'raster_png' && coordinates) {
+          return [{
+            kind: 'raster' as const,
+            artifact,
+            imageUrl,
+            coordinates,
+            visible,
+            opacity,
+            featureCount: 1,
+            geometrySummary: describeRasterMetadata(metadata),
+          }]
+        }
+        return []
+      })
+    },
+    [artifactData, artifactMetadata, artifacts, mapLayerPreferences, run?.status],
   )
 
   return (
@@ -1199,7 +1316,6 @@ function App() {
                 onPrimaryAction={async () => {
                   if (selectedArtifactId) {
                     setPanelMode('export')
-                    await handlePublish(selectedArtifactId)
                     return
                   }
                   if (query.trim()) {
@@ -1237,7 +1353,7 @@ function App() {
                     </article>
                     <article className="glass-subtle p-3.5 rounded-2xl">
                       <span className="detail-label">数据</span>
-                      <strong className="detail-value">{artifacts.length+layers.length}对象</strong>
+                      <strong className="detail-value">{dataReferences.length}对象</strong>
                       <p className="text-[11px] text-slate-400 mt-1">{selectedBasemap.name}·{uploadedLayerName??'无自定义数据'}</p>
                     </article>
                   </div>
@@ -1290,6 +1406,7 @@ function App() {
                         errorMessage={uiError}
                         uploadedLayerName={uploadedLayerName}
                         intent={intent}
+                        clarification={agentState?.clarification}
                         sessionThreads={sessionThreads}
                         transcriptEntries={transcriptEntries}
                         runtimeConfig={runtimeConfig}
@@ -1300,12 +1417,15 @@ function App() {
                         onFillSample={handleSampleSelect}
                         onSelectClarification={onSelectClarificationStable}
                         onUseTemplate={handleUseTemplate}
-                        onUpload={onUploadStable}
+                        onUploadFiles={(files) => {
+                          void handleUploadFiles(files)
+                        }}
                         onSelectArtifact={setSelectedArtifactId}
                         onSelectTask={onSelectTaskStable}
                         onRenameTask={onRenameTaskStable}
                         onDeleteTask={onDeleteTaskStable}
                         onResolveApproval={onResolveApprovalStable}
+                        dataReferences={dataReferences}
                       />
                     </m.div>
 
@@ -1322,6 +1442,7 @@ function App() {
                           selectedArtifactName={selectedArtifact?.name}
                           onSelectArtifact={setSelectedArtifactId}
                           placeResolution={placeResolution}
+                          agentState={agentState}
                         />
                       </Suspense>
                     </m.div>
@@ -1336,19 +1457,18 @@ function App() {
                         artifactData={artifactData}
                         mapLayers={mapLayers}
                         layers={layers}
+                        weatherDatasets={weatherDatasets}
                         events={deferredEvents}
                         sessionRuns={sessionRuns}
                         progressItems={progressItems}
                         selectedArtifactId={selectedArtifactId}
-                        publishResult={publishResult}
                         uploadedLayerName={uploadedLayerName}
                         selectedBasemapName={selectedBasemap.name}
                         provider={provider}
                         model={model}
                         providers={providers}
                         systemComponents={systemComponents}
-                        qgisModels={qgisModels}
-                        isQgisSubmitting={isQgisSubmitting}
+                        isToolSubmitting={isToolSubmitting}
                         onSelectArtifact={setSelectedArtifactId}
                         onToggleArtifactVisibility={handleToggleArtifactVisibility}
                         onChangeArtifactOpacity={handleArtifactOpacityChange}
@@ -1356,15 +1476,6 @@ function App() {
                           void hydrateRunState(runId)
                           setPanelMode('history')
                           setActiveNav('history')
-                        }}
-                        onPublish={(artifactId) => {
-                          void handlePublish(artifactId)
-                        }}
-                        onRunQgisProcess={(algorithmId, distance) => {
-                          void handleRunQgisProcess(algorithmId, distance)
-                        }}
-                        onRunQgisModel={(modelName, overlayArtifactId) => {
-                          void handleRunQgisModel(modelName, overlayArtifactId)
                         }}
                         onCopyShareLink={() => {
                           void handleCopyShareLink()
@@ -1400,7 +1511,7 @@ function App() {
             <DebugPage
               query={query}
               isSubmitting={isSubmitting}
-              isQgisSubmitting={isQgisSubmitting}
+              isToolSubmitting={isToolSubmitting}
               uploadedLayerName={uploadedLayerName}
               errorMessage={uiError}
               runStatus={run?.status}
@@ -1411,6 +1522,7 @@ function App() {
               providers={providers}
               sessionRuns={sessionRuns}
               layers={layers}
+              weatherDatasets={weatherDatasets}
               events={deferredEvents}
               intent={intent}
               executionPlan={executionPlan}
@@ -1418,12 +1530,10 @@ function App() {
               artifacts={artifacts}
               artifactMetadata={artifactMetadata}
               selectedArtifactId={selectedArtifactId}
-              publishResult={publishResult}
               toolRunResult={toolRunResult}
               toolCatalogEntries={toolCatalogEntries}
               runtimeConfig={runtimeConfig}
               systemComponents={systemComponents}
-              qgisModels={qgisModels}
               tools={availableTools}
               isToolCatalogSubmitting={isToolCatalogSubmitting}
               onQueryChange={setQuery}
@@ -1436,15 +1546,6 @@ function App() {
                 void handleUpload(file)
               }}
               onSelectArtifact={setSelectedArtifactId}
-              onPublish={(artifactId) => {
-                void handlePublish(artifactId)
-              }}
-              onRunQgisProcess={(algorithmId, distance) => {
-                void handleRunQgisProcess(algorithmId, distance)
-              }}
-              onRunQgisModel={(modelName, overlayArtifactId) => {
-                void handleRunQgisModel(modelName, overlayArtifactId)
-              }}
               onRunTool={(tool, args) => {
                 void handleRunTool(tool, args)
               }}
@@ -1548,6 +1649,204 @@ function mergeThreadRuns(currentRuns: AnalysisRun[], incomingRun: AnalysisRun) {
     }
     return leftTime - rightTime
   })
+}
+
+function classifyUploadFile(file: File): UploadReference['kind'] | undefined {
+  if (isWeatherFile(file)) {
+    return 'weather'
+  }
+  if (isLayerFile(file)) {
+    return 'layer'
+  }
+  return undefined
+}
+
+function isLayerFile(file: File) {
+  const name = file.name.toLowerCase()
+  return [...LAYER_FILE_SUFFIXES].some((suffix) => name.endsWith(suffix))
+}
+
+function isWeatherFile(file: File) {
+  const name = file.name.toLowerCase()
+  return [...WEATHER_FILE_SUFFIXES].some((suffix) => name.endsWith(suffix))
+}
+
+function getUploadRelativePath(file: File) {
+  const relativePath = 'webkitRelativePath' in file ? String(file.webkitRelativePath || '') : ''
+  return relativePath || file.name
+}
+
+function makeUploadReferenceId(kind: UploadReference['kind'], relativePath: string, file: File) {
+  return `${kind}:${relativePath}:${file.size}:${file.lastModified}`
+}
+
+function upsertUploadReference(current: UploadReference[], incoming: UploadReference) {
+  const next = current.filter((item) => item.id !== incoming.id)
+  return [incoming, ...next].slice(0, 80)
+}
+
+function mergeWeatherDataset(current: WeatherDatasetRecord[], incoming: WeatherDatasetRecord) {
+  const byId = new Map(current.map((item) => [item.datasetId, item]))
+  byId.set(incoming.datasetId, incoming)
+  return [...byId.values()].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+}
+
+function buildDataReferences({
+  layers,
+  weatherDatasets,
+  uploadReferences,
+  artifacts,
+  threadRuns,
+  currentThreadId,
+}: {
+  layers: LayerDescriptor[]
+  weatherDatasets: WeatherDatasetRecord[]
+  uploadReferences: UploadReference[]
+  artifacts: ArtifactRef[]
+  threadRuns: ReadonlyArray<AnalysisRun>
+  currentThreadId?: string
+}): DataReferenceSummary[] {
+  // 数据引用摘要
+  //
+  // 聊天面板只展示当前 thread 关联的数据引用：上传队列、本 thread run
+  // 产出的 artifact。session 级图层/气象数据只在有活跃 thread 时才展示，
+  // 避免新建对话时看到旧 thread 的上传数据。
+  const result: DataReferenceSummary[] = []
+  const seen = new Set<string>()
+  const weatherByName = new Map(weatherDatasets.map((dataset) => [dataset.filename, dataset]))
+  const layerByName = new Map(layers.map((layer) => [layer.name, layer]))
+  const threadArtifactIds = new Set(
+    threadRuns.flatMap((item) => item.state.artifacts.map((artifact) => artifact.artifactId)),
+  )
+
+  for (const item of uploadReferences) {
+    const key = `${item.kind}:${item.relativePath ?? item.name}`
+    seen.add(key)
+    seen.add(`${item.kind}:${item.name}`)
+    const matchedWeather = item.kind === 'weather' ? weatherByName.get(item.name) : undefined
+    const matchedLayer = item.kind === 'layer' ? layerByName.get(item.name) : undefined
+    result.push({
+      id: `upload:${item.id}`,
+      kind: item.kind,
+      name: item.name,
+      status: matchedWeather ? formatWeatherStatusLabel(matchedWeather.status) : matchedLayer ? (matchedLayer.status === 'active' ? '可用' : matchedLayer.status) : uploadStatusLabel(item.status),
+      detail: matchedWeather ? formatWeatherReferenceDetail(matchedWeather) : matchedLayer ? `${matchedLayer.featureCount ?? 0} 个对象 · ${matchedLayer.geometryType || '图层'}` : item.detail ?? formatReferenceKind(item.kind),
+      relativePath: item.relativePath,
+    })
+  }
+
+  // session 级图层和气象数据只在有活跃 thread 上下文时才展示；
+  // 没有 thread 上下文时跳过，避免新建对话看到旧 thread 的数据。
+  if (currentThreadId) {
+    for (const dataset of weatherDatasets) {
+      const key = `weather:${dataset.filename}`
+      if (seen.has(key)) {
+        continue
+      }
+      seen.add(key)
+      result.push({
+        id: `weather:${dataset.datasetId}`,
+        kind: 'weather',
+        name: dataset.filename,
+        status: formatWeatherStatusLabel(dataset.status),
+        detail: formatWeatherReferenceDetail(dataset),
+      })
+    }
+
+    for (const layer of layers) {
+      if (!layer.sessionId && !layer.sourceType.startsWith('session_') && layer.sourceType !== 'upload') {
+        continue
+      }
+      const key = `layer:${layer.name}`
+      if (seen.has(key)) {
+        continue
+      }
+      seen.add(key)
+      result.push({
+        id: `layer:${layer.layerKey}`,
+        kind: 'layer',
+        name: layer.name,
+        status: layer.status === 'active' ? '可用' : layer.status,
+        detail: `${layer.featureCount ?? 0} 个对象 · ${layer.geometryType || '图层'}`,
+      })
+    }
+  }
+
+  for (const artifact of artifacts) {
+    if (!threadArtifactIds.has(artifact.artifactId)) {
+      continue
+    }
+    const key = `artifact:${artifact.artifactId}`
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    result.push({
+      id: key,
+      kind: 'artifact',
+      name: artifact.name,
+      status: '结果',
+      detail: artifact.artifactType === 'raster_png' ? '栅格结果' : artifact.artifactType,
+    })
+  }
+
+  return result.slice(0, 80)
+}
+
+function formatWeatherReferenceDetail(dataset: WeatherDatasetRecord) {
+  const variables = Array.isArray(dataset.metadata.variables) ? dataset.metadata.variables : []
+  if (!variables.length && dataset.status === 'uploaded') {
+    return '开始分析时解析'
+  }
+  const names = variables
+    .map((item) => (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name ?? '') : ''))
+    .filter(Boolean)
+    .slice(0, 3)
+  const variableLabel = names.length ? names.join(' / ') : '变量待识别'
+  const mapReady = variables.filter((item) => Boolean((item as { mapReady?: unknown })?.mapReady)).length
+  const analysisReady = variables.filter((item) => Boolean((item as { analysisReady?: unknown })?.analysisReady)).length
+  const capabilityLabel = variables.length ? ` · ${analysisReady} 可统计 · ${mapReady} 可制图` : ''
+  return `${variableLabel}${variables.length > names.length ? ` 等 ${variables.length} 个变量` : ''}${capabilityLabel}`
+}
+
+function formatReferenceKind(kind: UploadReference['kind']) {
+  return kind === 'weather' ? '气象/雷达数据' : '空间图层'
+}
+
+function uploadStatusLabel(status: string) {
+  if (status === 'pending') return '等待上传'
+  if (status === 'uploading') return '上传中'
+  if (status === 'ready') return '可用'
+  return formatWeatherStatusLabel(status)
+}
+
+function formatWeatherUploadDetail(status: string) {
+  if (status === 'uploaded') {
+    return '已上传，开始分析时解析'
+  }
+  return formatWeatherStatusLabel(status)
+}
+
+function formatWeatherStatusLabel(status: string) {
+  if (status === 'uploaded') return '已上传'
+  if (status === 'completed') return '解析完成'
+  if (status === 'failed') return '失败'
+  if (status === 'running') return '解析中'
+  if (status === 'queued') return '等待解析'
+  return status || '已接入'
+}
+
+function formatFileSize(size: number) {
+  if (size >= 1024 * 1024 * 1024) {
+    return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`
+  }
+  if (size >= 1024 * 1024) {
+    return `${(size / 1024 / 1024).toFixed(1)} MB`
+  }
+  if (size >= 1024) {
+    return `${(size / 1024).toFixed(1)} KB`
+  }
+  return `${size} B`
 }
 
 async function retryAsync<T>(task: () => Promise<T>, retries: number, delayMs: number): Promise<T> {
@@ -1671,6 +1970,9 @@ function friendlyEventMessage(event?: RunEvent) {
   if (event.type === 'approval.required') {
     return '分析结果已生成，正在等待审批。'
   }
+  if (event.type === 'clarification.required') {
+    return '需要你确认一个选项后继续。'
+  }
   if (event.type === 'run.failed') {
     return '分析没有顺利完成，请稍后重试。'
   }
@@ -1694,7 +1996,31 @@ function describeCollectionGeometry(collection?: GeoJSON.FeatureCollection) {
   return geometryTypes.join(' / ')
 }
 
-const FALLBACK_BASEMAP: BasemapDescriptor = {
+function parseRasterCoordinates(value: unknown): [[number, number], [number, number], [number, number], [number, number]] | undefined {
+  if (!Array.isArray(value) || value.length !== 4) {
+    return undefined
+  }
+  const points = value.map((point) => {
+    if (!Array.isArray(point) || point.length !== 2) {
+      return undefined
+    }
+    const lng = Number(point[0])
+    const lat = Number(point[1])
+    return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] as [number, number] : undefined
+  })
+  return points.every(Boolean) ? points as [[number, number], [number, number], [number, number], [number, number]] : undefined
+}
+
+function describeRasterMetadata(metadata: Record<string, unknown>) {
+  const variable = typeof metadata.variable === 'string' ? metadata.variable : '气象栅格'
+  const valueRange = Array.isArray(metadata.valueRange) ? metadata.valueRange.map(Number).filter(Number.isFinite) : []
+  if (valueRange.length >= 2) {
+    return `${variable} · ${valueRange[0].toFixed(2)} - ${valueRange[1].toFixed(2)}`
+  }
+  return variable
+}
+
+const DEFAULT_BASEMAP: BasemapDescriptor = {
   basemapKey: 'osm',
   name: 'OpenStreetMap',
   provider: 'osm',

@@ -31,7 +31,6 @@ async def get_runtime_config(store: PostgresPlatformStore = Depends(get_store)):
 @router.put("/api/v1/runtime/config")
 async def update_runtime_config(payload: AgentRuntimeConfig, request: Request, store: PostgresPlatformStore = Depends(get_store)):
     saved = store.save_runtime_config(payload)
-    request.app.state.publisher.default_project_key = saved.default_publish_project_key
     request.app.state.spatial_service.configure_geosearch(saved.geosearch)
     request.app.state.spatial_service.configure_external_poi(saved.external_poi)
     return saved

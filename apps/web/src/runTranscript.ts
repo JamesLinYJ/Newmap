@@ -385,6 +385,19 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
       details: payload,
     }
   }
+  if (event.type === 'clarification.required') {
+    const clarification = payload.clarification as Record<string, unknown> | undefined
+    return {
+      id: event.eventId,
+      kind: 'approval',
+      timestamp: event.timestamp,
+      title: '需要确认',
+      body: sanitizeUserFacingText(normalizeTranscriptText(clarification?.question ?? event.message)),
+      status: 'blocked',
+      approvalId: null,
+      details: payload,
+    }
+  }
   if (event.type === 'warning.raised' || event.type === 'run.failed') {
     const failurePayload = payload.finalResponse as Record<string, unknown> | undefined
     return {
@@ -763,6 +776,9 @@ function deriveRecoveryNote(event: RunEvent, events: RunEvent[]) {
   if (nextMeaningfulEvent.type === 'approval.required') {
     return '系统已转入审批节点，等待你确认后继续。'
   }
+  if (nextMeaningfulEvent.type === 'clarification.required') {
+    return '系统已转入澄清节点，等待你选择后继续。'
+  }
   if (nextMeaningfulEvent.type === 'run.completed') {
     return '系统已完成剩余步骤，并生成了最终结果。'
   }
@@ -860,11 +876,43 @@ function findPreviousToolArgs(event: RunEvent, events: RunEvent[]) {
   return matched?.payload?.args ?? null
 }
 
+/** 将 raw JSON final response 提取为纯 summary 文本，否则返回 null */
+function _stripJsonWrapper(text: string): string | null {
+  const t = text.trim()
+  if (!t.includes('"summary"')) return null
+
+  const tryParse = (candidate: string): string | null => {
+    try {
+      const p = JSON.parse(candidate)
+      return typeof p.summary === 'string' && p.summary.trim() ? p.summary.trim() : null
+    } catch { return null }
+  }
+
+  // 1) 纯 JSON: {"summary":"..."}
+  if (t.startsWith('{')) {
+    const r = tryParse(t)
+    if (r) return r
+  }
+  // 2) 流式合并丢失开头 {
+  if (t.startsWith('"summary"')) {
+    const r = tryParse(`{${t}}`)
+    if (r) return r
+  }
+  // 3) 自然语言后附带 JSON 块
+  const braceIdx = t.indexOf('{"summary"')
+  if (braceIdx >= 0) {
+    const r = tryParse(t.slice(braceIdx))
+    if (r) return r
+  }
+  return null
+}
+
 function sanitizeUserFacingText(value: string) {
-  // 这里做的是用户态术语收口，不影响后端原始状态。
+  // 过滤模型输出的 raw JSON final response，只保留 summary 文本
+  const stripped = _stripJsonWrapper(value)
+  if (stripped !== null) return stripped
   return value
     .replaceAll('Spatial Analyst', '空间分析')
-    .replaceAll('QGIS Operator', 'QGIS 执行')
     .replaceAll('Publisher', '结果发布')
     .replaceAll('live supervisor', '主智能体')
     .replaceAll('supervisor', '主智能体')

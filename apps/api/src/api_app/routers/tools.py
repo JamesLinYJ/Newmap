@@ -25,7 +25,6 @@ from ..dependencies import get_store
 from ..models import ToolCatalogEntryUpsertRequest, ToolRunRequest
 from ..platform_store import PostgresPlatformStore
 from ..run_core import _apply_tool_result_to_run, _execute_tool_request, _record_tool_failure
-from .qgis import list_qgis_algorithms, list_qgis_models
 
 router = APIRouter(tags=["tools"])
 
@@ -33,18 +32,9 @@ router = APIRouter(tags=["tools"])
 @router.get("/api/v1/tools")
 async def list_tools(request: Request) -> list[ToolDescriptor]:
     catalog = request.app.state.tool_catalog_store.load_catalog()
-    qgis_algorithms = await list_qgis_algorithms(request)
-    qgis_models = await list_qgis_models(request)
-
-    from ..tool_catalog import build_registry_tool_descriptors, build_qgis_model_descriptors
+    from ..tool_catalog import build_registry_tool_descriptors
     registry_tools = build_registry_tool_descriptors(request.app.state.tool_registry, catalog)
-    qgis_tooling = list(qgis_algorithms.get("algorithms", [])) + build_qgis_model_descriptors(
-        qgis_models.get("models", []),
-        available=bool(qgis_models.get("available")),
-        error=str(qgis_models.get("error")) if qgis_models.get("error") else None,
-        catalog=catalog,
-    )
-    return sorted([*registry_tools, *qgis_tooling], key=lambda item: (item.group, item.tool_kind, item.label))
+    return sorted(registry_tools, key=lambda item: (item.group, item.tool_kind, item.label))
 
 
 @router.get("/api/v1/tools/catalog")

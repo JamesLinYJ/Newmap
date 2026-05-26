@@ -45,33 +45,13 @@ class ApprovalResolutionRequest(BaseModel):
     approved: bool
 
 
-class QgisProcessRequest(BaseModel):
-    algorithm_id: str = Field(..., alias="algorithmId")
-    inputs: dict[str, object] = Field(default_factory=dict)
-    artifact_id: str | None = Field(default=None, alias="artifactId")
-    input_parameter_name: str | None = Field(default="INPUT", alias="inputParameterName")
-    output_parameter_name: str | None = Field(default="OUTPUT", alias="outputParameterName")
-    run_id: str | None = Field(default=None, alias="runId")
-    save_as_artifact: bool = Field(default=False, alias="saveAsArtifact")
-    result_name: str | None = Field(default=None, alias="resultName")
-
-
-class QgisModelRequest(BaseModel):
-    model_name: str = Field(..., alias="modelName")
-    inputs: dict[str, object] = Field(default_factory=dict)
-    artifact_id: str | None = Field(default=None, alias="artifactId")
-    input_parameter_name: str | None = Field(default="INPUT", alias="inputParameterName")
-    output_parameter_name: str | None = Field(default="output", alias="outputParameterName")
-    run_id: str | None = Field(default=None, alias="runId")
-    save_as_artifact: bool = Field(default=False, alias="saveAsArtifact")
-    result_name: str | None = Field(default=None, alias="resultName")
-
-
 class ToolRunRequest(BaseModel):
     session_id: str = Field(..., alias="sessionId")
     tool_name: str = Field(..., alias="toolName")
     tool_kind: str = Field(default="registry", alias="toolKind")
     run_id: str | None = Field(default=None, alias="runId")
+    save_as_artifact: bool | None = Field(default=None, alias="saveAsArtifact")
+    result_name: str | None = Field(default=None, alias="resultName")
     args: dict[str, object] = Field(default_factory=dict)
 
 
@@ -100,3 +80,45 @@ class LayerUpdateRequest(BaseModel):
     status: str | None = None
     analysis_capabilities: list[str] | None = Field(default=None, alias="analysisCapabilities")
     source_config_summary: str | None = Field(default=None, alias="sourceConfigSummary")
+
+
+class WeatherRenderRequest(BaseModel):
+    variable: str | None = None
+    time_index: int | None = Field(default=None, alias="timeIndex")
+    level_index: int | None = Field(default=None, alias="levelIndex")
+    run_id: str | None = Field(default=None, alias="runId")
+    result_name: str | None = Field(default=None, alias="resultName")
+
+
+class WeatherStatsRequest(BaseModel):
+    variable: str | None = None
+    time_index: int | None = Field(default=None, alias="timeIndex")
+    level_index: int | None = Field(default=None, alias="levelIndex")
+    bbox: list[float] | None = None
+
+
+class WeatherThresholdRequest(BaseModel):
+    threshold: float
+    operator: str = ">="
+    variable: str | None = None
+    time_index: int | None = Field(default=None, alias="timeIndex")
+    level_index: int | None = Field(default=None, alias="levelIndex")
+    bbox: list[float] | None = None
+    run_id: str | None = Field(default=None, alias="runId")
+    result_name: str | None = Field(default=None, alias="resultName")
+
+
+class WeatherContoursRequest(BaseModel):
+    levels: list[float] | None = None
+    variable: str | None = None
+    time_index: int | None = Field(default=None, alias="timeIndex")
+    level_index: int | None = Field(default=None, alias="levelIndex")
+    bbox: list[float] | None = None
+    run_id: str | None = Field(default=None, alias="runId")
+    result_name: str | None = Field(default=None, alias="resultName")
+
+
+class WeatherReportRequest(BaseModel):
+    llm_interpretation: str = Field(..., alias="llmInterpretation")
+    run_id: str | None = Field(default=None, alias="runId")
+    result_name: str | None = Field(default=None, alias="resultName")

@@ -12,7 +12,13 @@
 #
 # 统一暴露模型适配器注册表和基础抽象。
 
-from .base import BaseModelAdapter
-from .registry import ModelAdapterRegistry
+from .base import AgentsSdkCapabilities, AgentsSdkFinalOutputContract, BaseModelAdapter
+from .registry import ModelAdapterRegistry, RegistrySettings
 
-__all__ = ["BaseModelAdapter", "ModelAdapterRegistry"]
+__all__ = [
+    "AgentsSdkCapabilities",
+    "AgentsSdkFinalOutputContract",
+    "BaseModelAdapter",
+    "ModelAdapterRegistry",
+    "RegistrySettings",
+]

@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "echo \"暂无前端测试用例\""
+    "test": "vitest run"
   },
   "dependencies": {
     "@geo-agent-platform/shared-types": "file:../../packages/shared-types",

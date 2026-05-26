@@ -27,8 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agent_core import GeoAgentRuntime
 from gis_postgis import PostGISLayerRepository, SpatialAnalysisService
-from gis_qgis import QgisRuntimeClient
-from map_publisher import MapPublisher
+from gis_weather import WeatherDataService
 from model_adapters import ModelAdapterRegistry
 from tool_registry.registry import build_default_registry
 
@@ -48,10 +47,10 @@ from .routers import (
     analysis,
     layers,
     tools,
-    qgis,
     results,
     config_routes,
     geo,
+    weather,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,14 +79,7 @@ async def lifespan(app: FastAPI):
         ),
         poi_config=runtime_config.external_poi,
     )
-    qgis_runner = QgisRuntimeClient(settings.effective_qgis_runtime_base_url)
-    publisher = MapPublisher(
-        settings.resolved_qgis_publish_dir,
-        settings.qgis_server_base_url,
-        app_base_url=settings.effective_app_base_url,
-        qgis_runtime=qgis_runner,
-        default_project_key=runtime_config.default_publish_project_key,
-    )
+    weather_service = WeatherDataService()
     tool_registry = build_default_registry()
     tool_catalog_store = ToolCatalogStore(database_url)
     tool_catalog_store.ensure_schema(registry=tool_registry)
@@ -99,8 +91,7 @@ async def lifespan(app: FastAPI):
     app.state.catalog = layer_repository
     app.state.artifact_export_store = artifact_export_store
     app.state.spatial_service = spatial_service
-    app.state.qgis_runner = qgis_runner
-    app.state.publisher = publisher
+    app.state.weather_service = weather_service
     app.state.tool_registry = tool_registry
     app.state.tool_catalog_store = tool_catalog_store
     app.state.runtime = runtime
@@ -167,7 +158,7 @@ app.include_router(runs.router)
 app.include_router(analysis.router)
 app.include_router(layers.router)
 app.include_router(tools.router)
-app.include_router(qgis.router)
 app.include_router(results.router)
 app.include_router(config_routes.router)
 app.include_router(geo.router)
+app.include_router(weather.router)

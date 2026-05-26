@@ -52,7 +52,7 @@ class OpenAICompatibleAdapter(BaseModelAdapter):
         return AgentsSdkCapabilities(
             live_supervisor=True,
             structured_output=is_openai_api and not is_deepseek,
-            json_object_output=False,
+            json_object_output=is_deepseek,
         )
 
     @staticmethod

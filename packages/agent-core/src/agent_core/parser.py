@@ -76,6 +76,7 @@ MAP_DISPLAY_TOKENS = (
 NEARBY_TOKENS = ("附近", "周边", "近一点", "近一些", "靠近")
 INSIDE_TOKENS = ("落在", "在里面", "里面", "内部", "区内", "范围内")
 LOCATION_LOOKUP_TOKENS = ("在哪", "在哪里", "在哪儿", "位置", "什么地方", "具体位置")
+MAP_NAVIGATION_TOKENS = ("跳转到", "定位到", "飞到", "导航到", "转到", "打开地图到")
 DISTANCE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(公里|km|千米|米|m)", re.I)
 PLACE_DISTANCE_PATTERNS = (
     re.compile(r"^(?:请|帮我|帮忙|麻烦)?(?:查询|查找|搜索|找|看看|分析)?(?P<place>.+?)(?:\s*\d+(?:\.\d+)?\s*(?:公里|km|千米|米|m)范围内(?:的)?)(?P<target>.+)$", re.I),
@@ -144,6 +145,8 @@ def parse_user_intent(query: str, latest_uploaded_layer_key: str | None = None) 
         task_type = "distance_query"
     elif any(word in text for word in ("边界", "行政区")) and area:
         task_type = "boundary_lookup"
+    elif _looks_like_map_navigation(text) and (place_query or area) and not data_requirements:
+        task_type = "map_navigation"
     elif any(word in text for word in ("解析", "地址", "地点", "坐标", *LOCATION_LOOKUP_TOKENS)) and (place_query or area) and not data_requirements:
         task_type = "geocode_lookup"
     elif data_requirements and (area or place_query):
@@ -681,8 +684,6 @@ def verify_execution_plan(
             ref = step.args.get(arg_name)
             if ref and str(ref) not in known_aliases:
                 errors.append(f"步骤 {step.id} 引用了未定义的结果别名 {ref}。")
-        if step.tool == "publish_to_qgis_project" and not step.args.get("artifact_id"):
-            errors.append(f"步骤 {step.id} 缺少 artifact_id，无法发布。")
         alias = step.args.get("alias")
         if alias:
             known_aliases.add(str(alias))
@@ -769,7 +770,7 @@ def _extract_distance_m(text: str, normalized: str) -> float | None:
 def _extract_place_query(text: str, data_requirements: list[str], distance_m: float | None, area: str | None) -> str | None:
     if area or "上传" in text:
         return None
-    if distance_m is None and not any(token in text for token in ("解析", "地址", "地点", "坐标", *LOCATION_LOOKUP_TOKENS, *NEARBY_TOKENS)):
+    if distance_m is None and not any(token in text for token in ("解析", "地址", "地点", "坐标", *LOCATION_LOOKUP_TOKENS, *MAP_NAVIGATION_TOKENS, *NEARBY_TOKENS)):
         return None
     for pattern in PLACE_DISTANCE_PATTERNS:
         match = pattern.match(_strip_query_prefix(text))
@@ -777,7 +778,7 @@ def _extract_place_query(text: str, data_requirements: list[str], distance_m: fl
             candidate = _cleanup_place_phrase(match.group("place"), data_requirements)
             if candidate:
                 return candidate
-    if any(token in text for token in ("解析", "地址", "地点", "坐标", *LOCATION_LOOKUP_TOKENS)):
+    if any(token in text for token in ("解析", "地址", "地点", "坐标", *LOCATION_LOOKUP_TOKENS, *MAP_NAVIGATION_TOKENS)):
         candidate = _cleanup_place_phrase(_strip_query_prefix(text), data_requirements)
         return candidate or None
     return None
@@ -785,7 +786,7 @@ def _extract_place_query(text: str, data_requirements: list[str], distance_m: fl
 
 def _cleanup_place_phrase(value: str, data_requirements: list[str]) -> str:
     candidate = value.strip(" ，。！？?、")
-    candidate = re.sub(r"^(查询|查找|搜索|找|看看|分析|定位|查一下|帮我查|帮我看看)", "", candidate).strip()
+    candidate = re.sub(r"^(查询|查找|搜索|找|看看|分析|定位|定位到|跳转到|飞到|导航到|转到|打开地图到|查一下|帮我查|帮我看看)", "", candidate).strip()
     candidate = re.sub(r"(在哪(?:里|儿)?|位置|什么地方|具体位置|在哪呢|在哪啊)$", "", candidate).strip(" ，。！？?、的")
     return candidate
 
@@ -802,6 +803,10 @@ def _infer_anchor_type(text: str, *, area: str | None, place_query: str | None, 
     if place_query:
         return "poi"
     return "unknown"
+
+
+def _looks_like_map_navigation(text: str) -> bool:
+    return any(token in text for token in MAP_NAVIGATION_TOKENS)
 
 
 def _looks_like_nearby_query(text: str, target_layers: list[str], place_query: str | None) -> bool:

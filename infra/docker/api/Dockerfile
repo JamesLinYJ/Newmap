@@ -6,6 +6,10 @@ ENV PIP_INDEX_URL=https://pypi.org/simple
 
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libeccodes0 \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml README.md ./
 
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -25,11 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY apps ./apps
 COPY infra ./infra
 COPY packages ./packages
-COPY qgis ./qgis
-
 RUN --mount=type=cache,target=/root/.cache/pip \
   python -m pip install --no-build-isolation --no-deps -e .
 
-EXPOSE 8000
-
-CMD ["python", "-m", "uvicorn", "api_app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "api_app.dev_server"]

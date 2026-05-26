@@ -1,7 +1,9 @@
+import { memo } from 'react'
 import MarkdownIt from 'markdown-it'
 
 interface MarkdownProps {
   children: string
+  streaming?: boolean
 }
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
@@ -20,11 +22,11 @@ function normalizeTableNewlines(raw: string) {
   return raw.replace(/\|\|/g, '|\n|')
 }
 
-export function Markdown({ children }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ children, streaming }: MarkdownProps) {
   return (
     <div
-      className="dc-markdown"
+      className={`dc-markdown${streaming ? ' dc-markdown--streaming' : ''}`}
       dangerouslySetInnerHTML={{ __html: md.render(normalizeTableNewlines(children)) }}
     />
   )
-}
+})
