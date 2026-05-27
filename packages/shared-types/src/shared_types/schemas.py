@@ -373,6 +373,22 @@ class RuntimePoiConfig(CamelModel):
     max_results: int = 200
 
 
+class RuntimeNowcastConfig(CamelModel):
+    # 短临领域配置。
+    #
+    # 这里保存产品口径和默认分析边界，不保存任何区县、坐标或回答模板；
+    # 具体事实必须来自 NC 产品、边界图层和工具分析结果。
+    default_city_name: str = "杭州市"
+    forecast_horizon_minutes: int = 180
+    point_buffer_meters: float = 1000
+    district_layer_key: str | None = None
+    district_name_field: str | None = None
+    rain_level_thresholds: dict[str, float] = Field(
+        default_factory=lambda: {"none": 0.1, "light": 2.5, "moderate": 8.0, "heavy": 16.0}
+    )
+    candidate_limit: int = 12
+
+
 class RuntimePlanningConfig(CamelModel):
     max_plan_repair_rounds: int = 2
     allow_text_only_delivery: bool = True
@@ -389,6 +405,7 @@ class AgentRuntimeConfig(CamelModel):
     context: RuntimeContextConfig = Field(default_factory=RuntimeContextConfig)
     geosearch: RuntimeGeosearchConfig = Field(default_factory=RuntimeGeosearchConfig)
     external_poi: RuntimePoiConfig = Field(default_factory=RuntimePoiConfig)
+    nowcast: RuntimeNowcastConfig = Field(default_factory=RuntimeNowcastConfig)
 
 
 class LoopTraceEntry(CamelModel):
@@ -500,6 +517,7 @@ class SessionRecord(CamelModel):
     latest_thread_id: str | None = None
     latest_run_id: str | None = None
     latest_uploaded_layer_key: str | None = None
+    latest_weather_dataset_id: str | None = None
 
 
 class AgentThreadRecord(CamelModel):

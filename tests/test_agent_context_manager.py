@@ -55,7 +55,10 @@ def test_context_packet_uses_index_entries_and_excludes_current_run(tmp_path):
 
     assert store.exclude_source_run_id == "run_current"
     assert [item.reference_id for item in packet.references] == ["artifact:artifact_old"]
-    assert "artifactId=artifact_old" in packet.prompt_context
+    assert "artifactId=artifact_old" not in packet.prompt_context
+    assert "旧医院结果" not in packet.prompt_context
+    assert "当前线程有 1 个已索引的历史上下文对象" in packet.prompt_context
+    assert "list_context_references" in packet.prompt_context
     assert "THREAD_CONTEXT.md" in packet.prompt_context
     assert len(packet.prompt_context) <= config.prompt_max_chars + 40
 

@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
     upload_max_bytes: int = 10 * 1024 * 1024
     weather_upload_max_bytes: int = 500 * 1024 * 1024
+    enabled_tool_providers: list[str] = []
 
     @property
     def resolved_runtime_root(self) -> Path:

@@ -10,8 +10,8 @@
 
 # 模块职责
 #
-# 从 JSONL 会话日志里的上下文索引读取可交付给 Agent 的事实，统一装配 prompt
-# 上下文、可复用引用和结果修正观察。这里不扫描旧 run/event 临时拼上下文。
+# 从 JSONL 会话日志里的上下文索引读取可审计事实，统一装配 prompt 边界提示、
+# 可复用引用和结果修正观察。具体历史内容默认不进 prompt，避免隐藏记忆。
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from shared_types.schemas import AgentStateModel, ContextEntryRecord, ContextRef
 class LiveContextPacket:
     # live supervisor 上下文包
     #
-    # prompt_context 给 supervisor instructions 使用；references 写回 run state；
-    # entries 保留结构化事实，供 repair observation 继续有界复用。
+    # prompt_context 只给 supervisor 一个上下文边界提示；references 写回 run state；
+    # entries 保留结构化事实，供显式 context 工具和 UI 继续有界复用。
     prompt_context: str
     references: list[ContextReference] = field(default_factory=list)
     entries: list[ContextEntryRecord] = field(default_factory=list)
@@ -36,8 +36,9 @@ class LiveContextPacket:
 class AgentContextManager:
     # AgentContextManager
     #
-    # 只认会话日志里的 context_entry / compacted 与显式记忆文件；
-    # 缺索引就是空上下文，不回退扫描旧 run 或 event log。
+    # 只认会话日志里的 context_entry 与显式记忆文件。
+    # 缺索引就是空上下文，不回退扫描旧 run 或 event log；有索引也不把
+    # 具体历史事实自动塞进 prompt。
     def __init__(self, *, store: Any, config: RuntimeContextConfig, project_root: Path | None = None):
         self.store = store
         self.config = config
@@ -51,22 +52,19 @@ class AgentContextManager:
         entries = self._list_context_entries(thread_id=thread_id, exclude_source_run_id=run_id)
         references = [entry.reference for entry in entries if entry.reference is not None]
         sections: list[str] = []
-        snapshot = self._get_thread_context(thread_id)
-        if snapshot and snapshot.summary_text.strip():
-            sections.extend(["## 当前线程上下文摘要", snapshot.summary_text.strip()])
         if entries:
-            sections.append("## 可复用上下文对象")
-            for entry in entries:
-                ref_hint = ""
-                if entry.reference is not None:
-                    ref_hint = f"；referenceId={entry.reference.reference_id}"
-                    if entry.reference.artifact_id:
-                        ref_hint += f"；artifactId={entry.reference.artifact_id}"
-                    if entry.reference.collection_ref:
-                        ref_hint += f"；collectionRef={entry.reference.collection_ref}"
-                    if entry.reference.layer_key:
-                        ref_hint += f"；layerKey={entry.reference.layer_key}"
-                sections.append(f"- [{entry.kind}] {entry.label}: {entry.summary}{ref_hint}")
+            # 历史上下文不是默认注入给模型的事实源。
+            #
+            # 这里只暴露检索边界，不泄露具体条目内容。模型只有在用户明确
+            # 指代上一轮、已有结果或历史数据时，才应调用 context 工具取回
+            # 可执行引用，避免“什么都自动知道”的外挂感。
+            sections.extend(
+                [
+                    "## 上下文边界",
+                    f"- 当前线程有 {len(entries)} 个已索引的历史上下文对象。",
+                    "- 不要根据未展示的历史内容直接作答；只有用户明确要求延续、引用上一轮或复用已有数据时，先调用 list_context_references 或 search_thread_context。",
+                ]
+            )
         memory_text = self._build_memory_text()
         if memory_text:
             sections.append(memory_text)

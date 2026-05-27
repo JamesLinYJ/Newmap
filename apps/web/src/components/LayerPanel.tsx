@@ -1,6 +1,6 @@
 // +-------------------------------------------------------------------------
 //
-//   地理智能平台 - QGIS 级别图层管理面板
+//   地理智能平台 - 图层管理面板
 //
 //   文件:       LayerPanel.tsx
 //
@@ -220,7 +220,11 @@ export const LayerPanel = memo(function LayerPanel(props: LayerPanelProps) {
   }
 
   const handleBulkToggleVisibility = () => {
-    const ids = selectedIds.size > 0 ? [...selectedIds] : collectOrderedIds(tree)
+    if (selectedIds.size === 0) {
+      onToggleAllVisibility()
+      return
+    }
+    const ids = [...selectedIds]
     for (const id of ids) onToggleVisibility(id)
   }
 

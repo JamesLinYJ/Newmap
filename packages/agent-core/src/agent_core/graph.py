@@ -294,6 +294,7 @@ class GeoAgentRuntime:
         session_id: str,
         query: str,
         latest_uploaded_layer_key: str | None,
+        latest_weather_dataset_id: str | None = None,
         provider: str,
         model_name: str | None,
         context_factory,
@@ -311,6 +312,9 @@ class GeoAgentRuntime:
             thread_id=thread_id,
             session_id=session_id,
             latest_uploaded_layer_key=latest_uploaded_layer_key,
+            latest_weather_dataset_id=latest_weather_dataset_id,
+            model_provider=provider,
+            model_name=model_name,
         )
         try:
             await self._run_with_oai_agents(
@@ -845,6 +849,7 @@ class GeoAgentRuntime:
             plan=plan,
             available_layers=available_layers,
             output_contract=output_contract,
+            weather_dataset_id=runtime.context.latest_weather_dataset_id,
         )
         instructions = f"{supervisor_base}\n\n{context_packet.prompt_context}" if context_packet.prompt_context else supervisor_base
         all_tools = [self._build_oai_tool(defn.name, runtime, run_id, thread_id) for defn in self.tool_registry.list_definitions()]
@@ -1143,6 +1148,8 @@ class GeoAgentRuntime:
             thread_id=run.thread_id,
             session_id=run.session_id,
             latest_uploaded_layer_key=latest_uploaded_layer_key,
+            model_provider=run.model_provider,
+            model_name=run.model_name,
         )
         intent = state.parsed_intent or parse_user_intent(state.user_query, latest_uploaded_layer_key=latest_uploaded_layer_key)
         plan = state.execution_plan or ExecutionPlan(goal="oai_supervisor_decision", steps=[])
@@ -1666,7 +1673,7 @@ class GeoAgentRuntime:
         )
 
     _LLM_TIMEOUT_SECONDS = 120
-    _SDK_TOOL_TIMEOUT_SECONDS = 120
+    _SDK_TOOL_TIMEOUT_SECONDS = 180
 
     def _supports_sdk_response_format(self, provider: str, model_name: str | None = None) -> bool:
         # SDK structured output 能力边界由 model adapter 声明。
@@ -1759,7 +1766,7 @@ class GeoAgentRuntime:
         model_class = _StrictToolHistoryChatCompletionsModel or OpenAIChatCompletionsModel
         return model_class(model=subagent_model_name, openai_client=client)
 
-    def _build_live_supervisor_prompt(self, *, query: str, intent: UserIntent, plan: ExecutionPlan, available_layers: list[str], output_contract: str) -> str:
+    def _build_live_supervisor_prompt(self, *, query: str, intent: UserIntent, plan: ExecutionPlan, available_layers: list[str], output_contract: str, weather_dataset_id: str | None = None) -> str:
         # live supervisor prompt 只负责角色、约束和当前任务边界，
         # 不在这里重复塞整套状态快照，避免 prompt 与上下文文件职责重叠。
         runtime_config = self._get_runtime_config()
@@ -1772,7 +1779,8 @@ class GeoAgentRuntime:
                 "- 调用工具前，用一句话解释为什么需要这一步。比如「先查一下澳门的坐标，后面才能做范围分析」→ 然后调 geocode_place。不要沉默调工具。",
                 "- 工具返回后，用一句话总结拿到了什么、下一步做什么。「坐标拿到了，现在查周边医院」→ 然后调 search_external_pois。",
                 "- 简单问题（查地点、问定义）直接回答。复杂问题按上面方式逐步推进。",
-                '- 遇到指代词（「这个地点」「刚才那个结果」），先去上下文里找它对应的真实对象。',
+                "- 历史上下文不是默认事实源；不要表现得自动知道上一轮细节。只有用户明确说「刚才」「上一轮」「用已有结果」等延续指令时，才调用 list_context_references 或 search_thread_context 查真实对象。",
+                '- 遇到指代词（「这个地点」「刚才那个结果」），先用上下文工具找它对应的真实对象；找不到就向用户确认。',
                 "- 以下情况主动确认，别替用户做主：地点有多个候选、用户意图模糊、操作代价大（如发布、删除）、查询条件不明确。用 request_clarification 生成选项让用户选。",
                 "- 优先自己动手调工具，需要协作时才分派给子智能体。",
                 "- layer_key 不确定就 list_available_layers 看一眼，别自己编。",
@@ -1825,6 +1833,8 @@ class GeoAgentRuntime:
                 ]
             )
         lines.extend(f"- {item}" for item in available_layers[:20])
+        if weather_dataset_id:
+            lines.extend(["", "## 当前可用气象数据", f"- 数据集 ID: {weather_dataset_id}（使用 list_meteorological_datasets 查看详情，用 inspect_meteorological_dataset 获取变量列表）"])
         if plan.steps:
             lines.extend(["", "## 推荐执行顺序"])
             for index, step in enumerate(plan.steps, start=1):
@@ -1834,7 +1844,7 @@ class GeoAgentRuntime:
                 [
                     "",
                     "## 执行决策",
-                    "- 没有预设执行步骤时，根据工具列表、地点解析结果、数据源目录和当前上下文，由你自主决定最佳路径。",
+                    "- 没有预设执行步骤时，根据工具列表、地点解析结果和数据源目录自主决定最佳路径；不要把未检索的历史上下文当成已知事实。",
                     "- 可以文本回答、地点定位、POI 汇总、生成 GeoJSON 成果或向用户澄清；不要引用不存在的图层。",
                 ]
             )

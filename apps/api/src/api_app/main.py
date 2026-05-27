@@ -29,7 +29,7 @@ from agent_core import GeoAgentRuntime
 from gis_postgis import PostGISLayerRepository, SpatialAnalysisService
 from gis_weather import WeatherDataService
 from model_adapters import ModelAdapterRegistry
-from tool_registry.registry import build_default_registry
+from tool_registry import build_registry_with_providers
 
 from .artifact_store import ArtifactExportStore
 from .basemap_catalog import BasemapCatalog
@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
         poi_config=runtime_config.external_poi,
     )
     weather_service = WeatherDataService()
-    tool_registry = build_default_registry()
+    tool_registry = build_registry_with_providers(settings.enabled_tool_providers)
     tool_catalog_store = ToolCatalogStore(database_url)
     tool_catalog_store.ensure_schema(registry=tool_registry)
     runtime = GeoAgentRuntime(store=store, tool_registry=tool_registry, model_registry=ModelAdapterRegistry(settings))

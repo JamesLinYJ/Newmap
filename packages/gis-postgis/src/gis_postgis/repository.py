@@ -12,21 +12,15 @@
 # 在 PostGIS catalog 能力之上补充图层导入、后台管理、上传注册和图层 key 解析等仓储职责。
 from __future__ import annotations
 
-import json
 import re
-import sqlite3
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from shapely import from_wkb
-
-from ._gpkg_utils import validate_gpkg_identifier
-from gis_common.geojson import ensure_feature_collection
 from gis_common.ids import make_id
 from shared_types.schemas import LayerDescriptor
 
 from .postgis_catalog import PostGISLayerCatalog
+from .vector_import import parse_vector_upload_payload
 
 
 class PostGISLayerRepository(PostGISLayerCatalog):
@@ -205,61 +199,7 @@ class PostGISLayerRepository(PostGISLayerCatalog):
 
 
 def _parse_upload_payload(filename: str, payload: bytes) -> dict[str, Any]:
-    suffix = Path(filename).suffix.lower()
-    if suffix in {".geojson", ".json"}:
-        return ensure_feature_collection(json.loads(payload.decode("utf-8")))
-    if suffix == ".gpkg":
-        return _read_gpkg_features(payload)
-    raise ValueError("仅支持上传 GeoJSON 或 GPKG。")
-
-
-def _read_gpkg_features(payload: bytes) -> dict[str, Any]:
-    with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
-        temp_path = Path(tmp.name)
-        temp_path.write_bytes(payload)
-    conn = sqlite3.connect(temp_path)
-    try:
-        row = conn.execute(
-            """
-            SELECT c.table_name, g.column_name
-            FROM gpkg_contents AS c
-            JOIN gpkg_geometry_columns AS g ON c.table_name = g.table_name
-            WHERE c.data_type = 'features'
-            ORDER BY c.table_name
-            LIMIT 1
-            """
-        ).fetchone()
-        if row is None:
-            raise ValueError("GPKG 中没有可读取的要素图层。")
-        table_name, geom_column = row
-        safe_name = validate_gpkg_identifier(table_name)
-        columns = [info[1] for info in conn.execute(f"PRAGMA table_info('{safe_name}')").fetchall()]
-        records = conn.execute(f"SELECT * FROM '{safe_name}'").fetchall()
-        features = []
-        geom_idx = columns.index(geom_column)
-        for record in records:
-            geom_blob = record[geom_idx]
-            properties = {column: record[idx] for idx, column in enumerate(columns) if idx != geom_idx}
-            geometry = from_wkb(_gpkg_blob_to_wkb(geom_blob))
-            features.append(
-                {
-                    "type": "Feature",
-                    "properties": properties,
-                    "geometry": json.loads(json.dumps(geometry.__geo_interface__)),
-                }
-            )
-        return {"type": "FeatureCollection", "features": features}
-    finally:
-        conn.close()
-        temp_path.unlink(missing_ok=True)
-
-
-def _gpkg_blob_to_wkb(blob: bytes) -> bytes:
-    flags = blob[3]
-    envelope_indicator = (flags >> 1) & 0b111
-    envelope_length = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}.get(envelope_indicator, 0)
-    header_length = 8 + envelope_length
-    return blob[header_length:]
+    return parse_vector_upload_payload(filename, payload)
 
 
 def _infer_layer_category(name: str, collection: dict[str, Any]) -> str:

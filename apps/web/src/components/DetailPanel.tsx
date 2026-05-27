@@ -748,7 +748,7 @@ export const DetailPanel = memo(function DetailPanel({
               导入后台图层
               <input
                 type="file"
-                accept=".geojson,.json,.gpkg,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
+                accept=".geojson,.json,.gpkg,.zip,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
                 hidden
                 onChange={(event) => {
                   const file = event.target.files?.[0]
@@ -774,7 +774,7 @@ export const DetailPanel = memo(function DetailPanel({
                         <RefreshCw size={16} aria-hidden="true" />
                         <input
                           type="file"
-                          accept=".geojson,.json,.gpkg"
+                          accept=".geojson,.json,.gpkg,.zip"
                           hidden
                           onChange={(event) => {
                             const file = event.target.files?.[0]
@@ -800,7 +800,7 @@ export const DetailPanel = memo(function DetailPanel({
                   </div>
                 ))
               ) : (
-                <p className="dc-empty-copy">当前 catalog 为空。你可以先导入 GeoJSON / GPKG，或者直接让 Agent 使用外部地点与 POI 来源继续分析。</p>
+                <p className="dc-empty-copy">当前 catalog 为空。你可以先导入 GeoJSON / GPKG / ZIP Shapefile，或者直接让 Agent 使用外部地点与 POI 来源继续分析。</p>
               )}
             </div>
           </div>

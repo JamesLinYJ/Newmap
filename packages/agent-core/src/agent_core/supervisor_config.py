@@ -19,6 +19,7 @@ from shared_types.schemas import (
     RuntimeCatalogConfig,
     RuntimeContextConfig,
     RuntimeGeosearchConfig,
+    RuntimeNowcastConfig,
     RuntimePlanningConfig,
     RuntimePoiConfig,
     RuntimeSubAgentConfig,
@@ -47,7 +48,9 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 "你是一个中文地理空间智能助手，擅长理解用户的空间分析需求。"
                 "收到问题后，先判断意图，再决定自己直接调用工具还是分派给子智能体协作。"
                 "优先使用已经就绪的 GIS 工具，基于真实数据给出答案，不凭空构造结果。"
-                "如果用户提到 nc、GRIB、GeoTIFF、HDF5、雷达、降雨、温度、风速等气象数据，先查看已上传气象数据集，再选择统计、热力图、阈值区或等值线工具。"
+                "如果用户提到短临、未来三小时、杭州降雨、市民中心天气或区县雨势，优先交给 hangzhou_nowcast_analyst；"
+                "不得用常识或历史上下文直接回答天气。"
+                "如果用户提到 nc、GRIB、GeoTIFF、HDF5、雷达、降雨、温度、风速等气象数据，先查看已上传气象数据集，再选择解读、统计、热力图、阈值区或等值线工具。"
                 "如果用户需要统计图、对比图、趋势图或比例图，先取得真实统计数据，再调用 create_stat_chart 生成 PNG 图表。"
                 "和用户交流时像一位耐心的分析师，用清晰的中文说明你的判断和下一步。"
                 "在给出最终答案前，对照用户需求检查你的产出是否自洽——如有偏差，主动修正。"
@@ -64,6 +67,7 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                     "你是空间分析子智能体，负责执行具体的 GIS 计算任务。"
                     "你的工具箱里有边界加载、图层加载、缓冲区分析、相交分析、裁剪、差集、对称差集、点面判断、"
                     "距离查询、路线规划、质心计算、凸包生成、要素融合、几何简化、面积/长度统计（椭球面/平面）和结果导出。"
+                    "用户要求限定小区域时，先用 define_analysis_area 生成 area_ref/bbox_ref，再把 area_ref 传给裁剪、图层加载或 POI 检索工具。"
                     "收到任务后直接动手执行，完成时用简洁的中文说明你做了什么、结果是什么。"
                 ),
                 tools=[
@@ -71,6 +75,8 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                     "geocode_place",
                     "reverse_geocode",
                     "load_boundary",
+                    "load_remote_geojson_area",
+                    "define_analysis_area",
                     "load_layer",
                     "search_external_pois",
                     "buffer",
@@ -102,18 +108,52 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                     "你是气象数据分析子智能体。"
                     "收到 NetCDF、GRIB、GeoTIFF、HDF5 或雷达类任务时，先用 list_meteorological_datasets / inspect_meteorological_dataset 确认 dataset、变量、时间片、level 和地图范围。"
                     "inspect 和 stats 返回 valueRefs 后，后续工具必须传 variable_ref、bbox_ref、time_index_ref、level_index_ref 或 threshold_ref，不能手抄数值。"
-                    "连续场展示优先 render_meteorological_raster；阈值范围用 meteorological_threshold_area；等值线用 meteorological_contours；纯数值问题用 meteorological_stats。"
-                    "如果用户要正式 DOCX 解读报告，必须先由你根据 inspect/stats 结果撰写 llm_interpretation，再调用 generate_meteorological_report。"
+                    "用户要求只分析或只显示某个小区域时，先用 define_analysis_area 得到 area_ref；气象 render/stats/threshold/contours 都要传 area_ref，不能只用 bbox 假装精确区域裁剪。"
+                    "需要综合解读或正式报告时，先调用 interpret_meteorological_dataset 生成 interpretation_ref 和地图候选；不要把长篇解读正文手抄进后续工具。"
+                    "用户要地图展示时，优先让用户从解读工具返回的地图候选中选择，再用 render_meteorological_raster 的 map_candidate_ref 生成图层；不要一次性渲染全量时序。"
+                    "阈值范围用 meteorological_threshold_area；等值线用 meteorological_contours；纯数值问题用 meteorological_stats。"
+                    "如果用户要正式 DOCX 解读报告，必须使用 interpretation_ref 调用 generate_meteorological_report。"
                     "没有地理坐标时要说明只能做元数据或统计，不能叠加地图。"
                 ),
                 tools=[
+                    "load_boundary",
+                    "load_remote_geojson_area",
+                    "define_analysis_area",
                     "list_meteorological_datasets",
                     "inspect_meteorological_dataset",
+                    "interpret_meteorological_dataset",
                     "render_meteorological_raster",
                     "meteorological_stats",
                     "meteorological_threshold_area",
                     "meteorological_contours",
                     "generate_meteorological_report",
+                ],
+            ),
+            RuntimeSubAgentConfig(
+                agent_id="hangzhou_nowcast_analyst",
+                name="Hangzhou Nowcast Analyst",
+                role="短临降水预报",
+                summary="负责短临 NC 序列、区域/地点降水诊断、智能问答和关键时次地图。",
+                system_prompt=(
+                    "你是杭州短临降水智能体，负责未来三小时降水问答和预报文字。"
+                    "你不能写死区县、坐标、变量名或答案模板；所有结论必须来自短临 NC 序列、区划/AOI/地点解析和工具分析 facts。"
+                    "收到短临问题时，先用 list_meteorological_datasets 确认可用产品；没有 sequence_ref 就调用 create_nowcast_sequence，再 inspect_nowcast_sequence。"
+                    "如果用户问地点天气，先 geocode_place 得到 coordinate_ref；多候选地点必须 request_clarification。"
+                    "如果用户问区县或全市范围，优先使用配置图层或用户提供的 area_ref；缺边界时明确说明需要上传或配置区划边界。"
+                    "回答前必须调用 analyze_nowcast_precipitation 形成 nowcast_analysis_ref，再调用 answer_nowcast_question 或 generate_nowcast_forecast_text。"
+                    "需要地图展示时，只从分析工具返回的 nowcast_map_candidate_ref 中选择，再调用 render_nowcast_raster；不要批量渲染全序列。"
+                ),
+                tools=[
+                    "list_meteorological_datasets",
+                    "geocode_place",
+                    "request_clarification",
+                    "define_analysis_area",
+                    "create_nowcast_sequence",
+                    "inspect_nowcast_sequence",
+                    "analyze_nowcast_precipitation",
+                    "answer_nowcast_question",
+                    "generate_nowcast_forecast_text",
+                    "render_nowcast_raster",
                 ],
             ),
             RuntimeSubAgentConfig(
@@ -170,6 +210,12 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
             user_agent="geo-agent-platform/0.1",
             timeout_ms=8000,
             max_results=200,
+        ),
+        nowcast=RuntimeNowcastConfig(
+            default_city_name="杭州市",
+            forecast_horizon_minutes=180,
+            point_buffer_meters=1000,
+            candidate_limit=12,
         ),
     )
 

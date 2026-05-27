@@ -15,15 +15,30 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import json
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from pydantic import Field
 
+from gis_common.geojson import ensure_feature_collection
 from gis_common.ids import make_id
+from gis_weather import (
+    INTERPRETATION_SCHEMA,
+    build_interpretation_facts,
+    build_interpretation_prompt,
+    build_map_candidates,
+    normalize_interpretation_payload,
+    select_interpretation_variables,
+)
 from shared_types.exceptions import NotFoundError
 from shared_types.schemas import ArtifactRef, ContextEntryRecord, ContextReference
+from shapely.geometry import box, mapping, shape
+from shapely.ops import unary_union
 
 from .base import ToolArgsModel, ToolExecutionResult, ToolRuntime
 from .charting import render_stat_chart
@@ -155,16 +170,32 @@ class LoadBoundaryArgs(ToolArgsModel):
     alias: str | None = Field(None, title="别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text", "placeholder": "例如：berlin_boundary"})
 
 
+class LoadRemoteGeojsonAreaArgs(ToolArgsModel):
+    url: str = Field(..., title="GeoJSON URL", description="远程 GeoJSON 地址，仅接受 http/https 且必须是面要素。", json_schema_extra={"x-ui-source": "text"})
+    alias: str | None = Field(None, title="区域别名", description="保存为后续 area_ref 使用的别名。", json_schema_extra={"x-ui-source": "text", "placeholder": "study_area"})
+
+
+class DefineAnalysisAreaArgs(ToolArgsModel):
+    source_ref: str | None = Field(None, title="区域图层引用", description="已有边界、上传图层、artifact 或 alias。", json_schema_extra={"x-ui-source": "collection"})
+    boundary_name: str | None = Field(None, title="行政区名称", description="直接按行政区名称加载分析区域。", json_schema_extra={"x-ui-source": "text"})
+    geojson_url: str | None = Field(None, title="GeoJSON URL", description="远程 GeoJSON 面数据地址。", json_schema_extra={"x-ui-source": "text"})
+    bbox_ref: str | None = Field(None, title="范围引用", description="已有 bbox valueRef。", json_schema_extra={"x-ui-source": "text"})
+    bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
+    alias: str | None = Field(None, title="区域别名", description="保存为后续 area_ref 使用的别名。", json_schema_extra={"x-ui-source": "text", "placeholder": "analysis_area"})
+
+
 class LoadLayerArgs(ToolArgsModel):
     layer_key: str = Field(..., title="图层", description="系统图层 key 或 latest_upload。", json_schema_extra={"x-ui-source": "layer"})
     area_name: str | None = Field(None, title="区域名称", description="按区域裁剪时使用。", json_schema_extra={"x-ui-source": "text", "placeholder": "可选，例如：Paris"})
     boundary: str | None = Field(None, title="边界引用", description="已有边界结果或图层引用。", json_schema_extra={"x-ui-source": "collection", "placeholder": "可选，选择已有边界结果"})
+    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
     alias: str | None = Field(None, title="别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text", "placeholder": "例如：metro_stations"})
 
 
 class SearchExternalPoisArgs(ToolArgsModel):
     category: str = Field(..., title="对象类别", description="要检索的对象类别，例如 hospital、metro_station。", json_schema_extra={"x-ui-source": "text"})
     boundary: str | None = Field(None, title="范围引用", description="边界集合引用（优先按范围查询），也接受坐标 valueRef。", json_schema_extra={"x-ui-source": "spatial_ref"})
+    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "spatial_ref"})
     anchor: str | None = Field(None, title="地点锚点", description="集合别名或 geocode_place 产出的坐标 valueRef（如 value:coordinate:...），用于周边查询。", json_schema_extra={"x-ui-source": "spatial_ref"})
     distance_m: float | None = Field(None, title="距离（米）", description="围绕锚点查询时的半径。", json_schema_extra={"x-ui-source": "number"})
     alias: str | None = Field(None, title="结果别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text"})
@@ -200,7 +231,8 @@ class IntersectArgs(ToolArgsModel):
 
 class ClipArgs(ToolArgsModel):
     a: str = Field(..., title="待裁剪图层", description="要被裁剪的输入集合。", json_schema_extra={"x-ui-source": "collection"})
-    b: str = Field(..., title="裁剪边界", description="边界集合。", json_schema_extra={"x-ui-source": "collection"})
+    b: str | None = Field(None, title="裁剪边界", description="边界集合。", json_schema_extra={"x-ui-source": "collection"})
+    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
     alias: str | None = Field(None, title="结果别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text"})
 
 
@@ -283,14 +315,27 @@ class InspectMeteorologicalDatasetArgs(ToolArgsModel):
 
 
 class RenderMeteorologicalRasterArgs(ToolArgsModel):
-    dataset_id: str = Field(..., title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
+    map_candidate_ref: str | None = Field(None, title="地图候选引用", description="interpret_meteorological_dataset 产出的地图候选 valueRef。", json_schema_extra={"x-ui-source": "text"})
+    dataset_id: str | None = Field(None, title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
     variable_ref: str | None = Field(None, title="变量引用", description="inspect_meteorological_dataset 产出的变量 valueRef。", json_schema_extra={"x-ui-source": "text"})
     variable: str | None = Field(None, title="变量", description="变量名；为空时自动选择第一个可制图变量。", json_schema_extra={"x-ui-source": "text"})
     time_index_ref: str | None = Field(None, title="时间片引用", description="inspect_meteorological_dataset 产出的时间片 valueRef。", json_schema_extra={"x-ui-source": "text"})
     time_index: int | None = Field(None, title="时间序号", description="多时间片数据的时间索引。", ge=0, json_schema_extra={"x-ui-source": "number"})
     level_index_ref: str | None = Field(None, title="高度/层引用", description="inspect_meteorological_dataset 产出的 level valueRef。", json_schema_extra={"x-ui-source": "text"})
     level_index: int | None = Field(None, title="高度/层序号", description="多 level 数据的层索引。", ge=0, json_schema_extra={"x-ui-source": "number"})
+    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
+    bbox_ref: str | None = Field(None, title="范围引用", description="bbox valueRef，用于矩形窗口裁剪。", json_schema_extra={"x-ui-source": "text"})
+    bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
     result_name: str | None = Field(None, title="结果名称", description="生成 raster artifact 的名称。", json_schema_extra={"x-ui-source": "text"})
+
+
+class InterpretMeteorologicalDatasetArgs(ToolArgsModel):
+    dataset_id: str | None = Field(None, title="气象数据集", description="单个气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
+    dataset_ids: list[str] | None = Field(None, title="气象数据集序列", description="连续 NC 数据集 id 列表，最多 36 个。", json_schema_extra={"x-ui-source": "json"})
+    variables: list[str] | None = Field(None, title="变量", description="需要重点解读的变量名。", json_schema_extra={"x-ui-source": "json"})
+    variable_refs: list[str] | None = Field(None, title="变量引用", description="inspect_meteorological_dataset 产出的变量 valueRef 列表。", json_schema_extra={"x-ui-source": "json"})
+    focus: str | None = Field(None, title="解读重点", description="用户关心的分析重点，例如强降雨、雷暴风险或风场。", json_schema_extra={"x-ui-source": "text"})
+    max_datasets: int | None = Field(None, title="最大数据集数量", ge=1, le=36, json_schema_extra={"x-ui-source": "number"})
 
 
 class MeteorologicalStatsArgs(ToolArgsModel):
@@ -303,6 +348,7 @@ class MeteorologicalStatsArgs(ToolArgsModel):
     level_index: int | None = Field(None, title="高度/层序号", ge=0, json_schema_extra={"x-ui-source": "number"})
     bbox_ref: str | None = Field(None, title="范围引用", description="inspect_meteorological_dataset 产出的 bbox valueRef。", json_schema_extra={"x-ui-source": "text"})
     bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
+    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
 
 
 class MeteorologicalThresholdArgs(ToolArgsModel):
@@ -318,6 +364,7 @@ class MeteorologicalThresholdArgs(ToolArgsModel):
     level_index: int | None = Field(None, title="高度/层序号", ge=0, json_schema_extra={"x-ui-source": "number"})
     bbox_ref: str | None = Field(None, title="范围引用", json_schema_extra={"x-ui-source": "text"})
     bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
+    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
     alias: str | None = Field(None, title="结果别名", json_schema_extra={"x-ui-source": "text"})
     result_name: str | None = Field(None, title="结果名称", json_schema_extra={"x-ui-source": "text"})
 
@@ -333,17 +380,18 @@ class MeteorologicalContoursArgs(ToolArgsModel):
     level_index: int | None = Field(None, title="高度/层序号", ge=0, json_schema_extra={"x-ui-source": "number"})
     bbox_ref: str | None = Field(None, title="范围引用", json_schema_extra={"x-ui-source": "text"})
     bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
+    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
     alias: str | None = Field(None, title="结果别名", json_schema_extra={"x-ui-source": "text"})
     result_name: str | None = Field(None, title="结果名称", json_schema_extra={"x-ui-source": "text"})
 
 
 class GenerateMeteorologicalReportArgs(ToolArgsModel):
     dataset_id: str = Field(..., title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-    llm_interpretation: str = Field(
+    interpretation_ref: str = Field(
         ...,
-        title="大模型解读正文",
-        description="由大模型基于 inspect/stats 结果撰写的综合解读。没有这段正文不会生成报告。",
-        json_schema_extra={"x-ui-source": "json"},
+        title="解读正文引用",
+        description="interpret_meteorological_dataset 产出的 llm_interpretation valueRef。",
+        json_schema_extra={"x-ui-source": "text"},
     )
     result_name: str | None = Field(None, title="结果名称", json_schema_extra={"x-ui-source": "text"})
 
@@ -471,12 +519,87 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             provenance={"name": name},
         )
 
+    async def load_remote_geojson_area(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        collection = await _download_remote_geojson_area(str(args["url"]))
+        alias = str(args.get("alias") or "remote_area")
+        artifact, bbox_ref = await _persist_analysis_area(
+            runtime,
+            alias=alias,
+            name="远程 GeoJSON 分析区域",
+            collection=collection,
+            source_tool="load_remote_geojson_area",
+            source={"url": args["url"]},
+        )
+        return _area_tool_result(
+            message=f"已加载远程 GeoJSON 分析区域，可用 area_ref={alias}。",
+            artifact=artifact,
+            collection=collection,
+            area_ref=alias,
+            bbox_ref=bbox_ref,
+            source="remote_geojson",
+            provenance={"operation": "load_remote_geojson_area", "url": args["url"]},
+        )
+
+    async def define_analysis_area(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        source_flags = [
+            bool(str(args.get("source_ref") or "").strip()),
+            bool(str(args.get("boundary_name") or "").strip()),
+            bool(str(args.get("geojson_url") or "").strip()),
+            args.get("bbox") is not None or bool(str(args.get("bbox_ref") or "").strip()),
+        ]
+        if sum(1 for item in source_flags if item) != 1:
+            raise ValueError("define_analysis_area 必须且只能提供 source_ref、boundary_name、geojson_url 或 bbox/bbox_ref 其中一种来源。")
+
+        provenance: dict[str, Any] = {"operation": "define_analysis_area"}
+        if args.get("source_ref"):
+            source_ref = str(args["source_ref"])
+            collection = _resolve_area_collection_ref(runtime, source_ref)
+            provenance["sourceRef"] = source_ref
+            name = "分析区域"
+        elif args.get("boundary_name"):
+            boundary_name = str(args["boundary_name"])
+            collection = await asyncio.to_thread(runtime.store.spatial_service.load_boundary, boundary_name)
+            provenance["boundaryName"] = boundary_name
+            name = f"{boundary_name} 分析区域"
+        elif args.get("geojson_url"):
+            geojson_url = str(args["geojson_url"])
+            collection = await _download_remote_geojson_area(geojson_url)
+            provenance["geojsonUrl"] = geojson_url
+            name = "远程 GeoJSON 分析区域"
+        else:
+            bbox = _resolve_optional_bbox_value_arg(runtime, args, value_key="bbox", ref_key="bbox_ref")
+            if bbox is None:
+                raise ValueError("bbox 分析区域缺少 bbox 或 bbox_ref。")
+            collection = _bbox_to_feature_collection(bbox)
+            provenance["bboxRef"] = args.get("bbox_ref")
+            name = "bbox 分析区域"
+
+        alias = str(args.get("alias") or "analysis_area")
+        artifact, bbox_ref = await _persist_analysis_area(
+            runtime,
+            alias=alias,
+            name=name,
+            collection=collection,
+            source_tool="define_analysis_area",
+            source=provenance,
+        )
+        return _area_tool_result(
+            message=f"已定义分析区域，可用 area_ref={alias}，bbox_ref={bbox_ref.ref_id}。",
+            artifact=artifact,
+            collection=collection,
+            area_ref=alias,
+            bbox_ref=bbox_ref,
+            source="analysis_area",
+            provenance=provenance,
+        )
+
     async def load_layer(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         # latest_upload 在这里被解析成真实 layer key，避免上层 runtime 到处分支判断。
         layer_key = str(args["layer_key"])
         area_name = args.get("area_name")
-        boundary_ref = args.get("boundary")
-        boundary = runtime.state.alias_map.get(str(boundary_ref)) if boundary_ref else None
+        area_ref = str(args.get("area_ref") or "").strip()
+        boundary_ref = str(args.get("boundary") or "").strip()
+        boundary = _resolve_area_collection_ref(runtime, area_ref) if area_ref else _resolve_area_collection_ref(runtime, boundary_ref) if boundary_ref else None
         if layer_key == "latest_upload":
             if not runtime.context.latest_uploaded_layer_key:
                 raise ValueError("当前会话还没有上传图层。")
@@ -498,9 +621,9 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
 
     async def search_external_pois(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         category = str(args["category"])
-        boundary_ref = str(args.get("boundary") or "").strip()
+        boundary_ref = str(args.get("area_ref") or args.get("boundary") or "").strip()
         anchor_ref = str(args.get("anchor") or "").strip()
-        boundary = _resolve_collection_ref(runtime, boundary_ref) if boundary_ref else None
+        boundary = _resolve_area_collection_ref(runtime, boundary_ref) if boundary_ref else None
         anchor = _resolve_collection_ref(runtime, anchor_ref) if anchor_ref else None
         payload = runtime.store.spatial_service.search_external_pois(
             category=category,
@@ -667,10 +790,13 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
 
     async def clip(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         left = _resolve_collection_ref(runtime, str(args["a"]))
-        right = _resolve_collection_ref(runtime, str(args["b"]))
+        right_ref = str(args.get("area_ref") or args.get("b") or "").strip()
+        if not right_ref:
+            raise ValueError("clip 需要提供 b 或 area_ref 作为裁剪边界。")
+        right = _resolve_area_collection_ref(runtime, right_ref)
         clipped = runtime.store.spatial_service.clip(left, right)
         artifact = await _persist_collection(runtime, alias=args.get("alias", "clip"), name="裁剪结果", collection=clipped, is_intermediate=True)
-        return _result_with_collection_metadata(message="已完成裁剪分析。", artifact=artifact, collection=clipped, source="spatial_analysis", provenance={"operation": "clip", "a": args["a"], "b": args["b"]})
+        return _result_with_collection_metadata(message="已完成裁剪分析。", artifact=artifact, collection=clipped, source="spatial_analysis", provenance={"operation": "clip", "a": args["a"], "b": args.get("b"), "areaRef": args.get("area_ref")})
 
     async def spatial_join(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         points = _resolve_collection_ref(runtime, str(args["points"]))
@@ -859,10 +985,24 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         )
 
     async def render_meteorological_raster(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
-        dataset = _ensure_weather_dataset_parsed(runtime, str(args["dataset_id"]))
-        variable = _resolve_tool_value_arg(runtime, args, value_key="variable", ref_key="variable_ref", expected_kinds={"variable"})
-        time_index = _resolve_optional_int_value_arg(runtime, args, value_key="time_index", ref_key="time_index_ref")
-        level_index = _resolve_optional_level_index_value_arg(runtime, args, value_key="level_index", ref_key="level_index_ref")
+        map_candidate = _resolve_map_candidate_arg(runtime, args)
+        if map_candidate is not None:
+            dataset_id = str(map_candidate["datasetId"])
+            dataset = _ensure_weather_dataset_parsed(runtime, dataset_id)
+            variable = str(map_candidate["variable"])
+            time_index = _optional_int_from_mapping(map_candidate, "timeIndex")
+            level_index = _optional_int_from_mapping(map_candidate, "levelIndex")
+            default_result_name = str(map_candidate.get("label") or f"{dataset.filename} 热力图")
+        else:
+            dataset_id = str(args.get("dataset_id") or "").strip()
+            if not dataset_id:
+                raise ValueError("生成气象栅格图必须提供 dataset_id 或 map_candidate_ref。")
+            dataset = _ensure_weather_dataset_parsed(runtime, dataset_id)
+            variable = _resolve_tool_value_arg(runtime, args, value_key="variable", ref_key="variable_ref", expected_kinds={"variable"})
+            time_index = _resolve_optional_int_value_arg(runtime, args, value_key="time_index", ref_key="time_index_ref")
+            level_index = _resolve_optional_level_index_value_arg(runtime, args, value_key="level_index", ref_key="level_index_ref")
+            default_result_name = f"{dataset.filename} 热力图"
+        area, bbox, area_ref = _resolve_optional_area_and_bbox(runtime, args)
         artifact_id = make_id("artifact")
         output_dir = runtime.store.runtime_root / "weather" / "derived" / dataset.dataset_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -873,18 +1013,24 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             variable=variable,
             time_index=time_index,
             level_index=level_index,
+            bbox=bbox,
+            area=area,
         )
         artifact = runtime.store.platform_store.save_file_artifact(
             run_id=runtime.context.run_id,
             artifact_id=artifact_id,
             artifact_type="raster_png",
-            name=str(args.get("result_name") or f"{dataset.filename} 热力图"),
+            name=str(args.get("result_name") or default_result_name),
             source_path=str(output_path),
             suffix=".png",
             metadata={
                 **render_payload,
                 "datasetId": dataset.dataset_id,
                 "source": "meteorological_dataset",
+                "mapCandidateRef": args.get("map_candidate_ref"),
+                "aoiRef": area_ref,
+                "bboxRef": args.get("bbox_ref"),
+                "maskApplied": area is not None,
                 "imageUrl": f"/api/v1/results/{artifact_id}/file",
             },
         )
@@ -900,18 +1046,65 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             feature_count=1,
         )
 
+    async def interpret_meteorological_dataset(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
+        datasets = _resolve_interpretation_datasets(runtime, args)
+        requested_variables = _resolve_interpretation_variables(runtime, args)
+        stats_rows = _collect_interpretation_stats(runtime, datasets=datasets, requested_variables=requested_variables)
+        facts_datasets = [
+            _dataset_to_interpretation_facts(
+                dataset,
+                sequence_index=sequence_index,
+                requested_variables=requested_variables,
+            )
+            for sequence_index, dataset in enumerate(datasets)
+        ]
+        map_candidates = build_map_candidates(datasets=facts_datasets, stats_rows=stats_rows, max_candidates=12)
+        facts = build_interpretation_facts(
+            datasets=facts_datasets,
+            stats_rows=stats_rows,
+            map_candidates=map_candidates,
+            focus=str(args.get("focus") or "").strip() or None,
+        )
+        interpretation = await _call_meteorological_interpretation_model(runtime, facts)
+        value_refs = _register_meteorological_interpretation_refs(
+            runtime,
+            datasets=datasets,
+            interpretation=interpretation,
+            map_candidates=map_candidates,
+        )
+        map_message = f"已生成 {len(map_candidates)} 个可选地图候选。" if map_candidates else "该数据当前没有可地图展示的候选。"
+        return ToolExecutionResult(
+            message=f"已完成 NC 气象数据解读。{map_message}",
+            payload={
+                "interpretation": interpretation,
+                "facts": facts,
+                "mapCandidates": map_candidates,
+                "valueRefs": serialize_value_refs_for_model(value_refs),
+            },
+            source="meteorological_interpreter",
+            used_query=",".join(dataset.dataset_id for dataset in datasets),
+            provenance={
+                "datasetIds": [dataset.dataset_id for dataset in datasets],
+                "operation": "interpret_meteorological_dataset",
+                "mapCandidateCount": len(map_candidates),
+            },
+            feature_count=len(map_candidates),
+            value_refs=value_refs,
+        )
+
     async def meteorological_stats(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         dataset = _ensure_weather_dataset_parsed(runtime, str(args["dataset_id"]))
         variable = _resolve_tool_value_arg(runtime, args, value_key="variable", ref_key="variable_ref", expected_kinds={"variable"})
         time_index = _resolve_optional_int_value_arg(runtime, args, value_key="time_index", ref_key="time_index_ref")
         level_index = _resolve_optional_level_index_value_arg(runtime, args, value_key="level_index", ref_key="level_index_ref")
-        bbox = _resolve_optional_bbox_value_arg(runtime, args, value_key="bbox", ref_key="bbox_ref")
+        area, bbox, area_ref = _resolve_optional_area_and_bbox(runtime, args)
         stats = _weather_service(runtime).stats(
             _weather_dataset_path(runtime, dataset.storage_relative_path),
             variable=variable,
             time_index=time_index,
             level_index=level_index,
             bbox=bbox,
+            area=area,
         )
         value_refs = _register_meteorological_stats_refs(runtime, dataset=dataset, variable=variable, time_index=time_index, level_index=level_index, bbox=bbox, stats=stats)
         return ToolExecutionResult(
@@ -919,7 +1112,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             payload={"stats": stats, "dataset": dataset.model_dump(mode="json"), "valueRefs": serialize_value_refs_for_model(value_refs)},
             source="meteorological_dataset",
             used_query=dataset.dataset_id,
-            provenance={"datasetId": dataset.dataset_id, "operation": "stats"},
+            provenance={"datasetId": dataset.dataset_id, "operation": "stats", "areaRef": area_ref},
             feature_count=int(stats.get("count") or 0),
             value_refs=value_refs,
         )
@@ -929,7 +1122,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         variable = _resolve_tool_value_arg(runtime, args, value_key="variable", ref_key="variable_ref", expected_kinds={"variable"})
         time_index = _resolve_optional_int_value_arg(runtime, args, value_key="time_index", ref_key="time_index_ref")
         level_index = _resolve_optional_level_index_value_arg(runtime, args, value_key="level_index", ref_key="level_index_ref")
-        bbox = _resolve_optional_bbox_value_arg(runtime, args, value_key="bbox", ref_key="bbox_ref")
+        area, bbox, area_ref = _resolve_optional_area_and_bbox(runtime, args)
         threshold = resolve_numeric_arg(
             runtime,
             args,
@@ -944,6 +1137,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             time_index=time_index,
             level_index=level_index,
             bbox=bbox,
+            area=area,
         )
         artifact = await _persist_collection(
             runtime,
@@ -963,6 +1157,8 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             "timeIndex": time_index,
             "levelIndex": level_index,
             "bbox": bbox,
+            "aoiRef": area_ref,
+            "maskApplied": area is not None,
         }
         if hasattr(runtime.store.platform_store, "update_artifact_metadata"):
             artifact = runtime.store.platform_store.update_artifact_metadata(artifact.artifact_id, **metadata_patch)
@@ -974,7 +1170,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             collection=collection,
             source="meteorological_dataset",
             used_query=dataset.dataset_id,
-            provenance={"datasetId": dataset.dataset_id, "operation": "threshold"},
+            provenance={"datasetId": dataset.dataset_id, "operation": "threshold", "areaRef": area_ref},
         )
 
     async def meteorological_contours(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
@@ -982,7 +1178,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         variable = _resolve_tool_value_arg(runtime, args, value_key="variable", ref_key="variable_ref", expected_kinds={"variable"})
         time_index = _resolve_optional_int_value_arg(runtime, args, value_key="time_index", ref_key="time_index_ref")
         level_index = _resolve_optional_level_index_value_arg(runtime, args, value_key="level_index", ref_key="level_index_ref")
-        bbox = _resolve_optional_bbox_value_arg(runtime, args, value_key="bbox", ref_key="bbox_ref")
+        area, bbox, area_ref = _resolve_optional_area_and_bbox(runtime, args)
         collection = _weather_service(runtime).contours_geojson(
             _weather_dataset_path(runtime, dataset.storage_relative_path),
             levels=args.get("levels"),
@@ -990,6 +1186,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             time_index=time_index,
             level_index=level_index,
             bbox=bbox,
+            area=area,
         )
         artifact = await _persist_collection(
             runtime,
@@ -1005,6 +1202,8 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             "levels": args.get("levels") or [],
             "levelIndex": level_index,
             "bbox": bbox,
+            "aoiRef": area_ref,
+            "maskApplied": area is not None,
         }
         if hasattr(runtime.store.platform_store, "update_artifact_metadata"):
             artifact = runtime.store.platform_store.update_artifact_metadata(artifact.artifact_id, **metadata_patch)
@@ -1016,14 +1215,16 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             collection=collection,
             source="meteorological_dataset",
             used_query=dataset.dataset_id,
-            provenance={"datasetId": dataset.dataset_id, "operation": "contours"},
+            provenance={"datasetId": dataset.dataset_id, "operation": "contours", "areaRef": area_ref},
         )
 
     async def generate_meteorological_report(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
         dataset = _ensure_weather_dataset_parsed(runtime, str(args["dataset_id"]))
-        llm_interpretation = str(args.get("llm_interpretation") or "").strip()
+        interpretation_ref = str(args.get("interpretation_ref") or "").strip()
+        interpretation_value = resolve_value_ref(runtime, interpretation_ref, expected_kinds={"llm_interpretation"}).value
+        llm_interpretation = str(interpretation_value or "").strip()
         if len(llm_interpretation) < 20:
-            raise ValueError("生成 DOCX 解读报告必须提供大模型解读正文。")
+            raise ValueError("生成 DOCX 解读报告必须提供有效的大模型解读引用。")
         artifact_id = make_id("artifact")
         output_dir = runtime.store.runtime_root / "weather" / "derived" / dataset.dataset_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -1057,7 +1258,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             payload=report_payload,
             source="meteorological_dataset",
             used_query=dataset.dataset_id,
-            provenance={"datasetId": dataset.dataset_id, "operation": "docx_report", "llmInterpretationRequired": True},
+            provenance={"datasetId": dataset.dataset_id, "operation": "docx_report", "interpretationRef": interpretation_ref},
             geometry_type="Document",
             feature_count=1,
         )
@@ -1116,6 +1317,8 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         ToolDefinition("geocode_place", geocode_place, ToolMetadata("地名查找坐标", "输入地名或地址（如「巴黎」「澳门机场」），返回经纬度坐标和候选列表。这是查找地点位置的第一步，拿到结果后可以传给 search_external_pois 的 anchor 参数。", "lookup", ["geocode", "lookup"]), GeocodePlaceArgs),
         ToolDefinition("reverse_geocode", reverse_geocode, ToolMetadata("坐标反查地名", "输入经纬度，返回该位置的地名和地址信息。", "lookup", ["geocode", "reverse"]), ReverseGeocodeArgs),
         ToolDefinition("load_boundary", load_boundary, ToolMetadata("加载行政区边界", "输入行政区名称（如「巴黎」「柏林」），返回该区域的边界多边形。结果可以通过 alias 引用，用于裁剪、空间筛选、或作为 search_external_pois 的 boundary 参数。", "data", ["boundary", "catalog"]), LoadBoundaryArgs),
+        ToolDefinition("load_remote_geojson_area", load_remote_geojson_area, ToolMetadata("加载远程分析区域", "从远程 http/https GeoJSON URL 加载面要素分析区域，返回 area_ref 和 bbox_ref。", "data", ["aoi", "area", "geojson"]), LoadRemoteGeojsonAreaArgs),
+        ToolDefinition("define_analysis_area", define_analysis_area, ToolMetadata("定义分析区域", "把行政区、上传面图层、远程 GeoJSON 或 bbox 统一注册为分析区域，后续工具用 area_ref/bbox_ref 裁剪。", "analysis", ["aoi", "area", "clip"]), DefineAnalysisAreaArgs),
         ToolDefinition("load_layer", load_layer, ToolMetadata("加载数据图层", "根据 layer_key 从系统 catalog 加载已有数据图层，或加载用户上传的文件。layer_key 来自 list_available_layers 的返回结果。", "data", ["catalog", "layer"]), LoadLayerArgs),
         ToolDefinition("search_external_pois", search_external_pois, ToolMetadata("按类别搜索周边设施", "在指定空间范围内搜索某类设施。category 填设施类型：hospital/metro_station/airport/school/park/restaurant/pharmacy。范围通过 boundary（行政区边界引用）或 anchor（地点引用 + distance_m）指定。要先拿到边界或地点坐标才能调用。", "external", ["poi", "external", "osm"]), SearchExternalPoisArgs),
         ToolDefinition("route_plan", route_plan, ToolMetadata("路线规划", "输入起点和终点经纬度，规划驾车/步行/骑行路线，返回路线几何和距离、耗时。结果会自动显示在地图上。", "analysis", ["route", "navigation"]), RoutePlanArgs),
@@ -1139,16 +1342,22 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         ToolDefinition("publish_result_geojson", publish_result_geojson, ToolMetadata("导出为 GeoJSON", "把已有的分析结果导出为可下载、可在地图上展示的 GeoJSON 文件。", "output", ["export", "geojson"]), PublishResultGeojsonArgs),
         ToolDefinition("list_meteorological_datasets", list_meteorological_datasets, ToolMetadata("列出气象数据集", "查看当前线程可用的气象数据集；未解析数据会在 inspect/render/stats 等工具消费时按需解析。", "meteorology", ["meteorology", "气象", "dataset"])),
         ToolDefinition("inspect_meteorological_dataset", inspect_meteorological_dataset, ToolMetadata("检查气象数据集", "读取一个气象数据集的变量、时间、范围和解析警告。", "meteorology", ["meteorology", "气象", "metadata"]), InspectMeteorologicalDatasetArgs),
-        ToolDefinition("render_meteorological_raster", render_meteorological_raster, ToolMetadata("生成气象栅格图", "把 NetCDF/GRIB/HDF5/GeoTIFF 中的连续变量渲染成可叠加地图的 PNG 栅格图 artifact。", "meteorology", ["meteorology", "气象", "raster", "heatmap"]), RenderMeteorologicalRasterArgs),
+        ToolDefinition("interpret_meteorological_dataset", interpret_meteorological_dataset, ToolMetadata("解读 NC 气象数据", "基于气象 metadata、统计摘要和连续时次事实调用当前模型生成专业解读，并返回可手动选择的地图候选。", "meteorology", ["meteorology", "气象", "nc", "interpretation"]), InterpretMeteorologicalDatasetArgs),
+        ToolDefinition("render_meteorological_raster", render_meteorological_raster, ToolMetadata("生成气象栅格图", "把 NetCDF/GRIB/HDF5/GeoTIFF 中的连续变量或解读工具产出的地图候选渲染成可叠加地图的 PNG 栅格图 artifact。", "meteorology", ["meteorology", "气象", "raster", "heatmap"]), RenderMeteorologicalRasterArgs),
         ToolDefinition("meteorological_stats", meteorological_stats, ToolMetadata("气象变量统计", "统计气象变量的最小值、最大值、平均值、中位数和 P90；可按 bbox 裁剪。", "meteorology", ["meteorology", "气象", "statistics"]), MeteorologicalStatsArgs),
         ToolDefinition("meteorological_threshold_area", meteorological_threshold_area, ToolMetadata("气象阈值区", "把满足阈值条件的格点转成 GeoJSON 面，用于降雨量、温度、风速等范围分析。", "meteorology", ["meteorology", "气象", "threshold", "geojson"]), MeteorologicalThresholdArgs),
         ToolDefinition("meteorological_contours", meteorological_contours, ToolMetadata("气象等值线", "把连续气象变量转成 GeoJSON 等值线。levels 为空时自动生成。", "meteorology", ["meteorology", "气象", "contour", "geojson"]), MeteorologicalContoursArgs),
-        ToolDefinition("generate_meteorological_report", generate_meteorological_report, ToolMetadata("生成气象 DOCX 报告", "基于气象数据集 metadata、统计摘要和大模型综合解读生成正式 DOCX 报告。必须由大模型先写 llm_interpretation。", "meteorology", ["meteorology", "气象", "docx", "report"]), GenerateMeteorologicalReportArgs),
+        ToolDefinition("generate_meteorological_report", generate_meteorological_report, ToolMetadata("生成气象 DOCX 报告", "基于气象数据集 metadata、统计摘要和 interpretation_ref 指向的大模型综合解读生成正式 DOCX 报告。", "meteorology", ["meteorology", "气象", "docx", "report"]), GenerateMeteorologicalReportArgs),
     ]
 
 
 def build_default_registry() -> ToolRegistry:
-    return ToolRegistry(build_default_tool_definitions())
+    registry = ToolRegistry(build_default_tool_definitions())
+    from .nowcast_tools import provider as nowcast_provider
+    from .providers import register_provider_tools
+
+    register_provider_tools(registry, nowcast_provider)
+    return registry
 
 
 def _weather_service(runtime: ToolRuntime):
@@ -1165,12 +1374,191 @@ def _weather_dataset_path(runtime: ToolRuntime, relative_path: str) -> Path:
     return (runtime.store.runtime_root / relative_path).resolve()
 
 
+def _resolve_map_candidate_arg(runtime: ToolRuntime, args: dict[str, Any]) -> dict[str, Any] | None:
+    ref_id = str(args.get("map_candidate_ref") or "").strip()
+    if not ref_id:
+        return None
+    ref = resolve_value_ref(runtime, ref_id, expected_kinds={"meteorological_map_candidate"})
+    if not isinstance(ref.value, dict):
+        raise ValueError(f"地图候选引用内容不合法：{ref_id}")
+    dataset_id = str(ref.value.get("datasetId") or "").strip()
+    variable = str(ref.value.get("variable") or "").strip()
+    if not dataset_id or not variable:
+        raise ValueError(f"地图候选引用缺少 datasetId 或 variable：{ref_id}")
+    return dict(ref.value)
+
+
+def _optional_int_from_mapping(value: dict[str, Any], key: str) -> int | None:
+    raw = value.get(key)
+    if raw is None:
+        return None
+    return int(raw)
+
+
 def _ensure_weather_dataset_parsed(runtime: ToolRuntime, dataset_id: str):
     # Agent 工具懒解析代理。
     #
     # dataset 状态推进由 platform_store.ensure_weather_dataset_parsed 统一负责；
     # 工具只表达“我现在需要这个 dataset 的解析结果”。
     return runtime.store.platform_store.ensure_weather_dataset_parsed(dataset_id, _weather_service(runtime))
+
+
+def _resolve_interpretation_datasets(runtime: ToolRuntime, args: dict[str, Any]) -> list[Any]:
+    single_id = str(args.get("dataset_id") or "").strip()
+    sequence_ids = [str(item).strip() for item in (args.get("dataset_ids") or []) if str(item).strip()]
+    if single_id and sequence_ids:
+        raise ValueError("NC 解读工具的 dataset_id 和 dataset_ids 只能二选一。")
+    dataset_ids = [single_id] if single_id else sequence_ids
+    if not dataset_ids:
+        raise ValueError("NC 解读工具必须提供 dataset_id 或 dataset_ids。")
+    max_datasets = int(args.get("max_datasets") or 36)
+    if len(dataset_ids) > max_datasets:
+        raise ValueError(f"连续 NC 解读最多支持 {max_datasets} 个数据集，请缩小范围。")
+    seen: set[str] = set()
+    datasets = []
+    for dataset_id in dataset_ids:
+        if dataset_id in seen:
+            continue
+        datasets.append(_ensure_weather_dataset_parsed(runtime, dataset_id))
+        seen.add(dataset_id)
+    return sorted(datasets, key=lambda item: str(getattr(item, "filename", "")))
+
+
+def _resolve_interpretation_variables(runtime: ToolRuntime, args: dict[str, Any]) -> list[str] | None:
+    names = [str(item).strip() for item in (args.get("variables") or []) if str(item).strip()]
+    for ref_id in args.get("variable_refs") or []:
+        ref = resolve_value_ref(runtime, str(ref_id), expected_kinds={"variable"})
+        if str(ref.value).strip():
+            names.append(str(ref.value).strip())
+    if not names:
+        return None
+    unique: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        token = name.casefold()
+        if token in seen:
+            continue
+        seen.add(token)
+        unique.append(name)
+    return unique[:8]
+
+
+def _dataset_to_interpretation_facts(
+    dataset: Any,
+    *,
+    sequence_index: int,
+    requested_variables: list[str] | None,
+) -> dict[str, Any]:
+    metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
+    selected_variables = select_interpretation_variables(metadata, requested=requested_variables, max_variables=8)
+    return {
+        "datasetId": dataset.dataset_id,
+        "filename": dataset.filename,
+        "sequenceIndex": sequence_index,
+        "format": metadata.get("format"),
+        "engine": metadata.get("engine"),
+        "bounds": metadata.get("bounds") or metadata.get("bbox"),
+        "coordinates": metadata.get("coordinates"),
+        "selectedVariables": selected_variables,
+        "warnings": metadata.get("warnings") if isinstance(metadata.get("warnings"), list) else [],
+    }
+
+
+def _collect_interpretation_stats(
+    runtime: ToolRuntime,
+    *,
+    datasets: list[Any],
+    requested_variables: list[str] | None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    service = _weather_service(runtime)
+    for sequence_index, dataset in enumerate(datasets):
+        metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
+        variables = select_interpretation_variables(metadata, requested=requested_variables, max_variables=8)
+        dataset_path = _weather_dataset_path(runtime, dataset.storage_relative_path)
+        for variable in variables:
+            name = variable["name"]
+            row = {
+                "datasetId": dataset.dataset_id,
+                "filename": dataset.filename,
+                "sequenceIndex": sequence_index,
+                "variable": name,
+            }
+            if not variable.get("analysisReady", True):
+                rows.append({**row, "error": "变量不可统计。"})
+                continue
+            try:
+                rows.append({**row, "stats": service.stats(dataset_path, variable=name)})
+            except Exception as exc:
+                rows.append({**row, "error": str(exc) or exc.__class__.__name__})
+    return rows
+
+
+async def _call_meteorological_interpretation_model(runtime: ToolRuntime, facts: dict[str, Any]) -> dict[str, Any]:
+    model_registry = runtime.store.model_registry
+    if model_registry is None:
+        raise ValueError("当前工具运行时没有模型注册表，无法生成 NC 大模型解读。")
+    adapter = model_registry.resolve_provider(runtime.context.model_provider)
+    if not adapter.is_configured():
+        raise ValueError(f"模型 provider '{adapter.provider}' 尚未配置，无法生成 NC 大模型解读。")
+    payload = await adapter.structured(
+        build_interpretation_prompt(facts),
+        schema=INTERPRETATION_SCHEMA,
+        model=runtime.context.model_name or adapter.default_model,
+        temperature=0.1,
+        request_timeout=120,
+    )
+    return normalize_interpretation_payload(payload)
+
+
+def _register_meteorological_interpretation_refs(
+    runtime: ToolRuntime,
+    *,
+    datasets: list[Any],
+    interpretation: dict[str, Any],
+    map_candidates: list[dict[str, Any]],
+) -> list[Any]:
+    store = ToolValueStore(runtime, source_tool="interpret_meteorological_dataset")
+    dataset_ids = [dataset.dataset_id for dataset in datasets]
+    refs: list[Any] = [
+        store.put(
+            kind="llm_interpretation",
+            label=f"NC 气象解读 / {datasets[0].filename}" if len(datasets) == 1 else f"NC 气象序列解读 / {len(datasets)} 个时次",
+            value=interpretation["reportText"],
+            ref_id=make_value_ref_id("llm_interpretation", ",".join(dataset_ids), interpretation["summary"][:80]),
+            metadata={
+                "datasetIds": dataset_ids,
+                "summary": interpretation["summary"],
+                "keyFindings": interpretation["keyFindings"],
+                "riskSignals": interpretation["riskSignals"],
+                "recommendedNextSteps": interpretation["recommendedNextSteps"],
+            },
+        )
+    ]
+    for index, candidate in enumerate(map_candidates, start=1):
+        refs.append(
+            store.put(
+                kind="meteorological_map_candidate",
+                label=str(candidate.get("label") or f"地图候选 {index}"),
+                value=candidate,
+                ref_id=make_value_ref_id(
+                    "meteorological_map_candidate",
+                    candidate.get("datasetId"),
+                    candidate.get("variable"),
+                    candidate.get("timeIndex"),
+                    candidate.get("levelIndex"),
+                    index,
+                ),
+                metadata={
+                    "datasetId": candidate.get("datasetId"),
+                    "variable": candidate.get("variable"),
+                    "timeIndex": candidate.get("timeIndex"),
+                    "levelIndex": candidate.get("levelIndex"),
+                    "reason": candidate.get("reason"),
+                },
+            )
+        )
+    return refs
 
 
 def _require_completed_weather_dataset(runtime: ToolRuntime, dataset_id: str):
@@ -1230,6 +1618,15 @@ def _resolve_optional_level_index_value_arg(runtime: ToolRuntime, args: dict[str
     return int(value)
 
 
+def _resolve_optional_area_and_bbox(runtime: ToolRuntime, args: dict[str, Any]) -> tuple[dict[str, Any] | None, list[float] | None, str | None]:
+    area_ref = str(args.get("area_ref") or "").strip() or None
+    area = _resolve_area_collection_ref(runtime, area_ref) if area_ref else None
+    bbox = _resolve_optional_bbox_value_arg(runtime, args, value_key="bbox", ref_key="bbox_ref")
+    if bbox is None and area is not None:
+        bbox = runtime.store.spatial_service.geometry_bounds(area)
+    return area, bbox, area_ref
+
+
 def _resolve_optional_bbox_value_arg(runtime: ToolRuntime, args: dict[str, Any], *, value_key: str, ref_key: str) -> list[float] | None:
     value = _resolve_tool_value_arg(runtime, args, value_key=value_key, ref_key=ref_key, expected_kinds={"bbox"})
     if value is None:
@@ -1283,6 +1680,143 @@ def _format_duration(minutes: float) -> str:
     mins = int(minutes % 60)
     return f"{hours}小时{mins}分钟" if mins else f"{hours}小时"
 
+async def _persist_analysis_area(
+    runtime: ToolRuntime,
+    *,
+    alias: str,
+    name: str,
+    collection: dict[str, Any],
+    source_tool: str,
+    source: dict[str, Any],
+) -> tuple[ArtifactRef, Any]:
+    normalized = _normalize_area_collection(collection)
+    artifact = await _persist_collection(runtime, alias=alias, name=name, collection=normalized, is_intermediate=True)
+    runtime.state.latest_area_ref = alias
+    bbox = runtime.store.spatial_service.geometry_bounds(normalized)
+    if bbox is None:
+        raise ValueError("分析区域没有可用 bounds。")
+    bbox_ref = ToolValueStore(runtime, source_tool=source_tool).put(
+        kind="bbox",
+        label=f"{name} 范围",
+        value=bbox,
+        ref_id=make_value_ref_id("bbox", alias, *bbox),
+        metadata={"areaRef": alias, "artifactId": artifact.artifact_id, **source},
+    )
+    return artifact, bbox_ref
+
+
+def _area_tool_result(
+    *,
+    message: str,
+    artifact: ArtifactRef,
+    collection: dict[str, Any],
+    area_ref: str,
+    bbox_ref: Any,
+    source: str,
+    provenance: dict[str, Any],
+) -> ToolExecutionResult:
+    result = _result_with_collection_metadata(
+        message=message,
+        artifact=artifact,
+        collection=collection,
+        source=source,
+        provenance={**provenance, "areaRef": area_ref, "bboxRef": bbox_ref.ref_id},
+    )
+    result.payload = {
+        **result.payload,
+        "areaRef": area_ref,
+        "bboxRef": bbox_ref.ref_id,
+        "valueRefs": serialize_value_refs_for_model([bbox_ref]),
+    }
+    result.value_refs = [bbox_ref]
+    return result
+
+
+def _resolve_area_collection_ref(runtime: ToolRuntime, ref: str) -> dict[str, Any]:
+    if not ref.strip():
+        raise ValueError("分析区域引用不能为空。")
+    collection = _resolve_collection_ref(runtime, ref)
+    return _normalize_area_collection(collection)
+
+
+def _normalize_area_collection(collection: dict[str, Any]) -> dict[str, Any]:
+    source = ensure_feature_collection(collection)
+    area_shapes = []
+    features = []
+    for feature in source.get("features", []):
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if not isinstance(geometry, dict):
+            continue
+        geom_type = str(geometry.get("type") or "")
+        if geom_type not in {"Polygon", "MultiPolygon"}:
+            raise ValueError("分析区域必须是 Polygon 或 MultiPolygon 面要素。")
+        geom = shape(geometry)
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+        if geom.is_empty:
+            continue
+        area_shapes.append(geom)
+        features.append({"type": "Feature", "properties": dict(feature.get("properties") or {}), "geometry": mapping(geom)})
+    if not area_shapes:
+        raise ValueError("分析区域没有可用面要素。")
+    merged = unary_union(area_shapes)
+    if merged.is_empty:
+        raise ValueError("分析区域融合后为空。")
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _bbox_to_feature_collection(bbox: list[float]) -> dict[str, Any]:
+    west, south, east, north = [float(item) for item in bbox]
+    if west >= east or south >= north:
+        raise ValueError("bbox 必须满足 west < east 且 south < north。")
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"kind": "bbox_aoi"},
+                "geometry": mapping(box(west, south, east, north)),
+            }
+        ],
+    }
+
+
+async def _download_remote_geojson_area(url: str) -> dict[str, Any]:
+    import httpx
+
+    _validate_public_http_url(url)
+    async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        content_length = response.headers.get("content-length")
+        if content_length and int(content_length) > 10 * 1024 * 1024:
+            raise ValueError("远程 GeoJSON 超过 10MB 上限。")
+        if len(response.content) > 10 * 1024 * 1024:
+            raise ValueError("远程 GeoJSON 超过 10MB 上限。")
+    payload = json.loads(response.content.decode("utf-8"))
+    return _normalize_area_collection(ensure_feature_collection(payload))
+
+
+def _validate_public_http_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("远程 GeoJSON URL 仅支持 http/https。")
+    if parsed.username or parsed.password:
+        raise ValueError("远程 GeoJSON URL 不允许携带用户名或密码。")
+    host = parsed.hostname
+    if host.endswith(".local"):
+        raise ValueError("远程 GeoJSON URL 不允许访问本地域名。")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError(f"远程 GeoJSON URL 主机无法解析：{host}") from exc
+    for info in infos:
+        address = info[4][0]
+        ip = ipaddress.ip_address(address)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            raise ValueError("远程 GeoJSON URL 不允许访问内网、本机或保留地址。")
+
+
 def _resolve_collection_ref(runtime: ToolRuntime, ref: str) -> dict[str, Any]:
     # 统一空间引用解析。
     #
@@ -1296,6 +1830,7 @@ def _resolve_collection_ref(runtime: ToolRuntime, ref: str) -> dict[str, Any]:
         geojson = _value_ref_to_feature_collection(runtime, ref)
         if geojson is not None:
             return geojson
+        raise ValueError(f"工具值引用不能作为空间集合使用：{ref}")
     return runtime.store.layer_repository.get_layer_collection(ref)
 
 
@@ -1305,10 +1840,7 @@ def _value_ref_to_feature_collection(runtime: ToolRuntime, ref: str) -> dict[str
     坐标 → Point，bbox → Polygon。其他 kind 返回 None，
     由调用方回退到 layer_repository。
     """
-    try:
-        vr = resolve_value_ref(runtime, ref)
-    except Exception:
-        return None
+    vr = resolve_value_ref(runtime, ref)
     if vr.kind == "coordinate":
         val = vr.value
         if isinstance(val, dict):

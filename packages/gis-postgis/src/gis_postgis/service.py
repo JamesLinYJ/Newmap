@@ -106,13 +106,7 @@ class SpatialAnalysisService:
         collection = self.layer_repository.load_layer_collection(layer_key, area_name=area_name, boundary=None)
         if not boundary or not boundary.get("features"):
             return collection
-        boundary_geometry = unary_union([shape_from_feature(feature) for feature in boundary["features"]])
-        features = [
-            feature
-            for feature in collection.get("features", [])
-            if shape_from_feature(feature).intersects(boundary_geometry)
-        ]
-        return {"type": "FeatureCollection", "features": features}
+        return self.clip(collection, boundary)
 
     def search_external_pois(
         self,

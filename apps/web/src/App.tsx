@@ -133,7 +133,7 @@ const SAMPLE_QUERIES = [
   '帮我查一下 Springfield 在哪里',
 ] as const
 
-const LAYER_FILE_SUFFIXES = new Set(['.geojson', '.json', '.gpkg'])
+const LAYER_FILE_SUFFIXES = new Set(['.geojson', '.json', '.gpkg', '.zip'])
 const WEATHER_FILE_SUFFIXES = new Set(['.nc', '.nc4', '.tif', '.tiff', '.grib', '.grb', '.grb2', '.h5', '.hdf5', '.bz2'])
 
 function formatUiError(error: unknown, defaultMessage: string) {
@@ -913,7 +913,7 @@ function App() {
       const uploadable = files.filter((file) => classifyUploadFile(file))
       const skippedCount = files.length - uploadable.length
       if (!uploadable.length) {
-        setUiError('没有找到可上传的 GeoJSON、GPKG、NetCDF、GRIB、GeoTIFF、HDF5 或雷达 bz2 文件。')
+        setUiError('没有找到可上传的 GeoJSON、GPKG、ZIP Shapefile、NetCDF、GRIB、GeoTIFF、HDF5 或雷达 bz2 文件。')
         return
       }
 

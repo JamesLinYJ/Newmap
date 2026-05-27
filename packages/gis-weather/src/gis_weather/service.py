@@ -23,10 +23,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from shapely.geometry import LineString, mapping, box
+from shapely import intersects_xy
+from shapely.geometry import LineString, mapping, box, shape
 from shapely.ops import unary_union
 
 from .radar import decode_radar_bz2, radar_product_to_grid
+from .readers import GridQuery, GridSlice, WeatherDatasetIndex, WeatherReaderFacade
 from .report import write_weather_report_docx
 
 SUPPORTED_WEATHER_SUFFIXES = {".nc", ".nc4", ".tif", ".tiff", ".grib", ".grb", ".grb2", ".h5", ".hdf5", ".bz2"}
@@ -55,6 +57,19 @@ class WeatherGrid:
 
 
 class WeatherDataService:
+    def __init__(self, *, reader_facade: WeatherReaderFacade | None = None):
+        # 统一 reader 门面。
+        #
+        # 新能力优先走 GridQuery/GridSlice；旧 API 继续保持返回形态兼容，
+        # 让短临和普通气象分析共享同一套读取抽象。
+        self.reader_facade = reader_facade or WeatherReaderFacade()
+
+    def inspect_index(self, path: Path, *, filename: str | None = None) -> WeatherDatasetIndex:
+        return self.reader_facade.inspect(path, filename=filename)
+
+    def read_grid_slice(self, path: Path, query: GridQuery) -> GridSlice:
+        return self.reader_facade.read_slice(path, query)
+
     def inspect(self, path: Path, *, filename: str | None = None) -> dict[str, Any]:
         # 文件画像入口。
         #
@@ -87,13 +102,20 @@ class WeatherDataService:
         variable: str | None = None,
         time_index: int | None = None,
         level_index: int | None = None,
+        bbox: list[float] | None = None,
+        area: dict[str, Any] | None = None,
         max_size: int = 1024,
     ) -> dict[str, Any]:
         grid = self._read_map_grid(path, variable=variable, time_index=time_index, level_index=level_index, max_size=max_size)
         if not grid.bounds:
             raise ValueError("该气象变量没有可用地理范围，无法渲染到地图。")
-        data, lat, lon = _downsample_grid_for_render(grid.data, grid.lat, grid.lon, max_size=max_size)
-        data, bounds = _orient_grid_for_map(data, lat, lon, grid.bounds)
+        data, lat, lon = _crop_grid_with_coords_by_bbox(grid.data, grid.lat, grid.lon, bbox)
+        data = _mask_grid_to_area(data, lat, lon, area)
+        data, lat, lon = _downsample_grid_for_render(data, lat, lon, max_size=max_size)
+        bounds = _bounds_from_coords(lat, lon) or grid.bounds
+        data, bounds = _orient_grid_for_map(data, lat, lon, bounds)
+        if _finite_range(data) is None:
+            raise ValueError("分析区域与该气象变量没有重叠像元，无法渲染地图。")
         image = _colorize_grid(data)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         image.save(output_path)
@@ -121,9 +143,11 @@ class WeatherDataService:
         time_index: int | None = None,
         level_index: int | None = None,
         bbox: list[float] | None = None,
+        area: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         grid = self.read_grid(path, variable=variable, time_index=time_index, level_index=level_index)
-        data, _lat, _lon = _crop_grid_with_coords_by_bbox(grid.data, grid.lat, grid.lon, bbox)
+        data, lat, lon = _crop_grid_with_coords_by_bbox(grid.data, grid.lat, grid.lon, bbox)
+        data = _mask_grid_to_area(data, lat, lon, area)
         values = _finite_values(data)
         if values.size == 0:
             return {
@@ -159,10 +183,12 @@ class WeatherDataService:
         time_index: int | None = None,
         level_index: int | None = None,
         bbox: list[float] | None = None,
+        area: dict[str, Any] | None = None,
         max_cells: int = 20000,
     ) -> dict[str, Any]:
         grid = self.read_grid(path, variable=variable, time_index=time_index, level_index=level_index)
         data, cropped_lat, cropped_lon = _crop_grid_with_coords_by_bbox(grid.data, grid.lat, grid.lon, bbox)
+        data = _mask_grid_to_area(data, cropped_lat, cropped_lon, area)
         lat, lon = _require_1d_lat_lon_values(data, cropped_lat, cropped_lon)
         mask = _compare(data, threshold, operator)
         selected_count = int(_np().count_nonzero(mask))
@@ -180,6 +206,8 @@ class WeatherDataService:
             west, east = sorted((float(lon_edges[col]), float(lon_edges[col + 1])))
             polygons.append(box(west, south, east, north))
         merged = unary_union(polygons)
+        if area is not None:
+            merged = merged.intersection(_area_union(area))
         if merged.is_empty:
             return {"type": "FeatureCollection", "features": []}
         return {
@@ -210,10 +238,13 @@ class WeatherDataService:
         time_index: int | None = None,
         level_index: int | None = None,
         bbox: list[float] | None = None,
+        area: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         contourpy = _contourpy()
         grid = self.read_grid(path, variable=variable, time_index=time_index, level_index=level_index)
         data, cropped_lat, cropped_lon = _crop_grid_with_coords_by_bbox(grid.data, grid.lat, grid.lon, bbox)
+        area_geom = _area_union(area) if area is not None else None
+        data = _mask_grid_to_area(data, cropped_lat, cropped_lon, area)
         lat, lon = _require_1d_lat_lon_values(data, cropped_lat, cropped_lon)
         data, lat, lon = _orient_grid_for_contours(data, lat, lon)
         finite_range = _finite_range(data)
@@ -233,20 +264,21 @@ class WeatherDataService:
                 if len(line) < 2:
                     continue
                 geometry = LineString([(float(x), float(y)) for x, y in line])
+                if area_geom is not None:
+                    geometry = geometry.intersection(area_geom)
                 if geometry.is_empty:
                     continue
-                features.append(
-                    {
-                        "type": "Feature",
-                        "properties": {
+                features.extend(
+                    _geometry_to_features(
+                        geometry,
+                        properties={
                             "variable": grid.variable,
                             "unit": grid.unit,
                             "level": float(level),
                             "time_value": grid.time_value,
                             "level_value": grid.level_value,
                         },
-                        "geometry": mapping(geometry),
-                    }
+                    )
                 )
         return {"type": "FeatureCollection", "features": features}
 
@@ -1200,6 +1232,57 @@ def _finite_values(data: Any) -> Any:
     np = _np()
     values = np.asarray(data, dtype="float64")
     return values[np.isfinite(values)]
+
+
+def _mask_grid_to_area(data: Any, lat: Any | None, lon: Any | None, area: dict[str, Any] | None) -> Any:
+    if area is None:
+        return data
+    np = _np()
+    values = np.asarray(data, dtype="float64")
+    if values.size == 0:
+        return values
+    if lat is None or lon is None:
+        raise ValueError("按分析区域裁剪气象网格需要经纬度坐标。")
+    lat_array = np.asarray(lat, dtype="float64")
+    lon_array = np.asarray(lon, dtype="float64")
+    if lat_array.ndim == 1 and lon_array.ndim == 1:
+        if values.shape[-2:] != (lat_array.size, lon_array.size):
+            raise ValueError("分析区域裁剪要求网格形状与一维经纬度坐标匹配。")
+        lon_grid, lat_grid = np.meshgrid(lon_array, lat_array)
+    elif lat_array.ndim == 2 and lon_array.ndim == 2 and lat_array.shape == values.shape and lon_array.shape == values.shape:
+        lat_grid, lon_grid = lat_array, lon_array
+    else:
+        raise ValueError("当前仅支持带一维或二维经纬度坐标的气象网格按分析区域裁剪。")
+    area_geom = _area_union(area)
+    mask = intersects_xy(area_geom, lon_grid, lat_grid)
+    return np.where(mask, values, np.nan)
+
+
+def _area_union(area: dict[str, Any]) -> Any:
+    shapes = []
+    for feature in area.get("features", []):
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if not isinstance(geometry, dict):
+            continue
+        geom = shape(geometry)
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+        if not geom.is_empty:
+            shapes.append(geom)
+    if not shapes:
+        raise ValueError("分析区域没有可用面几何。")
+    return unary_union(shapes)
+
+
+def _geometry_to_features(geometry: Any, *, properties: dict[str, Any]) -> list[dict[str, Any]]:
+    if geometry.is_empty:
+        return []
+    if geometry.geom_type in {"LineString", "MultiLineString", "Polygon", "MultiPolygon", "Point", "MultiPoint"}:
+        return [{"type": "Feature", "properties": dict(properties), "geometry": mapping(geometry)}]
+    features: list[dict[str, Any]] = []
+    for item in getattr(geometry, "geoms", []):
+        features.extend(_geometry_to_features(item, properties=properties))
+    return features
 
 
 def _finite_range(data: Any) -> list[float] | None:

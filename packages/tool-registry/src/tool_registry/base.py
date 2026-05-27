@@ -50,6 +50,9 @@ class ToolRuntimeContext:
     thread_id: str | None
     session_id: str
     latest_uploaded_layer_key: str | None
+    latest_weather_dataset_id: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
 
 
 @dataclass
@@ -62,6 +65,7 @@ class ToolRuntimeState:
     latest_value_ref: str | None = None
     latest_coordinate_ref: str | None = None
     latest_bbox_ref: str | None = None
+    latest_area_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,7 @@ class ToolRuntimeStore:
     spatial_service: Any
     runtime_root: Path
     weather_service: Any = None
+    model_registry: Any = None
 
 
 @dataclass

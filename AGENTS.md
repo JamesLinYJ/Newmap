@@ -60,8 +60,10 @@ Do not:
 - `AgentStateModel` is the execution snapshot for a single run.
 - Agent 会话 JSONL 日志是 thread、run、event、context index 的事实源；Postgres 不保存这些运行历史。
 - `event_msg` is the real-time narrative and replay log for UI/SSE.
-- `context_entry` and `compacted` records are the only backend facts used to assemble Agent prompt context.
+- `context_entry` and `compacted` records are persisted session facts; concrete historical facts must enter an Agent turn only through visible compaction or explicit context tools.
 - Do not scan historical runs or event logs inside Agent runtime to improvise prompt context.
+- Do not inject concrete historical context entries into the supervisor prompt by default. The prompt may state that indexed context exists, but the Agent must call `list_context_references` or `search_thread_context` before using previous-turn facts.
+- Thread context should feel like an auditable session log, not hidden omniscience: no auto-revealed previous summaries, artifact names, coordinates, layer keys, or references unless the current user request explicitly asks to continue or reuse them.
 - Do not backfill or silently recover old context payload shapes. If the canonical context schema changes before release, reset development data and `runtime/sessions` explicitly.
 - Guardrail tripwires mean the final result failed a delivery boundary. Surface the concrete guardrail reason and stop at the configured repair limit.
 - Do not hide model, tool, schema, or guardrail failures behind fallback success text, synthetic artifacts, or compatibility hacks.
@@ -74,9 +76,12 @@ Do not:
 - NetCDF / GRIB / HDF5 / GeoTIFF / radar analysis belongs to the meteorological service, not to external desktop GIS runtimes.
 - `xarray` is the source of truth for scientific semantics: variables, dimensions, time, level, units, missing values, and statistics.
 - `rasterio/GDAL` is the raster map execution layer: CRS, bounds, subdatasets, reprojection, downsampling, and PNG rendering.
+- Short-term nowcast logic belongs in `gis_weather.nowcast` domain services and `tool_registry.nowcast_tools` adapters; do not put nowcast algorithms in Agent prompts or registry glue.
 - Inspect metadata must state whether each variable is analysis-ready and map-ready; execution must route from those facts and fail clearly when a backend is unavailable.
 - Tool chains must pass `variable_ref`, `time_index_ref`, `level_index_ref`, `bbox_ref`, and `threshold_ref` rather than raw values when a previous tool produced a reference.
-- DOCX meteorological interpretation reports must include explicit large-model interpretation text (`llm_interpretation`); metadata-only template reports must fail instead of pretending to be model analysis.
+- Nowcast tool chains must pass `sequence_ref`, `nowcast_analysis_ref`, `forecast_text_ref`, and `nowcast_map_candidate_ref`; districts, locations, variables, time steps and movement trends must come from NC data, boundaries, geocoding and spatial statistics.
+- Nowcast text may use a large model for expression, but facts must be deterministic and schema-validated. Missing products, boundaries, locations, model config or invalid model output must fail or request clarification instead of returning a fabricated forecast.
+- DOCX meteorological interpretation reports must consume an explicit large-model interpretation reference (`interpretation_ref`) produced by the meteorological interpretation tool; metadata-only template reports or hand-copied long interpretation text must fail instead of pretending to be model analysis.
 - External desktop-GIS runtime packages, routes, containers, model files, and approval assumptions are not part of this version. Do not reintroduce compatibility code for removed runtimes.
 
 ## Frontend Notes
@@ -113,3 +118,12 @@ For very small utility files, lightweight comments are acceptable if a full head
 - `apps/web` should distinguish transcript derivation, local editing state, and server-derived state so UI does not look like it is inventing progress.
 - `packages/gis-*` and `packages/tool-registry` should document where remote calls are optional, where artifacts are persisted, and which tools are approval-sensitive.
 - `tests/*` should state whether they are pure unit tests, DB-backed tests, or full API lifecycle tests.
+
+## Tool Module Standard
+
+- New tools must enter the platform as explicit in-repo `ToolProvider` modules with a `ToolManifest`; do not hide tools in ad hoc registry side effects.
+- Tool providers are loaded only from explicit allowlists such as `ENABLED_TOOL_PROVIDERS`; installed or merged code is not automatically enabled.
+- Tool handlers should be thin adapters around domain services. Business algorithms belong in domain packages or service modules, not in registry glue.
+- Every tool definition must pass `validate_tool_definition()` before it is exposed to Agent runtime or DebugPage.
+- Tool modules must follow `docs/tool-integration-standard.md`, including naming, parameter metadata, valueRef flow, artifact persistence, provenance, approval and error rules.
+- Different teams may develop tools independently, but merge review must include provider contract tests and descriptor tests so UI, Agent and runtime behavior stay unified.

@@ -86,6 +86,7 @@ class WeatherRenderRequest(BaseModel):
     variable: str | None = None
     time_index: int | None = Field(default=None, alias="timeIndex")
     level_index: int | None = Field(default=None, alias="levelIndex")
+    bbox: list[float] | None = None
     run_id: str | None = Field(default=None, alias="runId")
     result_name: str | None = Field(default=None, alias="resultName")
 

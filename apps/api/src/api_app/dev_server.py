@@ -32,6 +32,7 @@ def _reload_dirs() -> list[str]:
         root / "packages/agent-core/src",
         root / "packages/gis-common/src",
         root / "packages/gis-postgis/src",
+        root / "packages/gis-weather/src",
         root / "packages/model-adapters/src",
         root / "packages/shared-types/src",
         root / "packages/tool-registry/src",

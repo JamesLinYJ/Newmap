@@ -315,6 +315,16 @@ export interface RuntimePoiConfig {
   maxResults: number
 }
 
+export interface RuntimeNowcastConfig {
+  defaultCityName: string
+  forecastHorizonMinutes: number
+  pointBufferMeters: number
+  districtLayerKey?: string | null
+  districtNameField?: string | null
+  rainLevelThresholds: Record<string, number>
+  candidateLimit: number
+}
+
 export interface RuntimePlanningConfig {
   maxPlanRepairRounds: number
   allowTextOnlyDelivery: boolean
@@ -331,6 +341,7 @@ export interface AgentRuntimeConfig {
   context: RuntimeContextConfig
   geosearch: RuntimeGeosearchConfig
   externalPoi: RuntimePoiConfig
+  nowcast: RuntimeNowcastConfig
 }
 
 export interface LoopTraceEntry {

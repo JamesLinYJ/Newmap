@@ -52,7 +52,8 @@ def render_weather_artifact(
     variable: str | None,
     time_index: int | None,
     level_index: int | None,
-    result_name: str | None,
+    bbox: list[float] | None = None,
+    result_name: str | None = None,
 ) -> tuple[ArtifactRef, dict[str, Any]]:
     dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id)
     output_run_id, created_output_run = _ensure_output_run(store, run_id=run_id, session_id=dataset.session_id, title=f"气象热力图：{dataset.filename}")
@@ -64,6 +65,7 @@ def render_weather_artifact(
         variable=variable,
         time_index=time_index,
         level_index=level_index,
+        bbox=bbox,
     )
     artifact = store.save_file_artifact(
         run_id=output_run_id,
@@ -76,6 +78,8 @@ def render_weather_artifact(
             **render_metadata,
             "datasetId": dataset.dataset_id,
             "source": "weather_dataset",
+            "bbox": bbox,
+            "maskApplied": False,
             "imageUrl": f"/api/v1/results/{artifact_id}/file",
         },
     )

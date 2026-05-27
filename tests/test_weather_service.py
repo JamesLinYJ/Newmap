@@ -252,6 +252,54 @@ def test_weather_service_downsamples_large_grid_for_render(tmp_path) -> None:
     assert render["height"] <= 32
 
 
+def test_weather_service_masks_outputs_to_analysis_area(tmp_path) -> None:
+    # AOI 精确裁剪。
+    #
+    # bbox 只用于预裁剪窗口，最终统计、PNG、阈值区和等值线都必须受
+    # Polygon 分析区域约束，不能把矩形范围伪装成真实小区域。
+    path = tmp_path / "aoi.nc"
+    lat = np.array([30.0, 31.0, 32.0])
+    lon = np.array([120.0, 121.0, 122.0])
+    data = np.array([[1.0, 2.0, 3.0], [4.0, 50.0, 6.0], [7.0, 8.0, 9.0]])
+    dataset = xr.Dataset({"rain": (("lat", "lon"), data, {"units": "mm"})}, coords={"lat": lat, "lon": lon})
+    dataset.to_netcdf(path, engine="h5netcdf")
+    area = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {},
+                "geometry": {
+                    "type": "Polygon",
+                "coordinates": [[[120.5, 30.5], [122.5, 30.5], [122.5, 32.5], [120.5, 32.5], [120.5, 30.5]]],
+                },
+            }
+        ],
+    }
+
+    service = WeatherDataService()
+    stats = service.stats(path, variable="rain", bbox=[120.0, 30.0, 122.0, 32.0], area=area)
+    render = service.render_heatmap(path, output_path=tmp_path / "aoi.png", variable="rain", area=area)
+    threshold = service.threshold_geojson(path, variable="rain", threshold=10, area=area)
+    contours = service.contours_geojson(path, variable="rain", levels=[10], area=area)
+
+    assert stats["count"] == 4
+    assert stats["max"] == 50.0
+    assert render["valueRange"] == [6.0, 50.0]
+    assert threshold["features"]
+    assert threshold["features"][0]["properties"]["cell_count"] == 1
+    assert contours["features"]
+    with pytest.raises(ValueError, match="没有重叠像元"):
+        service.render_heatmap(path, output_path=tmp_path / "miss.png", variable="rain", area={
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {},
+                "geometry": {"type": "Polygon", "coordinates": [[[10, 10], [11, 10], [11, 11], [10, 11], [10, 10]]]},
+            }],
+        })
+
+
 def test_weather_service_decodes_radar_bz2_and_derives_outputs(tmp_path) -> None:
     # 合成雷达 bz2 锁定径向原始格式接入。
     #

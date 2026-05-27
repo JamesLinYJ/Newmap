@@ -91,6 +91,9 @@ def _build_tool_runtime(
     thread_id: str | None,
     session_id: str,
     latest_uploaded_layer_key: str | None,
+    latest_weather_dataset_id: str | None = None,
+    model_provider: str | None = None,
+    model_name: str | None = None,
     app,
 ) -> ToolRuntime:
     store = app.state.store
@@ -100,6 +103,9 @@ def _build_tool_runtime(
             thread_id=thread_id,
             session_id=session_id,
             latest_uploaded_layer_key=latest_uploaded_layer_key,
+            latest_weather_dataset_id=latest_weather_dataset_id,
+            model_provider=model_provider,
+            model_name=model_name,
         ),
         state=ToolRuntimeState(
             alias_map=_load_run_alias_map(store, run_id),
@@ -112,6 +118,7 @@ def _build_tool_runtime(
             spatial_service=app.state.spatial_service,
             runtime_root=settings.resolved_runtime_root,
             weather_service=app.state.weather_service,
+            model_registry=app.state.runtime.model_registry,
         ),
     )
 
@@ -155,6 +162,7 @@ async def _execute_tool_request(
     run_id: str,
     session_id: str,
     latest_uploaded_layer_key: str | None,
+    latest_weather_dataset_id: str | None = None,
     app,
 ) -> ToolExecutionResult:
     if payload.tool_kind == "registry":
@@ -164,6 +172,9 @@ async def _execute_tool_request(
             thread_id=run.thread_id,
             session_id=session_id,
             latest_uploaded_layer_key=latest_uploaded_layer_key,
+            latest_weather_dataset_id=latest_weather_dataset_id,
+            model_provider=run.model_provider,
+            model_name=run.model_name,
             app=app,
         )
         return await app.state.tool_registry.execute(payload.tool_name, dict(payload.args), runtime)
@@ -330,6 +341,7 @@ async def start_run(
         session_id=session.id,
         query=request.query,
         latest_uploaded_layer_key=session.latest_uploaded_layer_key,
+        latest_weather_dataset_id=session.latest_weather_dataset_id,
         provider=provider_name,
         model_name=model_name,
         context_factory=lambda **kw: _build_tool_runtime(**kw, app=app),

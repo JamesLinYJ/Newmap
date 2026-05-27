@@ -583,7 +583,7 @@ export function ChatPanel(props: ChatPanelProps) {
                 type="file"
                 hidden
                 multiple
-                accept=".geojson,.json,.gpkg,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
+                accept=".geojson,.json,.gpkg,.zip,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
                 onChange={(event) => {
                   const files = Array.from(event.target.files ?? [])
                   if (files.length) {

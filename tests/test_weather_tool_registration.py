@@ -34,11 +34,18 @@ def test_weather_tools_are_registered_in_registry_and_catalog_descriptors() -> N
         "create_stat_chart",
         "list_meteorological_datasets",
         "inspect_meteorological_dataset",
+        "interpret_meteorological_dataset",
         "render_meteorological_raster",
         "meteorological_stats",
         "meteorological_threshold_area",
         "meteorological_contours",
         "generate_meteorological_report",
+        "create_nowcast_sequence",
+        "inspect_nowcast_sequence",
+        "analyze_nowcast_precipitation",
+        "answer_nowcast_question",
+        "generate_nowcast_forecast_text",
+        "render_nowcast_raster",
     }
 
     assert expected.issubset(set(registry.list_tools()))
@@ -60,16 +67,31 @@ def test_weather_tools_are_registered_in_registry_and_catalog_descriptors() -> N
     assert params["level_index"].data_type == "number"
     assert params["bbox_ref"].data_type == "string"
 
+    render_params = {item.key: item for item in descriptor_by_name["render_meteorological_raster"].parameters}
+    assert render_params["map_candidate_ref"].data_type == "string"
+    assert render_params["dataset_id"].required is False
+
+    interpret_params = {item.key: item for item in descriptor_by_name["interpret_meteorological_dataset"].parameters}
+    assert interpret_params["dataset_id"].required is False
+    assert interpret_params["dataset_ids"].data_type == "json"
+    assert interpret_params["variable_refs"].data_type == "json"
+
     report_params = {item.key: item for item in descriptor_by_name["generate_meteorological_report"].parameters}
     assert report_params["dataset_id"].required is True
-    assert report_params["llm_interpretation"].required is True
-    assert report_params["llm_interpretation"].data_type == "string"
+    assert report_params["interpretation_ref"].required is True
+    assert report_params["interpretation_ref"].data_type == "string"
 
     chart_params = {item.key: item for item in descriptor_by_name["create_stat_chart"].parameters}
     assert descriptor_by_name["create_stat_chart"].group == "visualization"
     assert chart_params["data"].data_type == "json"
     assert chart_params["width"].data_type == "number"
     assert chart_params["height"].data_type == "number"
+
+    nowcast_params = {item.key: item for item in descriptor_by_name["analyze_nowcast_precipitation"].parameters}
+    assert descriptor_by_name["analyze_nowcast_precipitation"].group == "meteorology"
+    assert nowcast_params["sequence_ref"].required is True
+    assert nowcast_params["coordinate_ref"].data_type == "string"
+    assert nowcast_params["bbox_ref"].data_type == "string"
 
 
 def test_default_runtime_config_contains_weather_subagent() -> None:
@@ -80,10 +102,18 @@ def test_default_runtime_config_contains_weather_subagent() -> None:
     weather_agent = next(item for item in config.sub_agents if item.agent_id == "weather_analyst")
 
     assert "render_meteorological_raster" in weather_agent.tools
+    assert "interpret_meteorological_dataset" in weather_agent.tools
     assert "meteorological_stats" in weather_agent.tools
     assert "generate_meteorological_report" in weather_agent.tools
     assert weather_agent.name == "Meteorological Analyst"
     assert weather_agent.role == "气象分析"
+
+    nowcast_agent = next(item for item in config.sub_agents if item.agent_id == "hangzhou_nowcast_analyst")
+    assert "create_nowcast_sequence" in nowcast_agent.tools
+    assert "analyze_nowcast_precipitation" in nowcast_agent.tools
+    assert "answer_nowcast_question" in nowcast_agent.tools
+    assert nowcast_agent.role == "短临降水预报"
+    assert config.nowcast.default_city_name == "杭州市"
 
 
 @pytest.mark.asyncio

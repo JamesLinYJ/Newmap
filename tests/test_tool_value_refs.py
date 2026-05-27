@@ -147,30 +147,113 @@ async def test_meteorological_stats_p90_ref_feeds_threshold_area(tmp_path) -> No
 
     assert p90_ref != second_p90_ref
     assert weather_service.stats_calls == [
-        {"variable": "rain", "time_index": 0, "level_index": 0, "bbox": [110.0, 20.0, 115.0, 25.0]},
-        {"variable": "rain", "time_index": None, "level_index": 0, "bbox": [111.0, 21.0, 112.0, 22.0]},
+        {"variable": "rain", "time_index": 0, "level_index": 0, "bbox": [110.0, 20.0, 115.0, 25.0], "area": None},
+        {"variable": "rain", "time_index": None, "level_index": 0, "bbox": [111.0, 21.0, 112.0, 22.0], "area": None},
     ]
-    assert weather_service.threshold_calls == [{"threshold": 90.0, "variable": "rain", "time_index": 0, "level_index": 0, "bbox": None}]
+    assert weather_service.threshold_calls == [{"threshold": 90.0, "variable": "rain", "time_index": 0, "level_index": 0, "bbox": None, "area": None}]
 
-    with pytest.raises(ValueError, match="大模型解读正文"):
+    with pytest.raises(ValueError, match="工具值引用不存在"):
         await registry.execute(
             "generate_meteorological_report",
             {
                 "dataset_id": "dataset_1",
-                "llm_interpretation": "",
+                "interpretation_ref": "value:missing",
             },
             runtime,
         )
+    interpretation_ref = ToolValueStore(runtime, source_tool="test").put(
+        kind="llm_interpretation",
+        label="测试解读",
+        value="大模型解读：降雨变量已完成统计，P90 可作为阈值区分析依据，建议结合 bbox 与时间片进一步查看强降雨范围。",
+    )
     report = await registry.execute(
         "generate_meteorological_report",
         {
             "dataset_id": "dataset_1",
-            "llm_interpretation": "大模型解读：降雨变量已完成统计，P90 可作为阈值区分析依据，建议结合 bbox 与时间片进一步查看强降雨范围。",
+            "interpretation_ref": interpretation_ref.ref_id,
         },
         runtime,
     )
     assert report.artifact is not None
     assert report.artifact.artifact_type == "docx_report"
+
+
+@pytest.mark.asyncio
+async def test_define_analysis_area_feeds_meteorological_stats(tmp_path) -> None:
+    # AOI 引用链路。
+    #
+    # 面区域保存为 area_ref，bbox 只作为 valueRef 给工具层做窗口优化；
+    # 气象工具必须收到真实 area collection，而不是只收到矩形 bbox。
+    registry = build_default_registry()
+    dataset = WeatherDatasetRecord(
+        dataset_id="dataset_1",
+        session_id="session_test",
+        thread_id="thread_test",
+        filename="rain.nc",
+        status="completed",
+        storage_relative_path="weather/rain.nc",
+        metadata={"variables": [{"name": "rain", "unit": "mm"}]},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    weather_service = _FakeWeatherService()
+    runtime = _build_runtime(
+        tmp_path=tmp_path,
+        platform_store=_FakeMeteorologicalPlatformStore(dataset),
+        layer_repository=_FakeLayerRepository(),
+        spatial_service=_FakeSpatialService(),
+        weather_service=weather_service,
+    )
+
+    area = await registry.execute(
+        "define_analysis_area",
+        {"bbox": [110, 20, 115, 25], "alias": "small_area"},
+        runtime,
+    )
+    bbox_ref = area.value_refs[0].ref_id
+
+    await registry.execute(
+        "meteorological_stats",
+        {
+            "dataset_id": "dataset_1",
+            "variable": "rain",
+            "area_ref": "small_area",
+        },
+        runtime,
+    )
+
+    assert area.payload["areaRef"] == "small_area"
+    assert area.payload["bboxRef"] == bbox_ref
+    assert runtime.state.latest_area_ref == "small_area"
+    assert weather_service.stats_calls[-1]["bbox"] == [110.0, 20.0, 115.0, 25.0]
+    assert weather_service.stats_calls[-1]["area"]["features"][0]["geometry"]["type"] == "Polygon"
+
+
+@pytest.mark.asyncio
+async def test_load_remote_geojson_area_registers_area_refs(monkeypatch, tmp_path) -> None:
+    # 远程 AOI 边界。
+    #
+    # 测试使用假 HTTP 客户端，不访问网络；工具仍要完成 URL 安全校验、
+    # GeoJSON 面验证、area_ref 和 bbox_ref 注册。
+    monkeypatch.setattr("socket.getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("93.184.216.34", 443))])
+    monkeypatch.setattr("httpx.AsyncClient", _FakeGeojsonClient)
+    registry = build_default_registry()
+    runtime = _build_runtime(
+        tmp_path=tmp_path,
+        platform_store=_FakeArtifactPlatformStore(),
+        layer_repository=_FakeLayerRepository(),
+        spatial_service=_FakeSpatialService(),
+    )
+
+    result = await registry.execute(
+        "load_remote_geojson_area",
+        {"url": "https://example.com/aoi.geojson", "alias": "remote_aoi"},
+        runtime,
+    )
+
+    assert result.payload["areaRef"] == "remote_aoi"
+    assert result.value_refs[0].kind == "bbox"
+    assert runtime.state.latest_area_ref == "remote_aoi"
 
 
 @pytest.mark.asyncio
@@ -260,6 +343,9 @@ class _FakeSpatialService:
 
     def geometry_bounds(self, collection: dict[str, object]) -> list[float]:
         return [110.0, 20.0, 115.0, 25.0]
+
+    def clip(self, left: dict[str, object], right: dict[str, object]) -> dict[str, object]:
+        return left
 
 
 class _FakeMeteorologicalPlatformStore:
@@ -351,12 +437,12 @@ class _FakeWeatherService:
         self.stats_calls: list[dict[str, object]] = []
         self.threshold_calls: list[dict[str, object]] = []
 
-    def stats(self, path, *, variable=None, time_index=None, level_index=None, bbox=None):
-        self.stats_calls.append({"variable": variable, "time_index": time_index, "level_index": level_index, "bbox": bbox})
+    def stats(self, path, *, variable=None, time_index=None, level_index=None, bbox=None, area=None):
+        self.stats_calls.append({"variable": variable, "time_index": time_index, "level_index": level_index, "bbox": bbox, "area": area})
         return {"min": 1.0, "max": 100.0, "mean": 40.0, "median": 50.0, "p90": 90.0, "count": 10, "unit": "mm"}
 
-    def threshold_geojson(self, path, *, threshold: float, operator: str, variable=None, time_index=None, level_index=None, bbox=None):
-        self.threshold_calls.append({"threshold": threshold, "variable": variable, "time_index": time_index, "level_index": level_index, "bbox": bbox})
+    def threshold_geojson(self, path, *, threshold: float, operator: str, variable=None, time_index=None, level_index=None, bbox=None, area=None):
+        self.threshold_calls.append({"threshold": threshold, "variable": variable, "time_index": time_index, "level_index": level_index, "bbox": bbox, "area": area})
         return {"type": "FeatureCollection", "features": []}
 
     def generate_report_docx(self, path, *, output_path, filename=None, dataset_id=None, metadata=None, llm_interpretation=""):
@@ -399,6 +485,29 @@ class _FakeRouteResponse:
                 }
             ],
         }
+
+
+class _FakeGeojsonClient:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def get(self, url: str):
+        return _FakeGeojsonResponse()
+
+
+class _FakeGeojsonResponse:
+    headers = {"content-length": "180"}
+    content = b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[110,20],[115,20],[115,25],[110,25],[110,20]]]}}]}'
+
+    def raise_for_status(self):
+        return None
 
 
 class _FakeRunStore:

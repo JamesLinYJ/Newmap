@@ -67,7 +67,8 @@ class OpenAICompatibleAdapter(BaseModelAdapter):
     async def chat(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
         model = kwargs.get("model") or self.default_model
         messages = kwargs.get("messages") or [{"role": "user", "content": prompt}]
-        async with httpx.AsyncClient(timeout=30) as client:
+        request_timeout = kwargs.get("request_timeout", 30)
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}"},

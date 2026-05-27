@@ -8,6 +8,8 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
   "psycopg[binary]>=3.2.0",
+  "pyproj>=3.7.0",
+  "pyshp>=2.3.1",
   "gis-common",
   "shared-types",
 ]

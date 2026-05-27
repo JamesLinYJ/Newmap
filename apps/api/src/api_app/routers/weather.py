@@ -55,6 +55,7 @@ async def upload_weather_dataset(
         storage_relative_path=relative_path,
         metadata={"uploadedFilename": filename, "sizeBytes": target_path.stat().st_size},
     )
+    store.update_session(session_id, latest_weather_dataset_id=dataset_id)
     return {"dataset": dataset, "job": None}
 
 
@@ -93,6 +94,7 @@ async def render_weather_dataset(
             variable=payload.variable,
             time_index=payload.time_index,
             level_index=payload.level_index,
+            bbox=payload.bbox,
             result_name=payload.result_name,
         )
     except ValueError as exc:

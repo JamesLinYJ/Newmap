@@ -1,0 +1,38 @@
+{
+  "sourceDirectory": "/home/james/桌面/202604091955",
+  "crop": {
+    "lat": [
+      220,
+      260
+    ],
+    "lon": [
+      420,
+      470
+    ]
+  },
+  "variables": [
+    "dbz",
+    "QPF",
+    "thunder",
+    "u",
+    "v",
+    "kdp"
+  ],
+  "files": [
+    {
+      "source": "202604091955_202604092000.nc",
+      "fixture": "radar_sequence_00.nc",
+      "sizeBytes": 60648
+    },
+    {
+      "source": "202604091955_202604092030.nc",
+      "fixture": "radar_sequence_01.nc",
+      "sizeBytes": 60648
+    },
+    {
+      "source": "202604091955_202604092255.nc",
+      "fixture": "radar_sequence_02.nc",
+      "sizeBytes": 60648
+    }
+  ]
+}

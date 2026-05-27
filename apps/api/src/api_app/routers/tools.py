@@ -75,6 +75,7 @@ async def run_tool(payload: ToolRunRequest, request: Request, store: PostgresPla
             run_id=run.id,
             session_id=session.id,
             latest_uploaded_layer_key=session.latest_uploaded_layer_key,
+            latest_weather_dataset_id=session.latest_weather_dataset_id,
             app=request.app,
         )
         updated_run = _apply_tool_result_to_run(
