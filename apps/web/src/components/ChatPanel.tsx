@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'framer-motion'
 import { ArrowUp, ChevronDown, FolderUp, LoaderCircle, Pencil, Plus, Settings2, Square, Trash2 } from 'lucide-react'
 import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationState, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
+import { SAMPLES, type DataReferenceSummary } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants } from '../motion'
 import { deriveConversationEntries, type ConversationCommand, type ConversationEntry, type TranscriptEntry } from '../runTranscript'
 import { AppIcon } from './AppIcon'
@@ -57,22 +58,7 @@ interface ChatPanelProps {
 
 type TaskView = 'chat' | 'summary' | 'all'
 type TaskDialog = { mode: 'rename' | 'delete'; task: AgentThreadRecord } | null
-interface DataReferenceSummary {
-  id: string
-  kind: 'layer' | 'weather' | 'artifact'
-  name: string
-  status: string
-  detail: string
-  relativePath?: string
-}
-
 const DIRECTORY_PICKER_PROPS = { webkitdirectory: '', directory: '' } as Record<string, string>
-
-const SAMPLES = [
-  '查询巴黎地铁站 1 公里范围内的医院',
-  '判断我上传的点是否落在柏林行政区内',
-  '查询叫 Springfield 的区域',
-] as const
 
 function errorCardTitle(message?: string) {
   // 错误标题只描述已知事实。

@@ -12,6 +12,12 @@ services:
       API_UPSTREAM: http://api:${API_PORT:-8010}
     ports:
       - "${WEB_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   api:
     build:
@@ -34,7 +40,19 @@ services:
       - ../../runtime:/app/runtime
       - ../../infra/seeds:/app/infra/seeds
     depends_on:
-      - postgis
+      postgis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   worker:
     build:
@@ -49,6 +67,11 @@ services:
       DATABASE_URL: postgresql://geo_agent:geo_agent@postgis:5432/geo_agent
     volumes:
       - ../../runtime:/app/runtime
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   postgis:
     image: postgis/postgis:16-3.5
@@ -60,6 +83,17 @@ services:
     volumes:
       - ../../infra/migrations:/docker-entrypoint-initdb.d
       - postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geo_agent -d geo_agent"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
 
 volumes:
   postgis_data:

@@ -15,4 +15,3 @@ venv/
 *.egg-info/
 runtime/*
 !runtime/.gitkeep
-qgis/published/

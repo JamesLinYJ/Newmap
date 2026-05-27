@@ -19,6 +19,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { Ruler } from 'lucide-react'
 
 import type { ArtifactRef, BasemapDescriptor } from '@geo-agent-platform/shared-types'
+import { DEFAULT_BASEMAP } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildPressMotion } from '../motion'
 import { AppIcon } from './AppIcon'
 
@@ -604,18 +605,6 @@ export function MapCanvas({
       </m.div>
     </m.section>
   )
-}
-
-const DEFAULT_BASEMAP: BasemapDescriptor = {
-  basemapKey: 'osm',
-  name: 'OpenStreetMap',
-  provider: 'osm',
-  kind: 'vector',
-  attribution: '&copy; OpenStreetMap Contributors',
-  tileUrls: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-  labelTileUrls: [],
-  available: true,
-  isDefault: true,
 }
 
 function buildBasemapStyle(basemap?: BasemapDescriptor): StyleSpecification {

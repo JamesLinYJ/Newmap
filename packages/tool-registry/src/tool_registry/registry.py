@@ -310,91 +310,6 @@ class PublishResultGeojsonArgs(ToolArgsModel):
     alias: str | None = Field(None, title="结果别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text"})
 
 
-class InspectMeteorologicalDatasetArgs(ToolArgsModel):
-    dataset_id: str = Field(..., title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-
-
-class RenderMeteorologicalRasterArgs(ToolArgsModel):
-    map_candidate_ref: str | None = Field(None, title="地图候选引用", description="interpret_meteorological_dataset 产出的地图候选 valueRef。", json_schema_extra={"x-ui-source": "text"})
-    dataset_id: str | None = Field(None, title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-    variable_ref: str | None = Field(None, title="变量引用", description="inspect_meteorological_dataset 产出的变量 valueRef。", json_schema_extra={"x-ui-source": "text"})
-    variable: str | None = Field(None, title="变量", description="变量名；为空时自动选择第一个可制图变量。", json_schema_extra={"x-ui-source": "text"})
-    time_index_ref: str | None = Field(None, title="时间片引用", description="inspect_meteorological_dataset 产出的时间片 valueRef。", json_schema_extra={"x-ui-source": "text"})
-    time_index: int | None = Field(None, title="时间序号", description="多时间片数据的时间索引。", ge=0, json_schema_extra={"x-ui-source": "number"})
-    level_index_ref: str | None = Field(None, title="高度/层引用", description="inspect_meteorological_dataset 产出的 level valueRef。", json_schema_extra={"x-ui-source": "text"})
-    level_index: int | None = Field(None, title="高度/层序号", description="多 level 数据的层索引。", ge=0, json_schema_extra={"x-ui-source": "number"})
-    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
-    bbox_ref: str | None = Field(None, title="范围引用", description="bbox valueRef，用于矩形窗口裁剪。", json_schema_extra={"x-ui-source": "text"})
-    bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
-    result_name: str | None = Field(None, title="结果名称", description="生成 raster artifact 的名称。", json_schema_extra={"x-ui-source": "text"})
-
-
-class InterpretMeteorologicalDatasetArgs(ToolArgsModel):
-    dataset_id: str | None = Field(None, title="气象数据集", description="单个气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-    dataset_ids: list[str] | None = Field(None, title="气象数据集序列", description="连续 NC 数据集 id 列表，最多 36 个。", json_schema_extra={"x-ui-source": "json"})
-    variables: list[str] | None = Field(None, title="变量", description="需要重点解读的变量名。", json_schema_extra={"x-ui-source": "json"})
-    variable_refs: list[str] | None = Field(None, title="变量引用", description="inspect_meteorological_dataset 产出的变量 valueRef 列表。", json_schema_extra={"x-ui-source": "json"})
-    focus: str | None = Field(None, title="解读重点", description="用户关心的分析重点，例如强降雨、雷暴风险或风场。", json_schema_extra={"x-ui-source": "text"})
-    max_datasets: int | None = Field(None, title="最大数据集数量", ge=1, le=36, json_schema_extra={"x-ui-source": "number"})
-
-
-class MeteorologicalStatsArgs(ToolArgsModel):
-    dataset_id: str = Field(..., title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-    variable_ref: str | None = Field(None, title="变量引用", json_schema_extra={"x-ui-source": "text"})
-    variable: str | None = Field(None, title="变量", json_schema_extra={"x-ui-source": "text"})
-    time_index_ref: str | None = Field(None, title="时间片引用", json_schema_extra={"x-ui-source": "text"})
-    time_index: int | None = Field(None, title="时间序号", ge=0, json_schema_extra={"x-ui-source": "number"})
-    level_index_ref: str | None = Field(None, title="高度/层引用", json_schema_extra={"x-ui-source": "text"})
-    level_index: int | None = Field(None, title="高度/层序号", ge=0, json_schema_extra={"x-ui-source": "number"})
-    bbox_ref: str | None = Field(None, title="范围引用", description="inspect_meteorological_dataset 产出的 bbox valueRef。", json_schema_extra={"x-ui-source": "text"})
-    bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
-    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
-
-
-class MeteorologicalThresholdArgs(ToolArgsModel):
-    dataset_id: str = Field(..., title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-    threshold: float | None = Field(None, title="阈值", json_schema_extra={"x-ui-source": "number"})
-    threshold_ref: str | None = Field(None, title="阈值引用", description="meteorological_stats 产出的统计量 valueRef。", json_schema_extra={"x-ui-source": "text"})
-    operator: str = Field(">=", title="比较符", description=">= / > / <= / < / ==", json_schema_extra={"x-ui-source": "text"})
-    variable_ref: str | None = Field(None, title="变量引用", json_schema_extra={"x-ui-source": "text"})
-    variable: str | None = Field(None, title="变量", json_schema_extra={"x-ui-source": "text"})
-    time_index_ref: str | None = Field(None, title="时间片引用", json_schema_extra={"x-ui-source": "text"})
-    time_index: int | None = Field(None, title="时间序号", ge=0, json_schema_extra={"x-ui-source": "number"})
-    level_index_ref: str | None = Field(None, title="高度/层引用", json_schema_extra={"x-ui-source": "text"})
-    level_index: int | None = Field(None, title="高度/层序号", ge=0, json_schema_extra={"x-ui-source": "number"})
-    bbox_ref: str | None = Field(None, title="范围引用", json_schema_extra={"x-ui-source": "text"})
-    bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
-    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
-    alias: str | None = Field(None, title="结果别名", json_schema_extra={"x-ui-source": "text"})
-    result_name: str | None = Field(None, title="结果名称", json_schema_extra={"x-ui-source": "text"})
-
-
-class MeteorologicalContoursArgs(ToolArgsModel):
-    dataset_id: str = Field(..., title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-    levels: list[float] | None = Field(None, title="等值线级别", description="为空时自动按数值范围生成。", json_schema_extra={"x-ui-source": "json"})
-    variable_ref: str | None = Field(None, title="变量引用", json_schema_extra={"x-ui-source": "text"})
-    variable: str | None = Field(None, title="变量", json_schema_extra={"x-ui-source": "text"})
-    time_index_ref: str | None = Field(None, title="时间片引用", json_schema_extra={"x-ui-source": "text"})
-    time_index: int | None = Field(None, title="时间序号", ge=0, json_schema_extra={"x-ui-source": "number"})
-    level_index_ref: str | None = Field(None, title="高度/层引用", json_schema_extra={"x-ui-source": "text"})
-    level_index: int | None = Field(None, title="高度/层序号", ge=0, json_schema_extra={"x-ui-source": "number"})
-    bbox_ref: str | None = Field(None, title="范围引用", json_schema_extra={"x-ui-source": "text"})
-    bbox: Any | None = Field(None, title="范围 bbox", description="[west,south,east,north] 或 {\"valueRef\":\"...\"}。", json_schema_extra={"x-ui-source": "json"})
-    area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
-    alias: str | None = Field(None, title="结果别名", json_schema_extra={"x-ui-source": "text"})
-    result_name: str | None = Field(None, title="结果名称", json_schema_extra={"x-ui-source": "text"})
-
-
-class GenerateMeteorologicalReportArgs(ToolArgsModel):
-    dataset_id: str = Field(..., title="气象数据集", description="气象 dataset id。", json_schema_extra={"x-ui-source": "weather-dataset"})
-    interpretation_ref: str = Field(
-        ...,
-        title="解读正文引用",
-        description="interpret_meteorological_dataset 产出的 llm_interpretation valueRef。",
-        json_schema_extra={"x-ui-source": "text"},
-    )
-    result_name: str | None = Field(None, title="结果名称", json_schema_extra={"x-ui-source": "text"})
-
 
 class CreateStatChartArgs(ToolArgsModel):
     title: str = Field(..., title="图表标题", description="展示在图表顶部的标题。", json_schema_extra={"x-ui-source": "text"})
@@ -410,6 +325,17 @@ class CreateStatChartArgs(ToolArgsModel):
 
 
 def build_default_tool_definitions() -> list[ToolDefinition]:
+    # Args models from weather_tools.py (canonical source).
+    from .weather_tools import (
+        GenerateMeteorologicalReportArgs,
+        InspectMeteorologicalDatasetArgs,
+        InterpretMeteorologicalDatasetArgs,
+        MeteorologicalContoursArgs,
+        MeteorologicalStatsArgs,
+        MeteorologicalThresholdArgs,
+        RenderMeteorologicalRasterArgs,
+    )
+
     # 默认工具定义集合。
     #
     # 这里是内建 registry 工具的单一来源，API 调试入口和 Agent runtime

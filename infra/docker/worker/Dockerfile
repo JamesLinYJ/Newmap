@@ -8,7 +8,8 @@ WORKDIR /app
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libeccodes0 \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && adduser --disabled-password --uid 1000 appuser
 
 COPY pyproject.toml README.md ./
 
@@ -31,5 +32,8 @@ COPY infra ./infra
 COPY packages ./packages
 RUN --mount=type=cache,target=/root/.cache/pip \
   python -m pip install --no-build-isolation --no-deps -e .
+
+RUN chown -R 1000:1000 /app
+USER 1000:1000
 
 CMD ["python", "-m", "worker_app.main"]

@@ -13,6 +13,7 @@
 // 负责前端全局状态编排、API 调用、事件订阅、地图与 REPL 面板联动。
 
 import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { DEFAULT_BASEMAP, SAMPLES, type DataReferenceSummary } from './constants'
 import { domAnimation, LazyMotion, m, MotionConfig, useReducedMotion } from 'framer-motion'
 import { Route, Routes, useLocation } from 'react-router-dom'
 
@@ -107,15 +108,6 @@ interface UploadReference {
   detail?: string
 }
 
-interface DataReferenceSummary {
-  id: string
-  kind: 'layer' | 'weather' | 'artifact'
-  name: string
-  status: string
-  detail: string
-  relativePath?: string
-}
-
 const DebugPage = lazy(() => import('./components/DebugPage').then((module) => ({ default: module.DebugPage })))
 const MapCanvas = lazy(() => import('./components/MapCanvas').then((module) => ({ default: module.MapCanvas })))
 
@@ -125,12 +117,6 @@ const SIDEBAR_ITEMS: Array<{ id: SidebarItemId; icon: AppIconName; label: string
   { id: 'sources', icon: 'database', label: '数据源', shortLabel: '数据' },
   { id: 'config', icon: 'settings_account_box', label: '模型配置', shortLabel: '模型' },
   { id: 'export', icon: 'ios_share', label: '导出', shortLabel: '导出' },
-] as const
-
-const SAMPLE_QUERIES = [
-  '巴黎地铁站 1 公里内有哪些医院',
-  '我上传的这些点，哪些在柏林市区里',
-  '帮我查一下 Springfield 在哪里',
 ] as const
 
 const LAYER_FILE_SUFFIXES = new Set(['.geojson', '.json', '.gpkg', '.zip'])
@@ -438,8 +424,8 @@ function App() {
 
   const handleUseTemplate = useCallback(() => {
     // 用轮换而不是随机，确保演示模板在录屏和联调时可复现。
-    const currentIndex = SAMPLE_QUERIES.findIndex((item) => item === query)
-    const nextQuery = SAMPLE_QUERIES[(currentIndex + 1 + SAMPLE_QUERIES.length) % SAMPLE_QUERIES.length]
+    const currentIndex = SAMPLES.findIndex((item) => item === query)
+    const nextQuery = SAMPLES[(currentIndex + 1 + SAMPLES.length) % SAMPLES.length]
     handleSampleSelect(nextQuery)
   }, [handleSampleSelect, query])
 
@@ -461,7 +447,7 @@ function App() {
       if (itemId === 'query') {
         setActiveNav('analysis')
         setPanelMode('summary')
-        setQuery(SAMPLE_QUERIES[0])
+        setQuery(SAMPLES[0])
         focusQueryInput()
         return
       }
@@ -2057,14 +2043,3 @@ function describeRasterMetadata(metadata: Record<string, unknown>) {
   return variable
 }
 
-const DEFAULT_BASEMAP: BasemapDescriptor = {
-  basemapKey: 'osm',
-  name: 'OpenStreetMap',
-  provider: 'osm',
-  kind: 'vector',
-  attribution: '&copy; OpenStreetMap Contributors',
-  tileUrls: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-  labelTileUrls: [],
-  available: true,
-  isDefault: true,
-}

@@ -96,9 +96,13 @@ class MeteorologicalThresholdArgs(ToolArgsModel):
     variable: str | None = Field(None, title="变量名", description="变量名。", json_schema_extra={"x-ui-source": "text"})
     time_index_ref: str | None = Field(None, title="时间片引用", description="时间片 valueRef。", json_schema_extra={"x-ui-source": "text"})
     time_index: int | None = Field(None, title="时间片", description="时间片序号。", json_schema_extra={"x-ui-source": "number"})
+    level_index_ref: str | None = Field(None, title="高度/层引用", description="inspect_meteorological_dataset 产出的 level valueRef。", json_schema_extra={"x-ui-source": "text"})
+    level_index: int | None = Field(None, title="高度/层", description="要统计的高度层序号。", json_schema_extra={"x-ui-source": "number"})
     threshold: float | None = Field(None, title="阈值", description="分析阈值。", json_schema_extra={"x-ui-source": "number"})
     threshold_ref: str | None = Field(None, title="阈值引用", description="statistic valueRef。", json_schema_extra={"x-ui-source": "text"})
     operator: str = Field(">=", title="比较运算符", description=">=, >, <=, <, ==", json_schema_extra={"x-ui-source": "text"})
+    bbox_ref: str | None = Field(None, title="范围引用", description="bbox valueRef。", json_schema_extra={"x-ui-source": "text"})
+    bbox: list[float] | None = Field(None, title="范围 bbox", description="[west,south,east,north]。", json_schema_extra={"x-ui-source": "json"})
     area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
     alias: str | None = Field(None, title="别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text"})
     result_name: str | None = Field(None, title="结果名称", description="结果图层名称。", json_schema_extra={"x-ui-source": "text"})
@@ -110,6 +114,8 @@ class MeteorologicalContoursArgs(ToolArgsModel):
     variable: str | None = Field(None, title="变量名", description="变量名。", json_schema_extra={"x-ui-source": "text"})
     time_index_ref: str | None = Field(None, title="时间片引用", description="时间片 valueRef。", json_schema_extra={"x-ui-source": "text"})
     time_index: int | None = Field(None, title="时间片", description="时间片序号。", json_schema_extra={"x-ui-source": "number"})
+    level_index_ref: str | None = Field(None, title="高度/层引用", description="inspect_meteorological_dataset 产出的 level valueRef。", json_schema_extra={"x-ui-source": "text"})
+    level_index: int | None = Field(None, title="高度/层", description="要统计的高度层序号。", json_schema_extra={"x-ui-source": "number"})
     levels: list[float] | None = Field(None, title="等值线级别", description="等值线值列表。", json_schema_extra={"x-ui-source": "json"})
     area_ref: str | None = Field(None, title="分析区域引用", description="define_analysis_area 产出的 area_ref。", json_schema_extra={"x-ui-source": "collection"})
     alias: str | None = Field(None, title="别名", description="保存到运行态中的引用名称。", json_schema_extra={"x-ui-source": "text"})
@@ -118,7 +124,7 @@ class MeteorologicalContoursArgs(ToolArgsModel):
 
 class GenerateMeteorologicalReportArgs(ToolArgsModel):
     dataset_id: str = Field(..., title="气象数据集", description="数据集 ID。", json_schema_extra={"x-ui-source": "text"})
-    interpretation_ref: str | None = Field(None, title="解读引用", description="interpret_meteorological_dataset 产出的 llm_interpretation valueRef。", json_schema_extra={"x-ui-source": "text"})
+    interpretation_ref: str = Field(..., title="解读引用", description="interpret_meteorological_dataset 产出的 llm_interpretation valueRef。", json_schema_extra={"x-ui-source": "text"})
     result_name: str | None = Field(None, title="报告名称", description="报告文件名。", json_schema_extra={"x-ui-source": "text"})
 
 
@@ -257,6 +263,7 @@ async def meteorological_threshold_area(args: dict[str, Any], runtime: ToolRunti
     dataset = _ensure_weather_dataset_parsed(runtime, str(args["dataset_id"]))
     variable = _resolve_tool_value_arg(runtime, args, value_key="variable", ref_key="variable_ref", expected_kinds={"variable"})
     time_index = _resolve_optional_int_value_arg(runtime, args, value_key="time_index", ref_key="time_index_ref")
+    level_index = _resolve_optional_int_value_arg(runtime, args, value_key="level_index", ref_key="level_index_ref")
     threshold = resolve_numeric_arg(runtime, args, value_key="threshold", ref_key="threshold_ref")
     collection = _weather_service(runtime).threshold_geojson(
         _weather_dataset_path(runtime, dataset.storage_relative_path),
@@ -264,6 +271,7 @@ async def meteorological_threshold_area(args: dict[str, Any], runtime: ToolRunti
         operator=str(args.get("operator") or ">="),
         variable=variable,
         time_index=time_index,
+        level_index=level_index,
     )
     artifact = await _persist_collection(runtime, alias=args.get("alias", "meteorological_threshold"), name=str(args.get("result_name") or f"{dataset.filename} 阈值区"), collection=collection, is_intermediate=True)
     metadata_patch = {"datasetId": dataset.dataset_id, "source": "meteorological_dataset", "operation": "threshold", "threshold": float(threshold), "thresholdRef": args.get("threshold_ref"), "operator": str(args.get("operator") or ">="), "variable": variable, "timeIndex": time_index}
