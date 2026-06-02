@@ -24,6 +24,7 @@ import logging
 import os
 import platform as _platform
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -439,19 +440,22 @@ async def fetch_system_prompt_parts(
     memory_base_dir: Path | None = None,
     project_root: Path | None = None,
     workdir: str = "",
+    tool_descriptions: str = "",
 ) -> SystemPromptParts:
     """统一组装系统 prompt 的所有组成部分。
 
-    这是 prompt_builder 的核心入口。
+    这是 prompt_builder 的核心入口。负责读取默认 prompt、加载记忆系统、
+    构建用户/系统上下文。
 
     Args:
         supervisor_config: supervisor 运行时配置对象。
-        memory_base_dir: 记忆存储基础目录的 Path 对象。
-        project_root: 项目根目录路径。
-        workdir: 当前工作目录路径。
+        memory_base_dir: 记忆存储基础目录。
+        project_root: 项目根目录。
+        workdir: 当前工作目录。
+        tool_descriptions: 工具描述文本（由调用方从 tool_registry 构建后传入）。
 
     Returns:
-        包含所有 prompt 组成部分的 SystemPromptParts 实例。
+        SystemPromptParts 实例，包含所有 prompt 组成部分。
     """
     # ---- 第 1 步：读取默认系统 prompt ----
     default_prompt: str = ""
@@ -502,7 +506,8 @@ async def fetch_system_prompt_parts(
 
     # ---- 第 3 步：构建用户上下文和系统上下文 ----
     os_platform: str = _platform.system().lower() or "linux"
-    date_str: str = ""
+    # 填充当前日期 — 在 prompt 中以 ISO 格式展示
+    date_str: str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     user_context: str = await build_user_context(
         workdir=workdir or str(project_root or Path.cwd()),
@@ -519,7 +524,7 @@ async def fetch_system_prompt_parts(
         memory_index=memory_index_content,
         user_context=user_context,
         system_context=system_context,
-        tool_descriptions="",
+        tool_descriptions=tool_descriptions,
     )
 
 

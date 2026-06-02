@@ -1239,7 +1239,46 @@ class GeoAgentRuntime:
         # 读取 user_context 并 prepend 到第一条用户消息前。
         self._last_prompt_parts = prompt_parts
 
-        all_tools = [self._build_oai_tool(defn.name, runtime, run_id, thread_id) for defn in self.tool_registry.list_definitions()]
+        # ---- 工具加载：并发模型 + 延迟加载 ----
+        # 参考实现将工具分为两类：
+        #   1. 并发安全（读操作/搜索）：可在同一轮并行执行，限制 10 个并发
+        #   2. 串行（写操作/破坏性）：必须逐一执行，防止竞态
+        # 此外，对于超过一定数量（如 20+）的工具集，使用延迟加载——
+        # 核心工具始终加载，其余工具按需通过 ToolSearchTool 发现。
+        all_definitions = list(self.tool_registry.list_definitions())
+        all_tools = [
+            self._build_oai_tool(defn.name, runtime, run_id, thread_id)
+            for defn in all_definitions
+        ]
+
+        # 并发安全标记：读取/搜索类工具标记为 safe，写/删类标记为 serial
+        _CONCURRENCY_SAFE_TAGS = frozenset({
+            "read", "search", "query", "lookup", "inspect", "list",
+            "geocode", "analyze", "statistics", "chart",
+        })
+        for tool in all_tools:
+            definition = next((d for d in all_definitions if d.name == tool.name), None)
+            if definition is not None:
+                tags = getattr(definition, "tags", []) or []
+                tool._concurrency_safe = bool(
+                    _CONCURRENCY_SAFE_TAGS & {t.lower() for t in tags}
+                )
+
+        # 延迟加载：如果工具数超过阈值，将非核心工具设为 deferred
+        # ToolSearchRegistry 由外部在初始化时注册，此处仅标记
+        _DEFERRED_TOOL_THRESHOLD = 20
+        if len(all_tools) > _DEFERRED_TOOL_THRESHOLD:
+            _ALWAYS_LOAD_TAGS = frozenset({
+                "layer", "geocode", "basemap", "weather", "analysis",
+                "ask_user", "exit_plan_mode", "todo",
+            })
+            for tool in all_tools:
+                definition = next((d for d in all_definitions if d.name == tool.name), None)
+                if definition is not None:
+                    tags = getattr(definition, "tags", []) or []
+                    # 未匹配到核心标签的工具标记为可延迟
+                    if not (_ALWAYS_LOAD_TAGS & {t.lower() for t in tags}):
+                        tool._should_defer = True
 
         # --- SUBAGENT_START Hook（子智能体开始创建前触发） ---
         _subagent_hook_manager = self._get_hook_manager()

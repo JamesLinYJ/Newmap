@@ -18,13 +18,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
+import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Awaitable
 
 # ---------------------------------------------------------------------------
 # 常量 — 对应 Agent SDK autoCompact.ts / microCompact.ts
@@ -768,16 +771,29 @@ def snip_compact_if_needed(
 # 5. AutoCompact — Agent SDK autoCompact.ts 自动压缩编排
 # ===================================================================
 
-def _get_context_window_for_model(model: str) -> int:
-    """获取模型的上下文窗口大小。
+# 全局上下文窗口覆盖（通过环境变量或运行时设置）
+# 生产环境应从模型 provider 的 API 响应或用户配置中读取，
+# 而非根据模型名硬编码映射。默认值 200K 适用于大多数现代模型。
+_DEFAULT_CONTEXT_WINDOW: int = int(os.environ.get("GEOAGENT_CONTEXT_WINDOW", "200000"))
 
 
-    默认映射：
-    - claude-3-5-sonnet / claude-3-opus: 200K
-    - claude-3-haiku: 200K
-    - 其他: 200K
+def set_context_window_override(window_tokens: int) -> None:
+    """运行时覆盖上下文窗口大小。在初始化时由 graph.py 调用，
+    从 RuntimeConfig 或 provider 元数据中读取实际窗口大小。
     """
-    return 200_000  # WHY: 默认 200K context window
+    global _DEFAULT_CONTEXT_WINDOW
+    if window_tokens > 0:
+        _DEFAULT_CONTEXT_WINDOW = window_tokens
+
+
+def _get_context_window_for_model(_model: str = "") -> int:
+    """获取当前配置的上下文窗口大小。
+
+    不根据模型名做硬编码映射——上下文窗口从运行时配置读取。
+    可通过 set_context_window_override() 在初始化时设置。
+    回退默认值：200000 tokens。
+    """
+    return _DEFAULT_CONTEXT_WINDOW
 
 
 def _get_max_output_tokens_for_model(model: str) -> int:
@@ -890,36 +906,111 @@ class AutoCompactResult:
     consecutive_failures: int | None = None
 
 
-def _default_summarize_fn(messages: list[MessageDict], model: str) -> str:
-    """默认的摘要生成函数。当模型客户端不可用时使用轻量替代。
+# 用于 autocompact 摘要的默认指令。
+# 要求模型输出结构化摘要：用户意图、已完成的工作、关键发现、待处理事项。
+_COMPACTION_SUMMARY_INSTRUCTIONS = """\
+Below is a conversation that has exceeded the context limit. Please produce a concise summary (at most 500 words) covering:
 
-    在生产代码中会调用 API。此实现使用基于事实的截断摘要。
+1. The user's original request(s) and any clarifications
+2. What tools were called and their key outcomes
+3. Data files, layers, or results that were created/modified
+4. Any decisions, approvals, or pending actions
+5. The current state of the task — what's done and what remains
+
+Use a dense, factual style. Do not re-execute, re-answer, or continue the conversation."""
+
+
+def _build_compact_summary_prompt(messages: list[MessageDict]) -> str:
+    """构建用于压缩摘要的 prompt。将消息列表序列化为模型可读的对话文本，
+    拼接摘要指令后返回。
     """
-    # WHY: 轻量替代方案 — 提取关键信息作为"摘要"
-    total = estimate_messages_tokens(messages)
+    # 只取最近的消息（保留头部用于上下文感知 + 尾部用于最近状态）
+    head_count = min(6, len(messages))
+    tail_count = min(12, len(messages) - head_count)
+    selected = messages[:head_count] + messages[-(tail_count):] if tail_count > 0 else messages[:head_count]
 
-    # 提取各角色消息数
-    user_count = sum(1 for m in messages if m.get("role") == "user")
-    assistant_count = sum(1 for m in messages if m.get("role") == "assistant")
-
-    # 提取工具调用信息
-    tool_calls = 0
-    file_ops = 0
-    for msg in messages:
-        content = msg.get("content")
+    lines: list[str] = []
+    for msg in selected:
+        role = msg.get("role", "?")
+        content = msg.get("content", "")
+        # 处理多模态 content 列表
         if isinstance(content, list):
+            parts: list[str] = []
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    tool_calls += 1
-                    if block.get("name") in ("file_read", "file_edit", "file_write"):
-                        file_ops += 1
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        parts.append(str(block.get("text", "")))
+                    elif block.get("type") == "tool_use":
+                        parts.append(f"[Tool: {block.get('name', '?')}]")
+                    elif block.get("type") == "tool_result":
+                        txt = str(block.get("content", ""))
+                        parts.append(txt[:200] + ("..." if len(txt) > 200 else ""))
+            content = " ".join(parts)
+        elif not isinstance(content, str):
+            content = str(content)
+        # 截断单条消息
+        if len(content) > 800:
+            content = content[:400] + "\n...\n" + content[-300:]
+        lines.append(f"[{role}] {content}")
 
-    return (
-        f"Conversation summary (auto-compacted): "
-        f"{user_count} user messages, {assistant_count} assistant messages, "
-        f"{tool_calls} tool calls ({file_ops} file operations). "
-        f"Total estimated tokens: {total}."
-    )
+    return "\n\n".join([
+        _COMPACTION_SUMMARY_INSTRUCTIONS,
+        "--- BEGIN CONVERSATION ---",
+        *lines,
+        "--- END CONVERSATION ---",
+    ])
+
+
+async def _async_default_summarize_fn(
+    messages: list[MessageDict],
+    model: str,
+    *,
+    call_model: Callable[[list[MessageDict], str], Awaitable[str]] | None = None,
+) -> str:
+    """异步 LLM 摘要生成函数。用模型调用生成对话压缩摘要。
+
+    如果未提供 call_model，则回退到基于统计的轻量摘要（不调用 API）。
+    生产代码中应当注入真实的模型调用函数。
+
+    Args:
+        messages: 待压缩的消息列表。
+        model: 用于摘要的模型名称。
+        call_model: 异步模型调用函数，签名为 async (messages, model) -> str。
+                    如果为 None，回退到统计摘要。
+    """
+    if call_model is None:
+        # 回退：统计式摘要（不调用 API，快速但不包含语义信息）
+        total = estimate_messages_tokens(messages)
+        user_count = sum(1 for m in messages if m.get("role") == "user")
+        assistant_count = sum(1 for m in messages if m.get("role") == "assistant")
+        tool_count = 0
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                tool_count += sum(
+                    1 for b in content
+                    if isinstance(b, dict) and b.get("type") == "tool_use"
+                )
+        return (
+            f"Conversation summary: {user_count} user messages, "
+            f"{assistant_count} assistant messages, {tool_count} tool calls. "
+            f"Estimated tokens: {total}."
+        )
+
+    # 构建压缩 prompt 并调用模型
+    prompt = _build_compact_summary_prompt(messages)
+    summary_messages: list[MessageDict] = [
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        return await asyncio.wait_for(
+            call_model(summary_messages, model),
+            timeout=60.0,
+        )
+    except asyncio.TimeoutError:
+        return f"Compaction timed out. {len(messages)} messages remain uncompressed."
+    except Exception as exc:
+        raise RuntimeError(f"Compaction summarization failed: {exc}") from exc
 
 
 def build_compaction_boundary_message(
@@ -954,73 +1045,66 @@ def build_compaction_boundary_message(
 
 def autocompact_if_needed(
     messages: list[MessageDict],
-    model: str,
+    model: str = "",
     tracking_state: AutoCompactTrackingState | None = None,
     tool_result_budget: ToolResultBudget | None = None,
     snip_tokens_freed: int = 0,
-    summarize_fn: Callable[[list[MessageDict], str], str] | None = None,
+    summary: str | None = None,
+    attachments: list[MessageDict] | None = None,
 ) -> tuple[list[MessageDict], AutoCompactResult]:
-    """完整的自动压缩编排。
+    """自动压缩编排。当对话 token 超过阈值时执行摘要压缩。
 
-    + query.ts 的主循环压缩部分。
+    此函数是同步的——它负责编纂逻辑（断路器、阈值比较、消息构建），
+    但不调用 LLM。摘要生成由调用方在外部异步完成，通过 summary 参数
+    传入。这样主循环可在 autocompact 前后自由添加异步操作。
 
     流程：
-    1. tokenCountWithEstimation(messages) - snipTokensFreed 得到实际 token
-    2. 与 autocompact threshold 比较
-    3. 断路器检查：连续失败超过 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES 时跳过
-    4. 超限时调用 compactConversation（generate summary via model call）
-    5. 更新 tracking_state
-    6. 注入压缩边界消息（SystemCompactBoundaryMessage）
+    1. 断路器检查 — 连续失败 >= 3 次则跳过
+    2. Token 估算与阈值比较
+    3. 注入预先生成的摘要文本
+    4. 构建压缩消息 — 边界标记 + 摘要 + 附件重建
+    5. 更新追踪状态
 
     Args:
-        messages:          待检查的消息列表。
-        model:             使用的模型名称。
-        tracking_state:    自动压缩追踪状态。
-        tool_result_budget: 工具结果预算（可选）。
-        snip_tokens_freed:  snip 已释放的 token 数。
-        summarize_fn:       摘要生成函数。如果为 None，使用默认轻量实现。
+        messages:         待压缩的消息列表。
+        model:            模型名称（用于计算上下文窗口阈值）。
+        tracking_state:   自动压缩追踪状态（断路器）。
+        tool_result_budget: 工具结果预算（保留接口，当前未使用）。
+        snip_tokens_freed: 本轮 snip 已释放的 token 数。
+        summary:          预先生成的摘要文本。由调用方在外部调用 LLM 异步生成。
+                          如果为 None，生成统计摘要（无模型调用）。
+        attachments:      压缩后需要重建的附件消息列表（文件状态、技能、计划）。
 
     Returns:
-        (压缩后消息列表, 压缩结果元数据)
+        (压缩后消息列表, 压缩结果)
     """
-    if summarize_fn is None:
-        summarize_fn = _default_summarize_fn
-
-    # ---- 步骤 1: 断路器检查 — Agent SDK autoCompact.ts:257-265 ----
+    # ---- 步骤 1: 断路器检查 ----
     if (
         tracking_state is not None
         and tracking_state.consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
     ):
-        return messages, AutoCompactResult(was_compacted=False)
+        return messages, AutoCompactResult(
+            was_compacted=False,
+            consecutive_failures=tracking_state.consecutive_failures,
+        )
 
-    # ---- 步骤 2: 计算实际 token 数 — Agent SDK autoCompact.ts:225 ----
-    token_count = estimate_messages_tokens(messages) - snip_tokens_freed
-    threshold = get_auto_compact_threshold(model)
+    # ---- 步骤 2: Token 估算与阈值比较 ----
+    token_count = estimate_messages_tokens(messages) - max(0, snip_tokens_freed)
+    threshold = get_auto_compact_threshold(model or "default")
 
-    # ---- 步骤 3: 比较阈值 — Agent SDK autoCompact.ts:233-238 ----
-    warning_state = calculate_token_warning_state(token_count, model)
+    warning_state = calculate_token_warning_state(token_count, model or "default")
     if not warning_state["isAboveAutoCompactThreshold"]:
         return messages, AutoCompactResult(was_compacted=False)
 
-    # ---- 步骤 4: 执行压缩 — Agent SDK autoCompact.ts:312-321 ----
+    # ---- 步骤 3: 摘要生成（由调用方在外部异步完成） ----
     pre_compact_count = estimate_messages_tokens(messages)
 
-    try:
-        # 调用摘要生成函数（生产代码中为模型调用）
-        summary = summarize_fn(messages, model)
-    except Exception:
-        prev_failures = tracking_state.consecutive_failures if tracking_state else 0
-        next_failures = prev_failures + 1
-        return messages, AutoCompactResult(
-            was_compacted=False,
-            consecutive_failures=next_failures,
-        )
+    if summary is None:
+        # 回退：统计摘要（不含语义信息，但保证可用）
+        summary = f"Compacted {len(messages)} messages, ~{pre_compact_count} tokens."
 
-    # ---- 步骤 5: 构建压缩结果 — Agent SDK compact.ts:598-624 ----
-    boundary_marker = build_compaction_boundary_message(
-        level="auto",
-        summary=summary,
-    )
+    # ---- 步骤 4: 构建压缩后消息列表 ----
+    boundary_marker = build_compaction_boundary_message(level="auto", summary=summary)
 
     summary_message: MessageDict = {
         "role": "user",
@@ -1031,13 +1115,16 @@ def autocompact_if_needed(
         "uuid": uuid.uuid4().hex,
     }
 
-    # ---- 步骤 6: 构建压缩后的消息列表 ----
     compacted_messages: list[MessageDict] = [
         boundary_marker,
         summary_message,
     ]
 
-    # ---- 步骤 7: 更新追踪状态 — Agent SDK query.ts:521-526 ----
+    # ---- 步骤 5: 附件重建 — 压缩后重挂文件状态、技能、计划 ----
+    if attachments:
+        compacted_messages.extend(attachments)
+
+    # ---- 步骤 6: 更新追踪状态 ----
     if tracking_state is not None:
         tracking_state.compacted = True
         tracking_state.turn_id = uuid.uuid4().hex
@@ -1320,18 +1407,25 @@ class AgentContextManager:
         self,
         messages: list[MessageDict],
         snip_tokens_freed: int = 0,
-        summarize_fn: Callable[[list[MessageDict], str], str] | None = None,
+        summary: str | None = None,
+        attachments: list[MessageDict] | None = None,
     ) -> tuple[list[MessageDict], AutoCompactResult]:
-        """执行自动压缩。
+        """执行自动压缩。摘要由调用方在外部异步生成后传入。
 
+        Args:
+            messages:         待压缩的消息列表。
+            snip_tokens_freed: 本轮 snip 已释放的 token 数。
+            summary:          预先生成的摘要文本（LLM 生成或统计回退）。
+            attachments:      压缩后重建的附件消息列表。
         """
         return autocompact_if_needed(
             messages,
-            "default",
+            model=getattr(self, "_model", "default"),
             tracking_state=self.tracking_state,
             tool_result_budget=self.tool_result_budget,
             snip_tokens_freed=snip_tokens_freed,
-            summarize_fn=summarize_fn,
+            summary=summary,
+            attachments=attachments,
         )
 
     def run_reactive_compact(
@@ -1359,23 +1453,22 @@ class AgentContextManager:
         self,
         messages: list[MessageDict],
         query_source: str | None = None,
-        summarize_fn: Callable[[list[MessageDict], str], str] | None = None,
+        summary: str | None = None,
+        attachments: list[MessageDict] | None = None,
     ) -> tuple[list[MessageDict], dict[str, Any]]:
-        """执行完整的压缩管道。
+        """执行完整压缩管道：Snip → Micro → Auto。
 
-        1. SnipCompact (if applicable)
-        2. Microcompact
-        3. AutoCompact
-
-        此方法按顺序执行所有压缩策略，每一步的输出作为下一步的输入。
+        三步按顺序执行，每步输出作为下一步输入。
+        摘要生成由调用方在外部异步完成，通过 summary 参数传入。
 
         Args:
-            messages:     待压缩的消息列表。
+            messages:    待压缩的消息列表。
             query_source: 查询来源标识。
-            summarize_fn: 摘要生成函数。
+            summary:     预生成的摘要文本。
+            attachments:  压缩后重建的附件消息列表。
 
         Returns:
-            (压缩后的消息列表, 包含各步骤元数据的字典)
+            (压缩后的消息列表, 各步骤元数据字典)
         """
         pipeline_metadata: dict[str, Any] = {
             "snip": None,
@@ -1405,11 +1498,12 @@ class AgentContextManager:
             "cleared_tool_ids": micro_result.cleared_tool_ids,
         }
 
-        # 步骤 3: AutoCompact — Agent SDK query.ts:453-467
+        # 步骤 3: AutoCompact — 注入预生成的摘要文本
         current_messages, auto_result = self.run_autocompact(
             current_messages,
             snip_tokens_freed=snip_result.tokens_freed,
-            summarize_fn=summarize_fn,
+            summary=summary,
+            attachments=attachments,
         )
         pipeline_metadata["autocompact"] = {
             "was_compacted": auto_result.was_compacted,
