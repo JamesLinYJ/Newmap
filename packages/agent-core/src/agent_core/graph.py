@@ -83,6 +83,7 @@ from .session_transcript import EVENT_ASSISTANT, EVENT_TOOL_RESULT, EVENT_USER_I
 from .skills import SkillManager, SkillFrontmatter
 from .supervisor_config import LOOP_PHASES, build_default_runtime_config, merge_custom_agent_configs
 from .token_budget import BudgetTracker, BudgetStatus
+from .tool_search import ToolSearchRegistry
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
@@ -351,6 +352,12 @@ class GeoAgentRuntime:
         # Session Transcript — 懒加载，首次使用 SessionTranscript 时初始化
         self._session_transcript: SessionTranscript | None = None
         # 每次 run 独立创建 store/checkpointer，避免并发 run 共享可变状态
+        # 工具搜索注册表 — 用于延迟加载（工具数 > 20 时自动启用）
+        self._tool_search_registry = ToolSearchRegistry()
+        # 初始化时注册所有工具定义，供后续批量计算延迟加载标记
+        for defn in tool_registry.list_definitions():
+            self._tool_search_registry.register_from_definition(defn)
+        self._tool_search_registry.compute_deferred_flags()
 
     # ------------------------------------------------------------------
     # Session Transcript 延迟加载
@@ -973,11 +980,33 @@ class GeoAgentRuntime:
                     context_prompt=context_packet.prompt_context,
                 )
                 if conversation_msgs:
+                    # ---- 构建压缩后重建附件 ----
+                    # 压缩会移除大部分历史消息，但以下信息对模型理解当前状态
+                    # 至关重要，必须在压缩后重新挂载：
+                    #   1. 项目上下文（CLAUDE.md / CONTEXT.md）
+                    #   2. 活跃技能描述
+                    #   3. 当前计划模式标记
+                    #   4. 记忆系统上下文
+                    _compact_attachments: list[dict] = []
+                    if context_packet.prompt_context:
+                        _compact_attachments.append({
+                            "role": "user",
+                            "content": context_packet.prompt_context,
+                            "isCompactAttachment": True,
+                        })
+                    if skill_descriptions:
+                        _compact_attachments.append({
+                            "role": "user",
+                            "content": f"## Active Skills\n{skill_descriptions}",
+                            "isCompactAttachment": True,
+                        })
+
                     compacted_msgs, compact_result = autocompact_if_needed(
                         conversation_msgs,
                         model=getattr(runtime_config, "main_loop_model", "default"),
                         tracking_state=auto_compact_state,
                         tool_result_budget=tool_result_budget,
+                        attachments=_compact_attachments or None,
                     )
                     if compact_result.was_compacted:
                         boundary = build_compaction_boundary_message(
@@ -1284,6 +1313,22 @@ class GeoAgentRuntime:
                     # 未匹配到核心标签的工具标记为可延迟
                     if not (_ALWAYS_LOAD_TAGS & {t.lower() for t in tags}):
                         tool._should_defer = True
+
+            # ---- ToolSearchTool: 当工具数超过阈值时暴露搜索工具供 Agent 发现 ----
+            # 延迟加载的工具不会直接被 Agent 看到；Agent 通过调用 tool_search
+            # 按关键词搜索，结果返回匹配的工具名称和描述。
+            # 然后 Agent 使用正常的 tool_use 调用这些工具（SDK 会处理新工具的加载）。
+            _tool_search_fn = self._tool_search_registry.build_search_function()
+            from agents import function_tool
+            _tool_search_decorated = function_tool(
+                _tool_search_fn,
+                name_override="tool_search",
+                description_override=(
+                    "搜索可用工具。当你不确定有哪些工具可用时调用。"
+                    "传入关键词（如 '气象'、'缓冲区'、'图层'），返回匹配的工具列表。"
+                ),
+            )
+            all_tools.append(_tool_search_decorated)
 
         # --- SUBAGENT_START Hook（子智能体开始创建前触发） ---
         _subagent_hook_manager = self._get_hook_manager()
