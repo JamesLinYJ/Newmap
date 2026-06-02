@@ -92,12 +92,6 @@ type MemoryEntry = {
 type TaskView = 'chat' | 'summary' | 'all'
 type TaskDialog = { mode: 'rename' | 'delete'; task: AgentThreadRecord } | null
 type ComposerMode = 'plan' | 'auto'
-type ActiveClarification = {
-  key: string
-  question: string
-  options: ClarificationOption[]
-  allowFreeText: boolean
-}
 const DIRECTORY_PICKER_PROPS = { webkitdirectory: '', directory: '' } as Record<string, string>
 
 const COMPOSER_MODES = [

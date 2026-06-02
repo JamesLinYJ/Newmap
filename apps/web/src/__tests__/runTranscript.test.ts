@@ -85,7 +85,7 @@ function makeRuntimeConfig(overrides?: Partial<AgentRuntimeConfig>): AgentRuntim
     context: { maxChars: 50000, maxArtifactRefs: 20 },
     geosearch: { defaultLimit: 100, maxBufferMeters: 50000 },
     externalPoi: { enabled: false },
-    nowcast: { enabled: false },
+    nowcast: { defaultCityName: "杭州", forecastHorizonMinutes: 60, pointBufferMeters: 5000, rainLevelThresholds: {}, candidateLimit: 5 },
     ...overrides,
   }
 }
@@ -826,7 +826,7 @@ describe('approval and clarification events', () => {
 // ---------------------------------------------------------------------------
 describe('max entries truncation', () => {
   it('respects runtimeConfig.ui.transcriptMaxEntries', () => {
-    const config = makeRuntimeConfig({ ui: { transcriptMaxEntries: 3 } })
+    const config = makeRuntimeConfig({ ui: { transcriptMaxEntries: 3, showInternalReasoningLabels: false, eventGroupingWindowMs: 0 } })
     // Create events that will produce many entries
     const events: RunEvent[] = []
     for (let i = 0; i < 10; i++) {
