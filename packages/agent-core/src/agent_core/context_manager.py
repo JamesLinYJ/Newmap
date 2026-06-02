@@ -3,7 +3,6 @@
  AGENTS.md — context_manager.py
 ===============================================================================
   File:        src/services/compact/context_manager.py
-  Description: 上下文压缩引擎。逐行复刻 Claude Code (CC) 的压缩算法：
                - AutoCompactTrackingState  — 自动压缩追踪 (autoCompact.ts:51-59)
                - ToolResultBudget          — 累积工具结果 Token 预算 (query.ts)
                - Microcompact              — 微观压缩 (microCompact.ts)
@@ -13,7 +12,6 @@
                - CompactionBoundaryMessage — 压缩边界消息
                - AgentContextManager       — 对外公开的 Facade
 
-  Copyright (c) 2024 Anthropic, PBC. 以 "Claude Code" 为参照实现。
   Licensed under the MIT License.
 ===============================================================================
 """
@@ -29,10 +27,9 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 # ---------------------------------------------------------------------------
-# 常量 — 对应 CC autoCompact.ts / microCompact.ts
+# 常量 — 对应 Agent SDK autoCompact.ts / microCompact.ts
 # ---------------------------------------------------------------------------
 
-# CC autoCompact.ts:62-64
 AUTOCOMPACT_BUFFER_TOKENS: int = 13000
 """自动压缩缓冲区：context_window 减去此值得到触发阈值。"""
 
@@ -45,27 +42,21 @@ ERROR_THRESHOLD_BUFFER_TOKENS: int = 20000
 MANUAL_COMPACT_BUFFER_TOKENS: int = 3000
 """手动压缩缓冲区：阻止用户操作的硬限制缓冲区。"""
 
-# CC autoCompact.ts:30
 MAX_OUTPUT_TOKENS_FOR_SUMMARY: int = 20000
-"""压缩摘要最大输出 tokens。CC p99.99 compact summary = 17,387 tokens。"""
+"""压缩摘要最大输出 tokens。p99.99 compact summary = 17,387 tokens。"""
 
-# CC autoCompact.ts:70
 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES: int = 3
 """连续自动压缩失败次数断路器上限。防止死循环重试。"""
 
-# CC microCompact.ts:38
 IMAGE_MAX_TOKEN_SIZE: int = 2000
 """图片/文档类型 block 的近似 token 大小。"""
 
-# CC microCompact.ts:36
 TIME_BASED_MC_CLEARED_MESSAGE: str = "[Old tool result content cleared]"
 """基于时间的微压缩：旧工具结果被替换为此标记字符串。"""
 
-# CC compact.ts:228
 MAX_PTL_RETRIES: int = 3
 """Prompt-Too-Long 最大重试次数。"""
 
-# CC compact.ts:228
 PTL_RETRY_MARKER: str = "[earlier conversation truncated for compaction retry]"
 """PTL 重试时插入的合成 user 消息内容。"""
 
@@ -78,14 +69,13 @@ MessageDict = dict[str, Any]
 
 
 # ===================================================================
-# 1. AutoCompactTrackingState — CC autoCompact.ts:51-59
+# 1. AutoCompactTrackingState — Agent SDK autoCompact.ts:51-59
 # ===================================================================
 
 @dataclass
 class AutoCompactTrackingState:
     """自动压缩追踪状态。每次查询迭代开始前更新。
 
-    CC 对应: autoCompact.ts:51-59
 
     turn_counter: 从压缩后开始计数的轮次（压缩后重置为0）。
     turn_id:      每轮唯一 ID (uuid4 hex)。
@@ -102,7 +92,7 @@ class AutoCompactTrackingState:
 
 
 # ===================================================================
-# 2. ToolResultBudget — CC query.ts toolResultBudget 累积逻辑
+# 2. ToolResultBudget — Agent SDK query.ts toolResultBudget 累积逻辑
 # ===================================================================
 
 @dataclass
@@ -117,7 +107,6 @@ class ConsumeResult:
 class ToolResultBudget:
     """累积工具结果 token 预算。每次工具执行后调用 consume()。
 
-    CC 参照: query.ts toolResultBudget 在 while(true) 主循环中累积追踪。
     预算上限默认 80K tokens。超出后所有后续工具结果均被截断。
 
     max_tokens:  预算上限（默认 80000）。
@@ -132,11 +121,9 @@ class ToolResultBudget:
     def consume(self, result_text: str) -> ConsumeResult:
         """消耗工具结果文本。返回 (可展示文本, 是否被截断)。
 
-        CC 参照: query.ts 中 toolResultBudget 的 accumulate 逻辑。
         如果累积预算已超限，则返回空字符串标记；否则正常返回原文。
         """
-        # WHY: 使用与 CC roughTokenCountEstimation 一致的 4 字符/token 估算
-        # CC tokenEstimation.ts:203-208
+        # WHY: 使用与 Agent SDK roughTokenCountEstimation 一致的 4 字符/token 估算
         result_tokens = max(1, len(result_text) // 4)
 
         if self.truncated:
@@ -158,10 +145,9 @@ class ToolResultBudget:
 
 
 # ===================================================================
-# 3. Microcompact — CC microCompact.ts 核心逻辑
+# 3. Microcompact — Agent SDK microCompact.ts 核心逻辑
 # ===================================================================
 
-# CC microCompact.ts:41-50
 # 只有这些工具的结果会被微压缩
 COMPACTABLE_TOOLS: set[str] = {
     "file_read",
@@ -174,14 +160,12 @@ COMPACTABLE_TOOLS: set[str] = {
     "file_write",
 }
 
-# CC microCompact.ts:36
 _TIME_BASED_CLEARED = TIME_BASED_MC_CLEARED_MESSAGE
 
 
 def rough_token_estimate(content: str, bytes_per_token: int = 4) -> int:
     """估算字符串的 token 数。
 
-    CC 对应: tokenEstimation.ts:203-208
     roughTokenCountEstimation(content, bytesPerToken=4)
     """
     return max(1, len(content) // bytes_per_token)
@@ -190,7 +174,6 @@ def rough_token_estimate(content: str, bytes_per_token: int = 4) -> int:
 def _calculate_tool_result_tokens(block: dict[str, Any]) -> int:
     """计算 tool_result block 的 token 数。
 
-    CC 对应: microCompact.ts:138-157 calculateToolResultTokens()
     """
     content = block.get("content")
     if content is None:
@@ -219,7 +202,6 @@ def _calculate_tool_result_tokens(block: dict[str, Any]) -> int:
 def estimate_messages_tokens(messages: list[MessageDict]) -> int:
     """估算消息列表的 token 总数（保守上估）。
 
-    CC 对应: microCompact.ts:164-205 estimateMessageTokens()
     使用 4/3 padding 因子以保守估算。
     """
     total = 0
@@ -256,7 +238,7 @@ def estimate_messages_tokens(messages: list[MessageDict]) -> int:
                     json.dumps(block, ensure_ascii=False)
                 )
 
-    # WHY: 4/3 padding 因子 — CC microCompact.ts:204
+    # WHY: 4/3 padding 因子 — Agent SDK microCompact.ts:204
     return math.ceil(total * 4 / 3)
 
 
@@ -264,7 +246,6 @@ def estimate_messages_tokens(messages: list[MessageDict]) -> int:
 class MicrocompactResult:
     """微压缩结果元数据。
 
-    CC 对应: microCompact.ts:215-220 MicrocompactResult
     """
 
     messages: list[MessageDict] = field(default_factory=list)
@@ -275,7 +256,6 @@ class MicrocompactResult:
 def _collect_compactable_tool_ids(messages: list[MessageDict]) -> list[str]:
     """收集所有可压缩的 tool_use ID。
 
-    CC 对应: microCompact.ts:226-241 collectCompactableToolIds()
     """
     ids: list[str] = []
     for msg in messages:
@@ -295,12 +275,10 @@ def _collect_compactable_tool_ids(messages: list[MessageDict]) -> list[str]:
     return ids
 
 
-# CC microCompact.ts 时间基准配置
 @dataclass
 class TimeBasedMCConfig:
     """时间基准微压缩配置。
 
-    CC 对应: timeBasedMCConfig.ts:18-28 TimeBasedMCConfig
     """
     enabled: bool = False
     gap_threshold_minutes: int = 60
@@ -310,7 +288,6 @@ class TimeBasedMCConfig:
 def get_time_based_mc_config() -> TimeBasedMCConfig:
     """获取时间基准微压缩配置。
 
-    CC 对应: timeBasedMCConfig.ts:36-43 getTimeBasedMCConfig()
     在生产代码中，此配置来自 GrowthBook/远程配置。
     此处返回硬编码默认值。
     """
@@ -327,7 +304,6 @@ def _evaluate_time_based_trigger(
 ) -> tuple[int, TimeBasedMCConfig] | None:
     """评估时间基准触发条件。
 
-    CC 对应: microCompact.ts:422-444 evaluateTimeBasedTrigger()
 
     返回 (gap_minutes, config) 当触发条件满足，否则 None。
     """
@@ -380,7 +356,6 @@ def microcompact_messages(
 ) -> tuple[list[MessageDict], MicrocompactResult]:
     """对消息列表执行微观压缩。
 
-    CC 对应: microCompact.ts microcompactMessages() / microcompact 核心逻辑。
 
     只修改 tool 角色的消息（tool_result）。
     对每条 tool_result：
@@ -406,7 +381,6 @@ def microcompact_messages(
         compactable_tools = COMPACTABLE_TOOLS
 
     # ---- 步骤 1: 时间基准触发检查 ----
-    # CC microCompact.ts:261-270
     time_trigger = _evaluate_time_based_trigger(messages, query_source)
     if time_trigger is not None:
         gap_minutes, config = time_trigger
@@ -463,7 +437,7 @@ def microcompact_messages(
             tool_use_id = block.get("tool_use_id", "")
             tool_name = tool_id_to_name.get(tool_use_id, "")
 
-            # (A) 跳过不可压缩的工具 — CC microCompact.ts:41-50
+            # (A) 跳过不可压缩的工具 — Agent SDK microCompact.ts:41-50
             if tool_name not in compactable_tools:
                 new_content.append(block)
                 continue
@@ -471,7 +445,7 @@ def microcompact_messages(
             # (B) 提取 block 文本内容用于预算/截断判断
             block_text = _extract_tool_result_text(block)
 
-            # (C) 预算检查 — CC query.ts toolResultBudget
+            # (C) 预算检查 — Agent SDK query.ts toolResultBudget
             if budget is not None:
                 consume_result = budget.consume(block_text)
                 if consume_result.truncated:
@@ -485,7 +459,7 @@ def microcompact_messages(
                     modified = True
                     continue
 
-            # (D) 对超长 tool_result 执行首尾保留 — CC microcompact 截断模式
+            # (D) 对超长 tool_result 执行首尾保留 — Agent SDK microcompact 截断模式
             # 保留前 1/3 + 后 1/3，中间替换为省略标记
             truncated_block = _truncate_tool_result(block)
             if truncated_block is not block:
@@ -526,7 +500,6 @@ def _extract_tool_result_text(block: dict[str, Any]) -> str:
 def _truncate_tool_result(block: dict[str, Any]) -> dict[str, Any]:
     """对超长 tool_result 执行首尾保留截断。
 
-    CC 微压缩截断模式:
     - 保留 result 的前 1/3 + 后 1/3
     - 中间替换为省略标记
     - 保留 tool_use_id 和 type 不做修改
@@ -577,15 +550,12 @@ def _apply_time_based_microcompact(
 ) -> tuple[list[MessageDict], MicrocompactResult]:
     """执行基于时间的微压缩。
 
-    CC 对应: microCompact.ts:446-530 maybeTimeBasedMicrocompact()
 
     当距离最后一条 assistant 消息的时间间隔超过阈值时，
     将旧的可压缩工具结果内容清除为固定标记。
     """
-    # CC microCompact.ts:456: 收集可压缩的 tool IDs
     compactable_ids = _collect_compactable_tool_ids(messages)
 
-    # CC microCompact.ts:461-463: 保留最近 N 个，清除更旧的
     keep_recent = max(1, config.keep_recent)
     keep_set = set(compactable_ids[-keep_recent:])
     clear_set = [tid for tid in compactable_ids if tid not in keep_set]
@@ -640,14 +610,13 @@ def _apply_time_based_microcompact(
 
 
 # ===================================================================
-# 4. SnipCompact — CC query.ts:396-409 历史剪枝
+# 4. SnipCompact — Agent SDK query.ts:396-409 历史剪枝
 # ===================================================================
 
 @dataclass
 class SnipCompactResult:
     """历史剪枝压缩结果。
 
-    CC 对应: query.ts:396-409 snipCompactIfNeeded 的返回值
 
     messages:        剪枝后的消息列表。
     tokens_freed:    释放的 token 数。
@@ -664,7 +633,6 @@ class SnipCompactResult:
 def _group_messages_by_api_round(messages: list[MessageDict]) -> list[list[MessageDict]]:
     """将消息按 API round 分组。
 
-    CC 对应: grouping.ts:22-63 groupMessagesByApiRound()
 
     每组对应一次 API 往返（assistant → tool_results）。
     边界条件：遇到新的 assistant id 时切分。
@@ -698,7 +666,6 @@ def snip_compact_if_needed(
 ) -> SnipCompactResult:
     """逐轮剪枝：从最旧的轮次开始整轮移除。
 
-    CC 对应: query.ts:396-409 snipCompactIfNeeded
 
     消息按 API round 分组（每组 = assistant → tool_results）。
     从最旧的非系统 round 开始移除整组，
@@ -779,7 +746,7 @@ def snip_compact_if_needed(
     for g in groups_to_keep:
         trimmed_messages.extend(g)
 
-    # 插入边界标记消息 — CC query.ts 插入 isMeta user 消息
+    # 插入边界标记消息 — Agent SDK query.ts 插入 isMeta user 消息
     boundary_message: MessageDict = {
         "role": "user",
         "content": (
@@ -798,13 +765,12 @@ def snip_compact_if_needed(
 
 
 # ===================================================================
-# 5. AutoCompact — CC autoCompact.ts 自动压缩编排
+# 5. AutoCompact — Agent SDK autoCompact.ts 自动压缩编排
 # ===================================================================
 
 def _get_context_window_for_model(model: str) -> int:
     """获取模型的上下文窗口大小。
 
-    CC 对应: utils/context.ts 和 autoCompact.ts:33-49 getEffectiveContextWindowSize()
 
     默认映射：
     - claude-3-5-sonnet / claude-3-opus: 200K
@@ -817,7 +783,6 @@ def _get_context_window_for_model(model: str) -> int:
 def _get_max_output_tokens_for_model(model: str) -> int:
     """获取模型的最大输出 token 数。
 
-    CC 对应: services/api/claude.ts getMaxOutputTokensForModel()
     """
     return 8192  # WHY: 默认输出 token 上限
 
@@ -825,7 +790,6 @@ def _get_max_output_tokens_for_model(model: str) -> int:
 def get_effective_context_window_size(model: str) -> int:
     """获取有效上下文窗口大小（减去摘要输出保留）。
 
-    CC 对应: autoCompact.ts:33-49 getEffectiveContextWindowSize()
 
     返回 context_window_size - max_output_tokens_for_summary
     """
@@ -840,14 +804,12 @@ def get_effective_context_window_size(model: str) -> int:
 def get_auto_compact_threshold(model: str) -> int:
     """计算自动压缩的触发阈值。
 
-    CC 对应: autoCompact.ts:72-91 getAutoCompactThreshold()
 
     threshold = effective_context_window - AUTOCOMPACT_BUFFER_TOKENS
     """
     effective_window = get_effective_context_window_size(model)
     threshold = effective_window - AUTOCOMPACT_BUFFER_TOKENS
 
-    # CC autoCompact.ts:79-88: 环境变量覆盖（测试用）
     # 在 Python 中可通过 os.environ 读取，此处忽略
 
     return threshold
@@ -856,7 +818,6 @@ def get_auto_compact_threshold(model: str) -> int:
 def is_auto_compact_enabled() -> bool:
     """检查自动压缩是否启用。
 
-    CC 对应: autoCompact.ts:147-158 isAutoCompactEnabled()
 
     检查 DISABLE_COMPACT / DISABLE_AUTO_COMPACT 环境变量和用户配置。
     """
@@ -876,7 +837,6 @@ def calculate_token_warning_state(
 ) -> dict[str, Any]:
     """计算 token 警告状态。
 
-    CC 对应: autoCompact.ts:93-145 calculateTokenWarningState()
 
     返回:
         percentLeft:                剩余百分比
@@ -919,7 +879,6 @@ def calculate_token_warning_state(
 class AutoCompactResult:
     """自动压缩结果元数据。
 
-    CC 对应: autoCompact.ts 中 autoCompactIfNeeded 的返回值
     """
 
     was_compacted: bool
@@ -934,7 +893,6 @@ class AutoCompactResult:
 def _default_summarize_fn(messages: list[MessageDict], model: str) -> str:
     """默认的摘要生成函数。当模型客户端不可用时使用轻量替代。
 
-    CC 对应: compact.ts compactConversation() 的模型调用部分。
     在生产代码中会调用 API。此实现使用基于事实的截断摘要。
     """
     # WHY: 轻量替代方案 — 提取关键信息作为"摘要"
@@ -970,7 +928,6 @@ def build_compaction_boundary_message(
 ) -> MessageDict:
     """构建压缩边界消息。
 
-    CC 对应: messages.ts:4530-4555 createCompactBoundaryMessage()
 
     类型: SystemCompactBoundaryMessage
     消息内容告知模型上下文已被压缩，应基于当前可见消息继续。
@@ -1005,7 +962,6 @@ def autocompact_if_needed(
 ) -> tuple[list[MessageDict], AutoCompactResult]:
     """完整的自动压缩编排。
 
-    CC 对应: autoCompact.ts:241-351 autoCompactIfNeeded()
     + query.ts 的主循环压缩部分。
 
     流程：
@@ -1030,30 +986,29 @@ def autocompact_if_needed(
     if summarize_fn is None:
         summarize_fn = _default_summarize_fn
 
-    # ---- 步骤 1: 断路器检查 — CC autoCompact.ts:257-265 ----
+    # ---- 步骤 1: 断路器检查 — Agent SDK autoCompact.ts:257-265 ----
     if (
         tracking_state is not None
         and tracking_state.consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
     ):
         return messages, AutoCompactResult(was_compacted=False)
 
-    # ---- 步骤 2: 计算实际 token 数 — CC autoCompact.ts:225 ----
+    # ---- 步骤 2: 计算实际 token 数 — Agent SDK autoCompact.ts:225 ----
     token_count = estimate_messages_tokens(messages) - snip_tokens_freed
     threshold = get_auto_compact_threshold(model)
 
-    # ---- 步骤 3: 比较阈值 — CC autoCompact.ts:233-238 ----
+    # ---- 步骤 3: 比较阈值 — Agent SDK autoCompact.ts:233-238 ----
     warning_state = calculate_token_warning_state(token_count, model)
     if not warning_state["isAboveAutoCompactThreshold"]:
         return messages, AutoCompactResult(was_compacted=False)
 
-    # ---- 步骤 4: 执行压缩 — CC autoCompact.ts:312-321 ----
+    # ---- 步骤 4: 执行压缩 — Agent SDK autoCompact.ts:312-321 ----
     pre_compact_count = estimate_messages_tokens(messages)
 
     try:
         # 调用摘要生成函数（生产代码中为模型调用）
         summary = summarize_fn(messages, model)
     except Exception:
-        # CC autoCompact.ts:335-348: 失败时递增失败计数
         prev_failures = tracking_state.consecutive_failures if tracking_state else 0
         next_failures = prev_failures + 1
         return messages, AutoCompactResult(
@@ -1061,7 +1016,7 @@ def autocompact_if_needed(
             consecutive_failures=next_failures,
         )
 
-    # ---- 步骤 5: 构建压缩结果 — CC compact.ts:598-624 ----
+    # ---- 步骤 5: 构建压缩结果 — Agent SDK compact.ts:598-624 ----
     boundary_marker = build_compaction_boundary_message(
         level="auto",
         summary=summary,
@@ -1082,7 +1037,7 @@ def autocompact_if_needed(
         summary_message,
     ]
 
-    # ---- 步骤 7: 更新追踪状态 — CC query.ts:521-526 ----
+    # ---- 步骤 7: 更新追踪状态 — Agent SDK query.ts:521-526 ----
     if tracking_state is not None:
         tracking_state.compacted = True
         tracking_state.turn_id = uuid.uuid4().hex
@@ -1119,7 +1074,6 @@ class ReactiveCompactResult:
 def _get_prompt_too_long_token_gap(error_message: str) -> int | None:
     """从 PTL 错误消息中解析需要减少的 token 数。
 
-    CC 对应: services/api/errors.ts getPromptTooLongTokenGap()
     """
     # 尝试匹配类似 "expected X, found Y" 的格式
     import re
@@ -1154,7 +1108,6 @@ def try_reactive_compact(
 ) -> tuple[list[MessageDict], bool]:
     """响应式压缩：当 API 返回 context_length_exceeded 错误时触发。
 
-    CC 对应: compact.ts:243-291 truncateHeadForPTLRetry()
     + query.ts 的 PTL 恢复循环。
 
     流程：
@@ -1187,7 +1140,7 @@ def try_reactive_compact(
     if len(groups) < 2:
         return messages, False
 
-    # 移除前一条 PTL 重试标记 — CC compact.ts:250-255
+    # 移除前一条 PTL 重试标记 — Agent SDK compact.ts:250-255
     stripped = messages
     first_msg = messages[0] if messages else {}
     if (
@@ -1202,7 +1155,7 @@ def try_reactive_compact(
     if len(groups) < 2:
         return messages, False
 
-    # 计算需要移除的组数 — CC compact.ts:260-272
+    # 计算需要移除的组数 — Agent SDK compact.ts:260-272
     if token_gap is not None:
         accumulated = 0
         drop_count = 0
@@ -1212,21 +1165,21 @@ def try_reactive_compact(
             if accumulated >= token_gap:
                 break
     else:
-        # WHY: 无法解析 gap 时，移除 20% 的组 — CC compact.ts:271
+        # WHY: 无法解析 gap 时，移除 20% 的组 — Agent SDK compact.ts:271
         drop_count = max(1, int(len(groups) * 0.2))
 
-    # 保留至少 1 组 — CC compact.ts:275
+    # 保留至少 1 组 — Agent SDK compact.ts:275
     drop_count = min(drop_count, len(groups) - 1)
     if drop_count < 1:
         return messages, False
 
-    # 移除最旧的 drop_count 组 — CC compact.ts:278
+    # 移除最旧的 drop_count 组 — Agent SDK compact.ts:278
     sliced = groups[drop_count:]
     flattened: list[MessageDict] = []
     for g in sliced:
         flattened.extend(g)
 
-    # 如果移除后第一条是 assistant，需要插入合成 user 消息 — CC compact.ts:284-289
+    # 如果移除后第一条是 assistant，需要插入合成 user 消息 — Agent SDK compact.ts:284-289
     if flattened and flattened[0].get("role") == "assistant":
         flattened = [
             {
@@ -1300,7 +1253,6 @@ class AgentContextManager:
     def should_auto_compact(self, messages: list[MessageDict]) -> bool:
         """检查是否需要自动压缩。
 
-        CC 对应: autoCompact.ts:160-239 shouldAutoCompact()
         """
         if not is_auto_compact_enabled():
             return False
@@ -1317,7 +1269,6 @@ class AgentContextManager:
     def get_token_usage_info(self, messages: list[MessageDict]) -> dict[str, Any]:
         """获取 token 使用信息。
 
-        CC 对应: autoCompact.ts calculateTokenWarningState
 
         Returns:
             包含 current_tokens, max_tokens, percent_left, is_above_threshold 等信息。
@@ -1347,7 +1298,6 @@ class AgentContextManager:
     ) -> SnipCompactResult:
         """执行历史剪枝。
 
-        CC 对应: query.ts:396-409 snipCompactIfNeeded
         """
         return snip_compact_if_needed(messages, max_tokens=max_tokens)
 
@@ -1358,7 +1308,6 @@ class AgentContextManager:
     ) -> tuple[list[MessageDict], MicrocompactResult]:
         """执行微观压缩。
 
-        CC 对应: microCompact.ts microcompactMessages()
         """
         return microcompact_messages(
             messages,
@@ -1375,7 +1324,6 @@ class AgentContextManager:
     ) -> tuple[list[MessageDict], AutoCompactResult]:
         """执行自动压缩。
 
-        CC 对应: autoCompact.ts autoCompactIfNeeded()
         """
         return autocompact_if_needed(
             messages,
@@ -1393,7 +1341,6 @@ class AgentContextManager:
     ) -> tuple[list[MessageDict], bool]:
         """执行响应式压缩（PTL 恢复）。
 
-        CC 对应: compact.ts:243-291 truncateHeadForPTLRetry()
 
         Args:
             messages:      导致 PTL 的消息列表。
@@ -1416,7 +1363,6 @@ class AgentContextManager:
     ) -> tuple[list[MessageDict], dict[str, Any]]:
         """执行完整的压缩管道。
 
-        CC 对应: query.ts 主循环中的压缩编排:
         1. SnipCompact (if applicable)
         2. Microcompact
         3. AutoCompact
@@ -1439,7 +1385,7 @@ class AgentContextManager:
 
         current_messages = messages
 
-        # 步骤 1: SnipCompact — CC query.ts:396-409
+        # 步骤 1: SnipCompact — Agent SDK query.ts:396-409
         # WHY: snip 和 microcompact 不互斥，两者都可以运行
         snip_result = self.run_snip_compact(current_messages)
         if snip_result.rounds_removed > 0:
@@ -1449,7 +1395,7 @@ class AgentContextManager:
             "tokens_freed": snip_result.tokens_freed,
         }
 
-        # 步骤 2: Microcompact — CC query.ts:412-419
+        # 步骤 2: Microcompact — Agent SDK query.ts:412-419
         current_messages, micro_result = self.run_microcompact(
             current_messages,
             query_source=query_source,
@@ -1459,7 +1405,7 @@ class AgentContextManager:
             "cleared_tool_ids": micro_result.cleared_tool_ids,
         }
 
-        # 步骤 3: AutoCompact — CC query.ts:453-467
+        # 步骤 3: AutoCompact — Agent SDK query.ts:453-467
         current_messages, auto_result = self.run_autocompact(
             current_messages,
             snip_tokens_freed=snip_result.tokens_freed,
@@ -1478,7 +1424,6 @@ class AgentContextManager:
     def consume_tool_result(self, result_text: str) -> ConsumeResult:
         """消耗工具结果文本并更新预算。
 
-        CC 参照: query.ts toolResultBudget
         """
         return self.tool_result_budget.consume(result_text)
 
@@ -1546,7 +1491,7 @@ class AgentContextManager:
     ) -> str:
         """构建校验失败后的修正观察文本。
 
-        参照 CC context_manager: buildRepairObservation()
+        参照 Agent SDK context_manager: buildRepairObservation()
         """
         reason = str(validation_error or "运行时校验未通过。")
         lines = [f"用户原始问题：{query}", f"上一轮结果边界未通过：{reason}"]
@@ -1586,7 +1531,7 @@ class ContextPacket:
 def prepend_user_context(messages: list[MessageDict], user_context: str) -> list[MessageDict]:
     """在消息历史最前面插入用户环境上下文。
 
-    参照 CC query.ts: prependUserContext()
+    参照 Agent SDK query.ts: prependUserContext()
     """
     if not user_context.strip():
         return messages
@@ -1594,7 +1539,7 @@ def prepend_user_context(messages: list[MessageDict], user_context: str) -> list
 
 
 def append_system_context(system_prompt: str, system_context: str) -> str:
-    """将系统上下文追加到系统 prompt 尾部。参照 CC query.ts: appendSystemContext()"""
+    """将系统上下文追加到系统 prompt 尾部。参照 Agent SDK query.ts: appendSystemContext()"""
     if not system_context.strip():
         return system_prompt
     return f"{system_prompt}\n\n{system_context.strip()}"

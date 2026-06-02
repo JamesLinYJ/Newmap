@@ -10,7 +10,6 @@
 
 # 模块职责
 #
-# 忠实复刻 Claude Code 的技能加载与解析系统 (loadSkillsDir.ts + bundledSkills.ts)。
 # 支持 SKILL.md（Markdown + YAML frontmatter）格式的技能文件发现、加载、
 # 路径模式匹配和 prompt 注入。
 #
@@ -37,7 +36,6 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 常量 — 复刻自 CC skills 系统
 # ---------------------------------------------------------------------------
 
 SKILL_FILENAME: str = "SKILL.md"
@@ -49,7 +47,6 @@ _MAX_FM_LINES: int = 200
 """解析 frontmatter 的最大行数，防恶意文件消耗资源。"""
 
 # Frontmatter 已知字段（用于类型安全解析）
-# CC 参照: loadSkillsDir.ts parseSkillFrontmatterFields() lines 185-264
 _NO_FRONTMATTER_KEYS: frozenset[str] = frozenset({
     "name",
     "description",
@@ -70,7 +67,6 @@ _NO_FRONTMATTER_KEYS: frozenset[str] = frozenset({
 })
 
 # ---------------------------------------------------------------------------
-# 加载来源枚举 — CC 参照: loadSkillsDir.ts LoadedFrom type (line 67-73)
 # ---------------------------------------------------------------------------
 
 _LOADED_FROM_SKILLS: str = "skills"
@@ -82,14 +78,13 @@ _LOADED_FROM_MCP: str = "mcp"
 
 
 # ===================================================================
-# 1. SkillFrontmatter — 精确复刻 CC parseSkillFrontmatterFields 返回值
 # ===================================================================
 
 @dataclass
 class SkillFrontmatter:
     """SKILL.md 的完整 YAML frontmatter 解析结果。
 
-    字段精确对应 CC loadSkillsDir.ts parseSkillFrontmatterFields() 的
+    字段精确对应 Agent SDK loadSkillsDir.ts parseSkillFrontmatterFields() 的
     返回值 (lines 190-207)。
 
     Attributes:
@@ -139,14 +134,14 @@ class SkillFrontmatter:
 
 
 # ===================================================================
-# 2. 技能命令 — 对应 CC Command 类型
+# 2. 技能命令 — 对应 Agent SDK Command 类型
 # ===================================================================
 
 @dataclass
 class SkillCommand:
     """从 SKILL.md 构建的运行时技能命令。
 
-    对应 CC createSkillCommand() 的返回值 (Command type, lines 317-399)。
+    对应 Agent SDK createSkillCommand() 的返回值 (Command type, lines 317-399)。
 
     Methods:
         get_prompt(args, tool_context): 返回技能 prompt 的正文内容。
@@ -197,14 +192,12 @@ class SkillCommand:
         content = self.content
 
         # ---- 前置 base_dir 声明 ----
-        # CC 参照: createSkillCommand() lines 345-347
         # "Base directory for this skill: <dir>" 提示模型可通过 Read/Grep
         # 按需访问技能目录中的引用文件。
         if self.base_dir:
             content = f"Base directory for this skill: {self.base_dir}\n\n{content}"
 
         # ---- 参数替换 —— ${ARG_NAME} → 实际值 ----
-        # CC 参照: substituteArguments() in loadSkillsDir.ts:349-353
         if args and self.argument_names:
             content = _substitute_arguments(content, args, self.argument_names)
 
@@ -212,7 +205,6 @@ class SkillCommand:
 
 
 # ===================================================================
-# 3. Frontmatter 解析 — 复刻 CC loadSkillsDir.ts parseSkillFrontmatterFields()
 # ===================================================================
 
 def parse_frontmatter_yaml(raw_text: str) -> dict[str, Any]:
@@ -245,7 +237,6 @@ def parse_frontmatter_yaml(raw_text: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 公共字段解析 — 复刻 CC parseSkillFrontmatterFields() (lines 185-264)
 # ---------------------------------------------------------------------------
 
 def parse_skill_frontmatter_fields(
@@ -256,8 +247,6 @@ def parse_skill_frontmatter_fields(
 ) -> SkillFrontmatter:
     """解析技能 frontmatter 的所有共享字段。
 
-    精确复刻 CC loadSkillsDir.ts parseSkillFrontmatterFields() 的字段映射
-    (lines 208-263)。所有字段名与 CC 的 frontmatter 字段一一对应。
 
     Args:
         frontmatter: parse_frontmatter_yaml() 的解析结果。
@@ -270,7 +259,6 @@ def parse_skill_frontmatter_fields(
         SkillFrontmatter 实例，所有字段已解析并验证。
     """
     # ---- description ----
-    # CC 参照: lines 208-214
     # 优先取 frontmatter.description；缺失时从 markdown 正文提取首段
     raw_desc = frontmatter.get("description", "")
     if raw_desc and isinstance(raw_desc, str) and raw_desc.strip():
@@ -283,7 +271,6 @@ def parse_skill_frontmatter_fields(
         has_user_specified = False
 
     # ---- user-invocable ----
-    # CC 参照: lines 216-219
     # 默认为 True；显式 "false" 时隐藏
     user_invocable_raw = frontmatter.get("user-invocable", True)
     if isinstance(user_invocable_raw, bool):
@@ -294,7 +281,6 @@ def parse_skill_frontmatter_fields(
         user_invocable = True
 
     # ---- model ----
-    # CC 参照: lines 221-226
     # "inherit" → None（继承主模型）；其他字符串 → 模型名
     model_raw = frontmatter.get("model")
     if model_raw is None or model_raw == "inherit":
@@ -305,7 +291,6 @@ def parse_skill_frontmatter_fields(
         model = None
 
     # ---- allowed-tools ----
-    # CC 参照: parseSlashCommandToolsFromFrontmatter() (line 242)
     allowed_raw = frontmatter.get("allowed-tools", [])
     if isinstance(allowed_raw, list):
         allowed_tools = [str(t) for t in allowed_raw if t]
@@ -315,7 +300,6 @@ def parse_skill_frontmatter_fields(
         allowed_tools = []
 
     # ---- paths ----
-    # CC 参照: parseSkillPaths() (lines 159-178)
     # 逐行 split，移除 /** 后缀，过滤纯 **
     paths_raw = frontmatter.get("paths")
     if isinstance(paths_raw, list):
@@ -328,18 +312,15 @@ def parse_skill_frontmatter_fields(
         paths = None
 
     # ---- context ----
-    # CC 参照: lines 260
     # "fork" → execution_context="fork"；否则 None(=inline)
     ctx_raw = frontmatter.get("context", "inline")
     execution_context = "fork" if str(ctx_raw) == "fork" else None
 
     # ---- effort ----
-    # CC 参照: lines 228-235
     effort_raw = frontmatter.get("effort")
     effort = str(effort_raw) if effort_raw is not None and effort_raw != "" else None
 
     # ---- disable-model-invocation ----
-    # CC 参照: lines 255-256
     dmi_raw = frontmatter.get("disable-model-invocation", False)
     disable_model = _coerce_bool(dmi_raw)
 
@@ -372,7 +353,6 @@ def parse_skill_frontmatter_fields(
 
 
 # ===================================================================
-# 4. create_skill_command — 复刻 CC loadSkillsDir.ts createSkillCommand()
 # ===================================================================
 
 def create_skill_command(
@@ -402,7 +382,6 @@ def create_skill_command(
 ) -> SkillCommand:
     """从已解析的技能数据创建 SkillCommand 实例。
 
-    精确复刻 CC loadSkillsDir.ts createSkillCommand() (lines 270-399)。
 
     Returns:
         一个 SkillCommand 实例，name 为 skill_name。
@@ -433,7 +412,6 @@ def create_skill_command(
 def _normalize_skill_paths(raw_patterns: list[str]) -> list[str] | None:
     """规范化技能路径模式列表。
 
-    CC 参照: loadSkillsDir.ts parseSkillPaths() (lines 159-178)
     - 移除末尾的 /** 后缀
     - 过滤空字符串和纯 **（match-all）
     - 如果所有模式都是 match-all，返回 None
@@ -460,7 +438,6 @@ def match_gitignore_pattern(pattern: str, file_path: str) -> bool:
     - `data/*.h5`   → 匹配 data/ 目录下的 .h5 文件
     - `**/weather/` → 匹配任意深度的 weather/ 目录
 
-    CC 参照: ignore 库 (npm) 的路径匹配。
 
     # WHY: 替换手写的 fnmatch + path split 逻辑为 wcmatch.globmatch。
     #       GLOBSTAR 标志启用 ** 跨目录匹配，与 gitignore 语义一致。
@@ -550,7 +527,6 @@ class SkillManager:
     def discover_skills(self) -> list[SkillCommand]:
         """递归扫描所有 skill_dirs，发现并加载 SKILL.md 文件。
 
-        CC 参照: loadSkillsDir.ts getSkillDirCommands() 的备忘录加载逻辑。
 
         扫描策略:
         1. 遍历每个 skill_dir
@@ -673,7 +649,6 @@ class SkillManager:
         frontmatter = parse_frontmatter_yaml(raw)
 
         # ---- 解析技能名称 ----
-        # CC 参照: 如果 frontmatter 中未定义 name，使用目录名
         name = frontmatter.get("name", "")
         if not isinstance(name, str) or not name.strip():
             name = base_dir.name
@@ -749,7 +724,6 @@ def _extract_description_from_markdown(content: str, label: str = "Skill") -> st
 
     当 frontmatter 中未显式定义 description 时使用的回退策略。
 
-    CC 参照: utils/markdownConfigLoader.ts extractDescriptionFromMarkdown()
 
     Args:
         content: Markdown 正文文本。
@@ -781,7 +755,6 @@ def _coerce_bool(value: Any) -> bool:
 def _parse_argument_names(raw: Any) -> list[str]:
     """解析 arguments 字段为参数名列表。
 
-    CC 参照: parseArgumentNames() in loadSkillsDir.ts:249-251
     """
     if raw is None:
         return []
@@ -797,7 +770,6 @@ def _substitute_arguments(
 ) -> str:
     """将 prompt 中的 ${ARG_NAME} 占位符替换为实际参数值。
 
-    CC 参照: substituteArguments() in loadSkillsDir.ts:349-353
 
     策略: 如果 args 非空，将第一个参数赋给 arg_names[0]。
     剩余的 ${ARG_NAME} 占位符保留原样（模型会自行理解）。

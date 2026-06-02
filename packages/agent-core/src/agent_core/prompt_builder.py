@@ -9,7 +9,7 @@
 # --------------------------------------------------------------------------
 # 模块职责
 #
-# 逐字逐句复刻 Claude Code 的记忆系统 prompt 原文（memoryTypes.ts + memdir.ts），
+# 记忆系统 prompt 文本，
 # 统一管理 supervisor prompt 的各个组成部分：默认系统 prompt、记忆系统说明
 # （memory mechanics）、用户环境上下文、系统上下文（日期/平台）、
 # 工具使用摘要等。
@@ -46,7 +46,7 @@ _MEMORY_INDEX_MAX_LINES: int = MAX_ENTRYPOINT_LINES       # 向后兼容别名
 _MEMORY_INDEX_MAX_BYTES: int = MAX_ENTRYPOINT_BYTES       # 向后兼容别名
 
 # ======================================================================
-# Prompt 文本常量（精确复刻 Claude Code memoryTypes.ts）
+# Prompt 文本常量
 # ======================================================================
 
 DIR_EXISTS_GUIDANCE: str = (
@@ -59,7 +59,7 @@ DIRS_EXIST_GUIDANCE: str = (
     "(do not run mkdir or check for their existence)."
 )
 
-# -- ## Types of memory — 复刻自 CC TYPES_SECTION_INDIVIDUAL (memoryTypes.ts:113-177)
+# -- ## Types of memory — TYPES_SECTION_INDIVIDUAL (memoryTypes.ts:113-177)
 
 TYPES_SECTION: list[str] = [
     "## Types of memory",
@@ -128,7 +128,7 @@ TYPES_SECTION: list[str] = [
     "",
 ]
 
-# -- ## What NOT to save in memory — 复刻自 CC WHAT_NOT_TO_SAVE_SECTION (memoryTypes.ts:183-194)
+# -- ## What NOT to save in memory — WHAT_NOT_TO_SAVE_SECTION (memoryTypes.ts:183-194)
 
 WHAT_NOT_TO_SAVE_SECTION: list[str] = [
     "## What NOT to save in memory",
@@ -142,7 +142,7 @@ WHAT_NOT_TO_SAVE_SECTION: list[str] = [
     "These exclusions apply even when the user explicitly asks you to save. If they ask you to save a PR list or activity summary, ask what was *surprising* or *non-obvious* about it — that is the part worth keeping.",
 ]
 
-# -- ## When to access memories — 复刻自 CC WHEN_TO_ACCESS_SECTION (memoryTypes.ts:216-222)
+# -- ## When to access memories — WHEN_TO_ACCESS_SECTION (memoryTypes.ts:216-222)
 
 MEMORY_DRIFT_CAVEAT: str = (
     "- Memory records can become stale over time. Use memory as context for what was true "
@@ -161,7 +161,7 @@ WHEN_TO_ACCESS_SECTION: list[str] = [
     MEMORY_DRIFT_CAVEAT,
 ]
 
-# -- ## Before recommending from memory — 复刻自 CC TRUSTING_RECALL_SECTION (memoryTypes.ts:240-256)
+# -- ## Before recommending from memory — TRUSTING_RECALL_SECTION (memoryTypes.ts:240-256)
 
 TRUSTING_RECALL_SECTION: list[str] = [
     "## Before recommending from memory",
@@ -177,7 +177,7 @@ TRUSTING_RECALL_SECTION: list[str] = [
     "A memory that summarizes repo state (activity logs, architecture snapshots) is frozen in time. If the user asks about *recent* or *current* state, prefer `git log` or reading the code over recalling the snapshot.",
 ]
 
-# -- Frontmatter 格式示例 — 复刻自 CC MEMORY_FRONTMATTER_EXAMPLE (memoryTypes.ts:261-271)
+# -- Frontmatter 格式示例 — MEMORY_FRONTMATTER_EXAMPLE (memoryTypes.ts:261-271)
 
 MEMORY_FRONTMATTER_EXAMPLE: list[str] = [
     '```markdown',
@@ -193,7 +193,7 @@ MEMORY_FRONTMATTER_EXAMPLE: list[str] = [
 
 
 # ======================================================================
-# 1. build_memory_lines — 复刻 Claude Code memdir.ts buildMemoryLines()
+# 1. build_memory_lines — 基于 memdir 模式的 buildMemoryLines
 # ======================================================================
 
 def build_memory_lines(
@@ -204,7 +204,7 @@ def build_memory_lines(
 ) -> list[str]:
     """Build the typed-memory behavioral instructions (without MEMORY.md content).
 
-    逐行复刻自 CC memdir.ts buildMemoryLines() (lines 199-266)。
+    逐行memdir.ts buildMemoryLines() (lines 199-266)。
 
     Args:
         display_name: Section heading name (e.g. "auto memory").
@@ -280,13 +280,13 @@ def build_memory_lines(
 
 
 # ======================================================================
-# 2. build_searching_past_context_section — 复刻 CC memdir.ts
+# 2. build_searching_past_context_section — 基于 memdir 模式
 # ======================================================================
 
 def build_searching_past_context_section(memory_dir: str) -> list[str]:
     """Build the "Searching past context" section.
 
-    复刻自 CC memdir.ts buildSearchingPastContextSection() (lines 375-407)。
+    memdir.ts buildSearchingPastContextSection() (lines 375-407)。
     使用通用的 Grep tool 命令。
     """
     mem_search = f'Grep tool with pattern="<search term>" path="{memory_dir}" glob="*.md"'

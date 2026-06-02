@@ -34,7 +34,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ===================================================================
-# 环境变量展开 — SDK 不提供，CC 有 (envExpansion.ts)
+# 环境变量展开 — SDK 不提供，参考实现有 (envExpansion.ts)
 # ===================================================================
 
 _ENV_VAR_REGEX: re.Pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -43,7 +43,6 @@ _ENV_VAR_REGEX: re.Pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 def expand_env_vars(value: str, extra_env: dict[str, str] | None = None) -> str:
     """展开字符串中的 ${ENV_VAR} 环境变量引用。
 
-    CC 参照: services/mcp/envExpansion.ts expandEnvVarsInString()
     安全约束: 未定义的变量保留原样（不展开为空白），避免静默吞掉配置。
 
     Args:
@@ -70,7 +69,6 @@ def expand_env_vars_in_config(
 ) -> dict[str, Any]:
     """递归展开 MCP 配置中的所有 ${ENV_VAR} 引用。
 
-    CC 参照: config.ts 启动时 envExpansion 预处理。
     只处理 str 类型的值；其他类型原样保留。
 
     Args:
@@ -97,7 +95,7 @@ def expand_env_vars_in_config(
 
 
 # ===================================================================
-# 配置优先级合并 — SDK 不提供多源合并，CC 有 (config.ts)
+# 配置优先级合并 — SDK 不提供多源合并，参考实现有 (config.ts)
 # ===================================================================
 
 # 配置来源（优先级从低到高）
@@ -128,7 +126,6 @@ def merge_mcp_configs(
 ) -> McpMergeResult:
     """合并多个优先级的 MCP 配置。
 
-    合并策略 (CC 参照: config.ts 多源合并):
     - 按 scope 优先级从低到高合并
     - 同名服务器，高优先级覆盖低优先级
     - disabled=True 的服务器从合并结果中排除

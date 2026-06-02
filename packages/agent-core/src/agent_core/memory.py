@@ -1,6 +1,5 @@
 # +-------------------------------------------------------------------------
 #
-#   地理智能平台 - 记忆系统（全量重写，忠实复刻 Claude Code 记忆架构）
 #
 #   文件:       memory.py
 #
@@ -10,7 +9,6 @@
 
 # 模块职责
 #
-# 逐字逐句复刻 Claude Code 的 memdir.ts 记忆系统代码，
 # 管理 .geoagent/memory/ 目录下的用户偏好、反馈、项目上下文和外部引用。
 # 包含 truncate_entrypoint_content()、MemoryHeader、MemoryManager 等。
 #
@@ -79,7 +77,6 @@ _FM_DELIMITER: str = "---"  # frontmatter 分界符
 def format_file_size(bytes_count: int) -> str:
     """格式化文件大小为人类可读字符串。
 
-    复刻自 Claude Code format.ts formatFileSize()。
     """
     if bytes_count >= 1024 * 1024:
         return f"{bytes_count / (1024 * 1024):.1f} MB"
@@ -89,14 +86,13 @@ def format_file_size(bytes_count: int) -> str:
 
 
 # ===================================================================
-# truncate_entrypoint_content — 精确复刻 CC memdir.ts
 # ===================================================================
 
 @dataclass
 class EntrypointTruncation:
     """MEMORY.md 截断结果数据类。
 
-    对应 CC memdir.ts 的 EntrypointTruncation 类型（lines 41-47）。
+    对应 Agent SDK memdir.ts 的 EntrypointTruncation 类型（lines 41-47）。
     """
     content: str
     line_count: int
@@ -108,7 +104,6 @@ class EntrypointTruncation:
 def truncate_entrypoint_content(raw: str) -> EntrypointTruncation:
     """Truncate MEMORY.md content to the line AND byte caps.
 
-    精确复刻自 CC memdir.ts truncateEntrypointContent() (lines 57-103)。
     Line-truncates first (natural boundary), then byte-truncates at the
     last newline before the cap so we don't cut mid-line.
 
@@ -338,7 +333,7 @@ def _parse_index_line_strict(line: str) -> Optional[dict]:
 def load_memory_prompt(memory_base_dir: Path, project_root: Path, include_team: bool = False) -> str:
     """构建记忆系统完整 prompt 片段。
 
-    构建记忆目录路径、读取 MEMORY.md、委托 prompt_builder 生成 CC 风格 prompt。
+    构建记忆目录路径、读取 MEMORY.md、委托 prompt_builder 生成 Agent SDK 风格 prompt。
 
     Args:
         memory_base_dir: 记忆基目录。
@@ -366,7 +361,7 @@ def load_memory_prompt(memory_base_dir: Path, project_root: Path, include_team: 
     personal_index = _read_index(memory_dir)
     team_index = _read_index(team_dir) if include_team and team_dir.exists() else ""
 
-    # 使用 CC 风格 prompt
+    # 使用 Agent SDK 风格 prompt
     lines = build_memory_lines(
         display_name="auto memory",
         memory_dir=str(memory_dir),
