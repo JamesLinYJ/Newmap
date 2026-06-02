@@ -36,6 +36,7 @@ from shared_types.schemas import (
     RunEvent,
     ToolCall,
     ToolValueRef,
+    TodoItem,
 )
 from tool_registry import ToolExecutionResult, ToolRuntime, ToolRuntimeContext, ToolRuntimeState, ToolRuntimeStore
 from tool_registry.value_refs import serialize_value_refs_for_model
@@ -50,6 +51,27 @@ def _derive_thread_title_seed(query: str) -> str:
     if not normalized:
         return "新建任务"
     return normalized[:32]
+
+
+def _normalize_execution_mode(value: str | None) -> str:
+    normalized = (value or "auto").strip().lower()
+    return "plan" if normalized == "plan" else "auto"
+
+
+def _build_initial_todos(query: str, execution_mode: str) -> list[TodoItem]:
+    # 初始待办只表达 run 组织状态，不替 Agent 编造工具进度。
+    #
+    # 真正的分析步骤会在 todo_write 被调用后由 runtime.state.todos 覆盖。
+    prefix = "拟定计划" if execution_mode == "plan" else "整理待办"
+    return [
+        TodoItem(
+            todo_id="todo:initial",
+            title=f"{prefix}：{query.strip()[:48] or '本次分析'}",
+            status="running",
+            description="等待 Agent 写入详细任务清单。",
+            activeForm="正在建立任务清单",
+        )
+    ]
 
 
 async def _generate_thread_title(
@@ -332,7 +354,13 @@ async def start_run(
         generated_title = await _generate_thread_title(runtime, provider_name, model_name, request.query)
         if generated_title:
             thread = store.update_thread(thread.id, title=generated_title)
+    execution_mode = _normalize_execution_mode(request.execution_mode)
     run = store.create_run(session.id, request.query, thread_id=thread.id, model_provider=provider_name, model_name=model_name)
+    store.update_run_state(
+        run.id,
+        plan_mode=execution_mode == "plan",
+        todos=_build_initial_todos(request.query, execution_mode),
+    )
     store.mark_run_running(run.id)
 
     runner = runtime.run(
@@ -346,6 +374,7 @@ async def start_run(
         model_name=model_name,
         context_factory=lambda **kw: _build_tool_runtime(**kw, app=app),
         clarification_option_id=request.clarification_option_id,
+        execution_mode=execution_mode,
     )
     if "PYTEST_CURRENT_TEST" in os.environ:
         await runner
@@ -353,9 +382,13 @@ async def start_run(
 
     task = asyncio.create_task(runner)
     app.state.background_tasks.add(task)
+    if not hasattr(app.state, "background_run_tasks"):
+        app.state.background_run_tasks = {}
+    app.state.background_run_tasks[run.id] = task
 
     def _on_task_done(finished: asyncio.Task[Any]) -> None:
         app.state.background_tasks.discard(finished)
+        app.state.background_run_tasks.pop(run.id, None)
         if not finished.cancelled():
             exc = finished.exception()
             if exc is not None:

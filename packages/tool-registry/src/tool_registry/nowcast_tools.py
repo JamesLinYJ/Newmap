@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import Field
 
 from gis_common.ids import make_id
+from shared_types.exceptions import NotFoundError
 from gis_weather import (
     NOWCAST_ANSWER_SCHEMA,
     NowcastAnalysisService,
@@ -117,6 +118,7 @@ async def inspect_nowcast_sequence(args: dict[str, Any], runtime: ToolRuntime) -
 
 async def analyze_nowcast_precipitation(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
     sequence = _resolve_sequence(runtime, args["sequence_ref"])
+    args = _apply_default_district_args(args, runtime)
     area = _resolve_optional_area(runtime, args)
     bbox = _resolve_optional_bbox(runtime, args)
     coordinate = _resolve_optional_coordinate(runtime, args)
@@ -284,12 +286,15 @@ def _resolve_weather_datasets(runtime: ToolRuntime, dataset_ids: Any) -> list[An
 
 def _ensure_weather_dataset_parsed(runtime: ToolRuntime, dataset_id: str):
     method = getattr(runtime.store.platform_store, "ensure_weather_dataset_parsed", None)
-    if callable(method):
-        return method(dataset_id, _weather_service(runtime))
-    dataset = runtime.store.platform_store.get_weather_dataset(dataset_id)
-    if getattr(dataset, "status", "completed") != "completed":
-        raise ValueError(f"气象数据集尚未解析完成：{dataset_id}")
-    return dataset
+    try:
+        if callable(method):
+            return method(dataset_id, _weather_service(runtime), thread_id=runtime.context.thread_id)
+        dataset = runtime.store.platform_store.get_weather_dataset(dataset_id, thread_id=runtime.context.thread_id)
+        if getattr(dataset, "status", "completed") != "completed":
+            raise ValueError(f"气象数据集尚未解析完成：{dataset_id}")
+        return dataset
+    except NotFoundError:
+        raise ValueError(f"气象数据集 {dataset_id} 不存在，请先使用 list_meteorological_datasets 查看当前可用的气象数据集。") from None
 
 
 def _dataset_to_sequence_input(runtime: ToolRuntime, dataset: Any) -> dict[str, Any]:
@@ -311,6 +316,101 @@ def _resolve_analysis(runtime: ToolRuntime, ref_id: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"短临分析引用不是结构化 facts：{ref_id}")
     return value
+
+
+# 默认区划注入
+#
+# 全市/区县短临问答如果没有显式 AOI、bbox 或地点，就优先使用运行时配置
+# 或 catalog 中唯一可识别的杭州区划，避免让模型每轮重新猜 layer_key。
+def _apply_default_district_args(args: dict[str, Any], runtime: ToolRuntime) -> dict[str, Any]:
+    if _has_explicit_analysis_scope(args):
+        return args
+    default = _resolve_default_district_layer(runtime)
+    if default is None:
+        return args
+    updated = dict(args)
+    updated.setdefault("district_layer_key", default["layer_key"])
+    if default.get("name_field"):
+        updated.setdefault("district_name_field", default["name_field"])
+    return updated
+
+
+def _has_explicit_analysis_scope(args: dict[str, Any]) -> bool:
+    return any(
+        args.get(key)
+        for key in (
+            "area_ref",
+            "district_layer_key",
+            "coordinate_ref",
+            "latitude",
+            "longitude",
+            "bbox_ref",
+            "bbox",
+        )
+    )
+
+
+def _resolve_default_district_layer(runtime: ToolRuntime) -> dict[str, str] | None:
+    configured = _configured_default_district_layer(runtime)
+    if configured is not None:
+        return configured
+    lister = getattr(runtime.store.layer_repository, "list_active_layers", None)
+    if not callable(lister):
+        return None
+    candidates = [_default_layer_payload(layer) for layer in lister() if _looks_like_hangzhou_district_layer(layer)]
+    candidates = [item for item in candidates if item is not None]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _configured_default_district_layer(runtime: ToolRuntime) -> dict[str, str] | None:
+    getter = getattr(runtime.store.platform_store, "get_runtime_config", None)
+    if not callable(getter):
+        return None
+    config = getter()
+    nowcast = getattr(config, "nowcast", None)
+    layer_key = str(getattr(nowcast, "district_layer_key", "") or "").strip()
+    if not layer_key:
+        return None
+    name_field = str(getattr(nowcast, "district_name_field", "") or "").strip()
+    return {"layer_key": layer_key, "name_field": name_field}
+
+
+def _looks_like_hangzhou_district_layer(layer: Any) -> bool:
+    haystack = " ".join(
+        str(item or "")
+        for item in (
+            getattr(layer, "layer_key", ""),
+            getattr(layer, "name", ""),
+            getattr(layer, "description", ""),
+            getattr(layer, "category", ""),
+            " ".join(getattr(layer, "tags", []) or []),
+            " ".join(getattr(layer, "analysis_capabilities", []) or []),
+        )
+    ).casefold()
+    has_city = "杭州" in haystack or "hangzhou" in haystack
+    has_boundary_semantics = any(token in haystack for token in ("区划", "区县", "边界", "boundary", "district", "admin"))
+    return has_city and has_boundary_semantics and str(getattr(layer, "status", "active") or "active") == "active"
+
+
+def _default_layer_payload(layer: Any) -> dict[str, str] | None:
+    layer_key = str(getattr(layer, "layer_key", "") or "").strip()
+    if not layer_key:
+        return None
+    return {"layer_key": layer_key, "name_field": _infer_district_name_field_from_descriptor(layer)}
+
+
+def _infer_district_name_field_from_descriptor(layer: Any) -> str:
+    available = {_property_name(item) for item in (getattr(layer, "property_schema", []) or [])}
+    for candidate in ("name", "district_name", "区县", "区县名", "县名", "行政区"):
+        if candidate in available:
+            return candidate
+    return ""
+
+
+def _property_name(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("name") or "").strip()
+    return str(getattr(item, "name", "") or "").strip()
 
 
 def _resolve_optional_area(runtime: ToolRuntime, args: dict[str, Any]) -> dict[str, Any] | None:

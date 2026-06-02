@@ -41,6 +41,11 @@ class ToolExecutionResult:
     geometry_type: str | None = None
     feature_count: int | None = None
     value_refs: list[ToolValueRef] = field(default_factory=list)
+    error_category: str | None = None
+    """错误分类，仅在执行失败时设置。
+    取值范围: 'invalid_input' | 'external_api_failure' | 'data_format_error' |
+              'permission_denied' | 'timeout' | 'unknown'
+    成功执行的 result 该字段为 None。"""
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,12 @@ class ToolRuntimeState:
     latest_coordinate_ref: str | None = None
     latest_bbox_ref: str | None = None
     latest_area_ref: str | None = None
+    todos: list[dict[str, Any]] = field(default_factory=list)
+    """当前待办列表，由 todo_write 工具管理。"""
+    tasks: list[dict[str, Any]] = field(default_factory=list)
+    """后台任务列表，由 task_* 工具管理。"""
+    plan_mode: bool = False
+    """是否处于计划模式（只读探索）。"""
 
 
 @dataclass(frozen=True)

@@ -120,9 +120,9 @@ agent-core          ─→ 以上全部
 `.env` 文件中包含明文密钥：
 
 ```
-OPENAI_API_KEY=sk-9bd1a3104054492a98861ae762c06970
-GEMINI_API_KEY=AIzaSyDXfBHlyAReHS9Oh8zHbZ3L_fM85wf4PiA
-TIANDITU_API_KEY=2e29f5db87614e6b7af22a033d1a8f55
+OPENAI_API_KEY=sk-xxxx...xxxx  (已轮换，占位符)
+GEMINI_API_KEY=AIza...xxxx    (已轮换，占位符)
+TIANDITU_API_KEY=xxxx...xxxx  (已轮换，占位符)
 ```
 
 `apps/api/.env` 中存在另一个不同的 DeepSeek 密钥。

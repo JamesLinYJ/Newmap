@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import Field
 
 from gis_common.ids import make_id
+from shared_types.exceptions import NotFoundError
 from gis_weather import (
     INTERPRETATION_SCHEMA,
     WeatherDataService,
@@ -139,7 +140,7 @@ async def list_meteorological_datasets(args: dict[str, Any], runtime: ToolRuntim
         thread_id=runtime.context.thread_id,
     )
     return ToolExecutionResult(
-        message=f"当前线程可用气象数据集 {len(datasets)} 个。" if datasets else "当前线程没有气象数据集。",
+        message=f"当前线程可用气象数据集 {len(datasets)} 个。" if datasets else "当前线程没有气象数据集，请先上传气象文件（.nc/.tif/.grib 等）。",
         payload={"datasets": [_dataset_summary(item) for item in datasets]},
         source="weather_catalog",
         feature_count=len(datasets),
@@ -390,12 +391,15 @@ def _weather_dataset_path(runtime: ToolRuntime, relative_path: str) -> Path:
 
 def _ensure_weather_dataset_parsed(runtime: ToolRuntime, dataset_id: str):
     method = getattr(runtime.store.platform_store, "ensure_weather_dataset_parsed", None)
-    if callable(method):
-        return method(dataset_id, _weather_service(runtime))
-    dataset = runtime.store.platform_store.get_weather_dataset(dataset_id)
-    if getattr(dataset, "status", "completed") != "completed":
-        raise ValueError(f"气象数据集尚未解析完成：{dataset_id}")
-    return dataset
+    try:
+        if callable(method):
+            return method(dataset_id, _weather_service(runtime), thread_id=runtime.context.thread_id)
+        dataset = runtime.store.platform_store.get_weather_dataset(dataset_id, thread_id=runtime.context.thread_id)
+        if getattr(dataset, "status", "completed") != "completed":
+            raise ValueError(f"气象数据集尚未解析完成：{dataset_id}")
+        return dataset
+    except NotFoundError:
+        raise ValueError(f"气象数据集 {dataset_id} 不存在，请先使用 list_meteorological_datasets 查看当前可用的气象数据集。") from None
 
 
 def _dataset_summary(dataset: Any) -> dict[str, Any]:

@@ -14,11 +14,11 @@
 // 用户输入、思考过程、工具调用、审批通知和最终回答都保持同一条对话叙事。
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'framer-motion'
-import { ArrowUp, ChevronDown, FolderUp, LoaderCircle, Pencil, Plus, Settings2, Square, Trash2 } from 'lucide-react'
-import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationState, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
+import { AnimatePresence, LayoutGroup, m, useReducedMotion, type Variants } from 'framer-motion'
+import { ArrowUp, ChevronDown, ClipboardList, FileText, FolderUp, LoaderCircle, Pencil, Plus, Search, Settings2, Square, Trash2, Zap, type LucideIcon } from 'lucide-react'
+import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
 import { SAMPLES, type DataReferenceSummary } from '../constants'
-import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants } from '../motion'
+import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants, buildScaleInMotion } from '../motion'
 import { deriveConversationEntries, type ConversationCommand, type ConversationEntry, type TranscriptEntry } from '../runTranscript'
 import { AppIcon } from './AppIcon'
 import { Markdown } from './Markdown'
@@ -42,7 +42,8 @@ interface ChatPanelProps {
   runtimeConfig?: AgentRuntimeConfig
   availableTools?: ToolDescriptor[]
   onQueryChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (mode: 'plan' | 'auto') => void
+  onInterrupt?: () => void
   onNewConversation: () => void
   onFillSample: (value: string) => void
   onSelectClarification: (value: string, id?: string | null) => void
@@ -54,11 +55,70 @@ interface ChatPanelProps {
   onDeleteTask: (id: string) => void
   onResolveApproval: (id: string, approved: boolean) => void
   dataReferences: DataReferenceSummary[]
+
+  // 新增 — 记忆系统
+  memories?: MemoryEntry[]
+  onRefreshMemories?: () => void
+
+  // 新增 — Token 预算
+  tokenBudget?: { used: number; max: number; status: 'normal'|'warning'|'critical'|'exceeded' }
+
+  // 新增 — 运行状态
+  activeSkills?: string[]
+  compactionLevel?: string | null
+  runStats?: { toolAttempts: number; toolSuccesses: number; toolFailures: number; tokensUsed: number }
+  denialCounts?: Record<string, number>
+
+  // 新增 — Plan 面板
+  executionPlan?: { goal: string; steps: { tool: string; args: any; reason: string }[] } | null
+  onApprovePlan?: () => void
+  onEditPlan?: () => void
+
+  // 新增 — Task 面板
+  tasks?: { id: string; content: string; status: string; activeForm: string }[]
+
+  // 新增 — Session 历史面板
+  sessions?: { id: string; title: string; created_at: string; latest_query: string; run_count: number }[]
+  onSelectSession?: (id: string) => void
+  onResumeSession?: (sessionId: string) => void
+}
+
+type MemoryEntry = {
+  name: string; description: string;
+  type: 'user' | 'feedback' | 'project' | 'reference';
+  age: string;
 }
 
 type TaskView = 'chat' | 'summary' | 'all'
 type TaskDialog = { mode: 'rename' | 'delete'; task: AgentThreadRecord } | null
+type ComposerMode = 'plan' | 'auto'
+type ActiveClarification = {
+  key: string
+  question: string
+  options: ClarificationOption[]
+  allowFreeText: boolean
+}
 const DIRECTORY_PICKER_PROPS = { webkitdirectory: '', directory: '' } as Record<string, string>
+
+const COMPOSER_MODES = [
+  {
+    id: 'plan',
+    label: '计划模式',
+    description: '先整理步骤和风险，确认后再执行分析。',
+    icon: ClipboardList,
+  },
+  {
+    id: 'auto',
+    label: '自动模式',
+    description: '自动执行安全分析，高风险动作仍会停下确认。',
+    icon: Zap,
+  },
+] as const satisfies ReadonlyArray<{
+  id: ComposerMode
+  label: string
+  description: string
+  icon: LucideIcon
+}>
 
 function errorCardTitle(message?: string) {
   // 错误标题只描述已知事实。
@@ -98,6 +158,7 @@ export function ChatPanel(props: ChatPanelProps) {
     availableTools = [],
     onQueryChange,
     onSubmit,
+    onInterrupt,
     onNewConversation,
     onFillSample,
     onSelectClarification,
@@ -109,6 +170,22 @@ export function ChatPanel(props: ChatPanelProps) {
     onDeleteTask,
     onResolveApproval,
     dataReferences,
+
+    memories,
+    onRefreshMemories,
+    tokenBudget,
+    activeSkills,
+    compactionLevel,
+    runStats,
+    denialCounts,
+
+    executionPlan,
+    onApprovePlan,
+    onEditPlan,
+    tasks: progressTasks,
+    sessions,
+    onSelectSession,
+    onResumeSession,
   } = props
   const [taskViewState, setTaskViewState] = useState<{ mode: TaskView; bound?: string }>({
     mode: 'chat',
@@ -118,11 +195,16 @@ export function ChatPanel(props: ChatPanelProps) {
   const [dialog, setDialog] = useState<TaskDialog>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [composing, setComposing] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+  const [clarificationDialogOpen, setClarificationDialogOpen] = useState(false)
+  const [composerMode, setComposerMode] = useState<ComposerMode>('auto')
   const triggerRef = useRef<HTMLElement | null>(null)
+  const firstClarificationOptionRef = useRef<HTMLButtonElement | null>(null)
+  const composerInputRef = useRef<HTMLInputElement | null>(null)
   const submittingRef = useRef(false)
   const reducedMotion = useReducedMotion() ?? false
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  const manualCollapse = useRef<Set<string>>(new Set())
   const timelineRef = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
 
@@ -138,15 +220,13 @@ export function ChatPanel(props: ChatPanelProps) {
     }
   }, [isSubmitting])
 
-  const toggleExpanded = (id: string, manual = false) => {
+  const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
         next.delete(id)
-        if (manual) manualCollapse.current.add(id)
       } else {
         next.add(id)
-        if (manual) manualCollapse.current.delete(id)
       }
       return next
     })
@@ -154,6 +234,8 @@ export function ChatPanel(props: ChatPanelProps) {
 
   const taskView = taskViewState.bound === currentRunId ? taskViewState.mode : 'chat'
   const setTaskView = (mode: TaskView) => setTaskViewState({ mode, bound: currentRunId })
+  const selectedComposerMode = COMPOSER_MODES.find((mode) => mode.id === composerMode) ?? COMPOSER_MODES[1]
+  const SelectedModeIcon = selectedComposerMode.icon
   const conversation = useMemo(
     () => deriveConversationEntries(transcriptEntries, runStatus, availableTools),
     [availableTools, runStatus, transcriptEntries],
@@ -163,6 +245,20 @@ export function ChatPanel(props: ChatPanelProps) {
     () => buildActiveClarification(clarification, intent),
     [clarification, intent],
   )
+  const activeClarificationKey = activeClarification?.key ?? null
+  const clarificationBusy = isSubmitting && runStatus === 'running'
+
+  useEffect(() => {
+    setClarificationDialogOpen(Boolean(activeClarificationKey))
+  }, [activeClarificationKey])
+
+  useEffect(() => {
+    if (!clarificationDialogOpen || !activeClarification) {
+      return
+    }
+    const frame = requestAnimationFrame(() => firstClarificationOptionRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [activeClarification, clarificationDialogOpen])
 
   // 新消息到达时自动滚到底部，除非用户手动上滚
   useEffect(() => {
@@ -171,34 +267,6 @@ export function ChatPanel(props: ChatPanelProps) {
     el.scrollTop = el.scrollHeight
   }, [conversation])
 
-  // 新出现的 running thought 自动展开（除非用户手动折叠过）
-  useEffect(() => {
-    const idsToExpand: string[] = []
-    for (const entry of conversation) {
-      if (entry.kind === 'message' && entry.role === 'assistant' && entry.status === 'running' && isThoughtEntry(entry)) {
-        if (!manualCollapse.current.has(entry.id)) {
-          idsToExpand.push(entry.id)
-        }
-      }
-    }
-    // 清理完成状态 — 下次同 ID 重新 running 时允许再自动展开
-    for (const id of manualCollapse.current) {
-      if (!conversation.some(e => e.id === id && e.status === 'running')) {
-        manualCollapse.current.delete(id)
-      }
-    }
-
-    if (!idsToExpand.length) return
-    const frame = window.requestAnimationFrame(() => {
-      setExpandedIds((prev) => {
-        if (idsToExpand.every((id) => prev.has(id))) return prev
-        const next = new Set(prev)
-        for (const id of idsToExpand) next.add(id)
-        return next
-      })
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [conversation])
   const recentTasks = useMemo(() => sessionThreads.slice(0, 4), [sessionThreads])
   const filteredTasks = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -252,13 +320,34 @@ export function ChatPanel(props: ChatPanelProps) {
       return
     }
     submittingRef.current = true
-    onSubmit()
+    setModeMenuOpen(false)
+    onSubmit(composerMode)
   }
   const handleKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Tab' && event.shiftKey) {
+      event.preventDefault()
+      setComposerMode((current) => {
+        const index = COMPOSER_MODES.findIndex((mode) => mode.id === current)
+        return COMPOSER_MODES[(index + 1) % COMPOSER_MODES.length].id
+      })
+      return
+    }
     if (event.key === 'Enter' && !event.nativeEvent.isComposing && !composing) {
       event.preventDefault()
       handleSubmit()
     }
+  }
+  const handleInterrupt = () => {
+    setModeMenuOpen(false)
+    onInterrupt?.()
+  }
+  const handleClarificationSelect = (option: ClarificationOption) => {
+    setClarificationDialogOpen(false)
+    onSelectClarification(option.label, option.optionId)
+  }
+  const handleClarificationFreeText = () => {
+    setClarificationDialogOpen(false)
+    requestAnimationFrame(() => composerInputRef.current?.focus())
   }
 
   const renderTimelineEntry = (entry: ConversationEntry) => {
@@ -286,7 +375,7 @@ export function ChatPanel(props: ChatPanelProps) {
           <span className="cc-timeline-dot" />
           <div className="cc-timeline-body">
             {isThought ? (
-              <button className="cc-thought-toggle" type="button" onClick={() => toggleExpanded(entry.id, true)}>
+              <button className="cc-thought-toggle" type="button" aria-expanded={thoughtExpanded} onClick={() => toggleExpanded(entry.id)}>
                 <ChevronDown size={14} className={`cc-chevron ${thoughtExpanded ? 'cc-chevron--open' : ''}`} />
                 <span>{formatThoughtLabel(entry)}</span>
                 {entry.status === 'running' && <span className="cc-thinking-pulse" />}
@@ -310,30 +399,26 @@ export function ChatPanel(props: ChatPanelProps) {
     }
 
     if (entry.kind === 'command_batch') {
-      const isExpanded = expandedIds.has(entry.id)
       const commands = entry.commands ?? []
       return (
         <m.div key={entry.id} className="cc-timeline-item cc-timeline-item--tool" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
           <span className="cc-timeline-dot" />
           <div className="cc-timeline-body">
-            <button className="cc-command-summary" type="button" aria-expanded={isExpanded} onClick={() => toggleExpanded(entry.id, true)}>
-              <ChevronDown size={14} className={`cc-chevron ${isExpanded ? 'cc-chevron--open' : ''}`} />
-              <span>{formatCommandBatchTitle(entry)}</span>
-            </button>
-            <AnimatePresence initial={false}>
-              {isExpanded && (
-                <m.div className="cc-tool-stack" {...buildFadeUpMotion(reducedMotion, 0, 6)}>
-                  {commands.map((command) => (
-                    <ToolCommandCard
-                      key={command.id}
-                      command={command}
-                      expanded={expandedIds.has(command.id)}
-                      onToggle={() => toggleExpanded(command.id)}
-                    />
-                  ))}
-                </m.div>
-              )}
-            </AnimatePresence>
+            {commands.length > 1 && (
+              <div className="cc-command-summary cc-command-summary--static">
+                <span>{formatCommandBatchTitle(entry)}</span>
+              </div>
+            )}
+            <m.div className="cc-tool-stack" {...buildFadeUpMotion(reducedMotion, 0, 6)}>
+              {commands.map((command) => (
+                <ToolCommandCard
+                  key={command.id}
+                  command={command}
+                  expanded={expandedIds.has(command.id)}
+                  onToggle={() => toggleExpanded(command.id)}
+                />
+              ))}
+            </m.div>
           </div>
         </m.div>
       )
@@ -344,21 +429,7 @@ export function ChatPanel(props: ChatPanelProps) {
         <m.div key={entry.id} className="cc-timeline-item cc-timeline-item--notice" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
           <span className="cc-timeline-dot" />
           <div className="cc-timeline-body">
-            <pre className="cc-task-notice">{buildTaskNotification(entry)}</pre>
-            <div className="cc-approval-copy">
-              <strong>{entry.title}</strong>
-              <span>{entry.body}</span>
-            </div>
-            {entry.approvalId && (
-              <div className="cc-approval-actions">
-                <button className="cc-mini-button cc-mini-button--primary" onClick={() => onResolveApproval(entry.approvalId!, true)}>
-                  批准发布
-                </button>
-                <button className="cc-mini-button" onClick={() => onResolveApproval(entry.approvalId!, false)}>
-                  暂不发布
-                </button>
-              </div>
-            )}
+            <ApprovalCard entry={entry} onResolve={onResolveApproval} />
           </div>
         </m.div>
       )
@@ -379,12 +450,26 @@ export function ChatPanel(props: ChatPanelProps) {
       )
     }
 
+    if (entry.kind === 'system') {
+      return (
+        <m.div key={entry.id} className="cc-timeline-item cc-timeline-item--system" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
+          <span className="cc-timeline-dot" />
+          <div className="cc-timeline-body">
+            <div className="cc-system-card">
+              <span className="cc-system-card__badge">{entry.title}</span>
+              <span>{entry.body}</span>
+            </div>
+          </div>
+        </m.div>
+      )
+    }
+
     const isExpanded = expandedIds.has(entry.id)
     return (
       <m.div key={entry.id} className={`cc-timeline-item cc-timeline-item--${entry.status === 'running' ? 'running' : 'thought'}`} layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
         <span className="cc-timeline-dot" />
         <div className="cc-timeline-body">
-          <button className="cc-thought-toggle" type="button" onClick={() => toggleExpanded(entry.id, true)}>
+          <button className="cc-thought-toggle" type="button" aria-expanded={isExpanded} onClick={() => toggleExpanded(entry.id)}>
             <ChevronDown size={14} className={`cc-chevron ${isExpanded ? 'cc-chevron--open' : ''}`} />
             <span>{formatThoughtLabel(entry)}</span>
           </button>
@@ -416,6 +501,12 @@ export function ChatPanel(props: ChatPanelProps) {
                   <span>{taskView === 'chat' ? sessionThreads.length : '返回'}</span>
                 </button>
               )}
+              {sessions && sessions.length > 0 && (
+                <button className="cc-icon-button" aria-label="历史会话" onClick={() => setShowHistory(!showHistory)}>
+                  <AppIcon name="history_edu" size={15} />
+                  <span>{showHistory ? '返回' : sessions.length}</span>
+                </button>
+              )}
               <button className="cc-icon-button" aria-label="新建对话" onClick={onNewConversation}>
                 <Pencil size={14} />
                 <span>新建</span>
@@ -424,7 +515,15 @@ export function ChatPanel(props: ChatPanelProps) {
           </header>
 
           <AnimatePresence mode="wait" initial={false}>
-            {isTaskMode ? (
+            {showHistory ? (
+              <m.section key="sessions" className="cc-session-view" aria-label="历史会话" layout {...buildFadeUpMotion(reducedMotion, 0, 16)}>
+                <ProgressSessionPanel
+                  sessions={sessions ?? []}
+                  onSelectSession={onSelectSession}
+                  onResume={onResumeSession}
+                />
+              </m.section>
+            ) : isTaskMode ? (
               <m.section key={`tasks-${taskView}`} className="cc-task-view" aria-label="任务列表" layout {...buildFadeUpMotion(reducedMotion, 0, 16)}>
                 <div className="cc-task-top">
                   <button className="cc-back-button" onClick={() => (taskView === 'all' ? setTaskView('summary') : setTaskView('chat'))}>
@@ -475,25 +574,27 @@ export function ChatPanel(props: ChatPanelProps) {
             ) : (
               <m.div key={`chat-${currentRunId ?? 'idle'}`} className="cc-chat-mode" layout {...buildFadeMotion(reducedMotion)}>
                 <m.div ref={timelineRef} onScroll={handleTimelineScroll} className="cc-timeline" aria-label="对话" aria-live="polite" variants={feedVariants} initial="hidden" animate="visible">
+                  {executionPlan && executionPlan.steps.length > 0 && (
+                    <PlanPanel plan={executionPlan} onApprove={onApprovePlan} onEdit={onEditPlan} entryVariants={entryVariants} />
+                  )}
+                  {progressTasks && progressTasks.length > 0 && (
+                    <TaskPanel tasks={progressTasks} entryVariants={entryVariants} />
+                  )}
+                  {memories && memories.length > 0 && (
+                    <MemoryPanel memories={memories} onRefresh={onRefreshMemories} />
+                  )}
                   {activeClarification && (
                     <m.div className="cc-timeline-item cc-timeline-item--notice" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
                       <span className="cc-timeline-dot" />
                       <div className="cc-timeline-body">
-                        <div className="cc-approval-copy">
-                          <strong>需要确认</strong>
-                          <span>{activeClarification.question}</span>
-                        </div>
-                        <div className="cc-approval-actions">
-                          {activeClarification.options.map((option) => (
-                            <button
-                              key={option.optionId ?? option.label}
-                              className="cc-mini-button"
-                              disabled={isSubmitting}
-                              onClick={() => onSelectClarification(option.label, option.optionId)}
-                            >
-                              {option.label}
-                            </button>
-                          ))}
+                        <div className="cc-clarification-card">
+                          <div className="cc-clarification-card__copy">
+                            <strong>需要确认</strong>
+                            <span>{activeClarification.question}</span>
+                          </div>
+                          <button className="cc-mini-button cc-mini-button--primary" disabled={clarificationBusy} onClick={() => setClarificationDialogOpen(true)}>
+                            选择答案
+                          </button>
                         </div>
                       </div>
                     </m.div>
@@ -505,7 +606,7 @@ export function ChatPanel(props: ChatPanelProps) {
                         <div className="cc-error-card">
                           <strong>{errorTitle}</strong>
                           <span>{errorMessage}</span>
-                          <button className="cc-mini-button" onClick={onSubmit}>
+                          <button className="cc-mini-button" onClick={() => onSubmit(composerMode)}>
                             重试
                           </button>
                         </div>
@@ -551,6 +652,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
           <m.form className="cc-composer" layout onSubmit={handleSubmit} {...buildFadeUpMotion(reducedMotion, 0.02, 10)}>
             <input
+              ref={composerInputRef}
               className="cc-composer-input"
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
@@ -560,6 +662,20 @@ export function ChatPanel(props: ChatPanelProps) {
               placeholder="描述你的空间分析需求…"
               autoComplete="off"
             />
+            <div className={`cc-composer-mode-note cc-composer-mode-note--${composerMode}`}>
+              <SelectedModeIcon size={14} />
+              <span>{selectedComposerMode.label}</span>
+              <small>{composerMode === 'plan' ? '待办优先 · 先出计划' : 'Todo 跟踪 · 自动推进'}</small>
+            </div>
+            {tokenBudget && <TokenBudgetBar budget={tokenBudget} />}
+            {(activeSkills && activeSkills.length > 0) || compactionLevel || runStats || (denialCounts && Object.keys(denialCounts).length > 0) ? (
+              <RunStatusBar
+                activeSkills={activeSkills}
+                compactionLevel={compactionLevel}
+                runStats={runStats}
+                denialCounts={denialCounts}
+              />
+            ) : null}
             <div className="cc-composer-toolbar">
               <label className="cc-composer-tool" htmlFor="chat-file-upload" aria-label="上传图层">
                 <Plus size={19} />
@@ -598,13 +714,78 @@ export function ChatPanel(props: ChatPanelProps) {
               <button className="cc-composer-tool" type="button" aria-label="使用模板" onClick={onUseTemplate}>
                 <Square size={17} />
               </button>
-              <span className="cc-composer-spacer" />
-              <span className="cc-permission">
+            <span className="cc-composer-spacer" />
+              <div className="cc-mode-picker">
+                <button
+                  className={`cc-mode-trigger cc-mode-trigger--${composerMode}`}
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={modeMenuOpen}
+                  onClick={() => setModeMenuOpen((open) => !open)}
+                >
+                  <SelectedModeIcon size={14} />
+                  <span>{selectedComposerMode.label}</span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {modeMenuOpen && (
+                    <m.div
+                      className="cc-mode-menu"
+                      role="menu"
+                      {...buildFadeUpMotion(reducedMotion, 0, 8)}
+                    >
+                      <div className="cc-mode-menu__header">
+                        <span>模式</span>
+                        <small>⇧ + Tab 切换</small>
+                      </div>
+                      <div className="cc-mode-menu__list">
+                        {COMPOSER_MODES.map((mode) => {
+                          const ModeIcon = mode.icon
+                          const active = composerMode === mode.id
+                          return (
+                            <button
+                              key={mode.id}
+                              className={`cc-mode-option ${active ? 'cc-mode-option--active' : ''}`}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={active}
+                              onClick={() => {
+                                setComposerMode(mode.id)
+                                setModeMenuOpen(false)
+                              }}
+                            >
+                              <ModeIcon size={18} />
+                              <span>
+                                <strong>{mode.label}</strong>
+                                <small>{mode.description}</small>
+                              </span>
+                              {active && <span className="cc-mode-option__check">✓</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </m.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <span className="cc-provider-chip" title={providerLabel}>
                 <Settings2 size={14} />
                 {providerLabel}
               </span>
-              <button className="cc-send" type="submit" disabled={isSubmitting || !query.trim()} aria-label="发送">
-                {isSubmitting ? <LoaderCircle size={18} className="animate-spin" /> : <ArrowUp size={18} />}
+              <button
+                className={`cc-send ${isSubmitting ? 'cc-send--interrupt' : ''}`}
+                type={isSubmitting ? 'button' : 'submit'}
+                disabled={!isSubmitting && !query.trim()}
+                aria-label={isSubmitting ? '中断运行' : '发送'}
+                onClick={isSubmitting ? handleInterrupt : undefined}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Square size={14} />
+                    <span>中断</span>
+                  </>
+                ) : (
+                  <ArrowUp size={18} />
+                )}
               </button>
             </div>
           </m.form>
@@ -669,7 +850,185 @@ export function ChatPanel(props: ChatPanelProps) {
           </m.div>
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {clarificationDialogOpen && activeClarification && (
+          <m.div
+            className="cc-clarification-overlay"
+            onClick={() => setClarificationDialogOpen(false)}
+            {...buildFadeMotion(reducedMotion)}
+          >
+            <m.div
+              className="cc-clarification-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="clarification-title"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.key === 'Escape' && setClarificationDialogOpen(false)}
+              tabIndex={-1}
+              {...buildScaleInMotion(reducedMotion)}
+            >
+              <div className="cc-clarification-dialog__header">
+                <span>需要确认</span>
+                <strong id="clarification-title">{activeClarification.question}</strong>
+              </div>
+              {activeClarification.options.length > 0 ? (
+                <m.div className="cc-clarification-options" variants={feedVariants} initial="hidden" animate="visible">
+                  {activeClarification.options.map((option, index) => (
+                    <m.button
+                      key={option.optionId ?? `${option.label}:${index}`}
+                      ref={index === 0 ? firstClarificationOptionRef : undefined}
+                      className="cc-clarification-option"
+                      type="button"
+                      disabled={clarificationBusy}
+                      variants={entryVariants}
+                      onClick={() => handleClarificationSelect(option)}
+                    >
+                      <span>
+                        <strong>{option.label}</strong>
+                        {option.description && <small>{option.description}</small>}
+                      </span>
+                      <ChevronDown size={15} />
+                    </m.button>
+                  ))}
+                </m.div>
+              ) : (
+                <div className="cc-clarification-empty">
+                  <span>没有可直接选择的候选项。</span>
+                  {activeClarification.allowFreeText && (
+                    <button className="cc-mini-button cc-mini-button--primary" type="button" onClick={handleClarificationFreeText}>
+                      回到输入框补充
+                    </button>
+                  )}
+                </div>
+              )}
+            </m.div>
+          </m.div>
+        )}
+      </AnimatePresence>
     </div>
+  )
+}
+
+// ===== 新增子组件 =====
+
+function TokenBudgetBar({ budget }: { budget: NonNullable<ChatPanelProps['tokenBudget']> }) {
+  const pct = budget.max > 0 ? Math.min((budget.used / budget.max) * 100, 100) : 0
+  const fillClass = ({
+    normal: 'cc-token-fill--normal',
+    warning: 'cc-token-fill--warning',
+    critical: 'cc-token-fill--critical',
+    exceeded: 'cc-token-fill--exceeded',
+  } as Record<string, string>)[budget.status] ?? 'cc-token-fill--normal'
+
+  return (
+    <div className="cc-token-budget">
+      <div className="cc-token-budget__info">
+        <span>Token 预算</span>
+        <span className={budget.status === 'exceeded' || budget.status === 'critical' ? 'cc-token-budget__used--alert' : ''}>
+          {budget.used.toLocaleString()} / {budget.max.toLocaleString()}
+        </span>
+      </div>
+      <div className="cc-token-budget__bar">
+        <div className={`cc-token-budget__fill ${fillClass}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function RunStatusBar({ activeSkills, compactionLevel, runStats, denialCounts }: {
+  activeSkills?: string[]
+  compactionLevel?: string | null
+  runStats?: NonNullable<ChatPanelProps['runStats']>
+  denialCounts?: Record<string, number>
+}) {
+  const denialItems = denialCounts && Object.keys(denialCounts).length > 0
+    ? Object.entries(denialCounts).filter(([, count]) => count > 0)
+    : []
+
+  return (
+    <div className="cc-run-status">
+      {activeSkills && activeSkills.length > 0 && (
+        <span className="cc-run-status__item">
+          <Settings2 size={12} />
+          {activeSkills.join(', ')}
+        </span>
+      )}
+      {compactionLevel && (
+        <span className="cc-run-status__item">
+          压缩: {compactionLevel}
+        </span>
+      )}
+      {runStats && (
+        <span className="cc-run-status__item">
+          工具: {runStats.toolSuccesses}/{runStats.toolAttempts} 成功
+          · Token: {runStats.tokensUsed.toLocaleString()}
+        </span>
+      )}
+      {denialItems.length > 0 && (
+        <span className="cc-run-status__item cc-run-status__item--warning">
+          拒绝: {denialItems.map(([tool, count]) => `${tool} ${count}`).join(', ')}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function MemoryPanel({ memories, onRefresh }: { memories: MemoryEntry[]; onRefresh?: () => void }) {
+  const [isOpen, setIsOpen] = useState(false)
+  if (!memories.length) return null
+
+  return (
+    <div className="cc-memory-panel">
+      <button className="cc-memory-panel__toggle" type="button" onClick={() => setIsOpen(!isOpen)}>
+        <ChevronDown size={14} className={`cc-chevron ${isOpen ? 'cc-chevron--open' : ''}`} />
+        <span>记忆系统</span>
+        <span className="cc-memory-panel__count">{memories.length}</span>
+      </button>
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <m.div className="cc-memory-panel__list" {...buildFadeUpMotion(false, 0, 4)}>
+            {memories.map((mem) => {
+              const typeLabel = ({ user: '用户', feedback: '反馈', project: '项目', reference: '参考' } as Record<string, string>)[mem.type] ?? mem.type
+              return (
+                <div key={mem.name} className="cc-memory-item">
+                  <span className={`cc-memory-item__type cc-memory-item__type--${mem.type}`}>{typeLabel}</span>
+                  <div className="cc-memory-item__body">
+                    <strong>{mem.name}</strong>
+                    <span>{mem.description}</span>
+                  </div>
+                  <span className="cc-memory-item__age">{mem.age}</span>
+                </div>
+              )
+            })}
+            {onRefresh && (
+              <button className="cc-memory-panel__refresh" type="button" onClick={onRefresh}>刷新记忆</button>
+            )}
+          </m.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function ApprovalCard({ entry, onResolve }: { entry: ConversationEntry; onResolve: (id: string, approved: boolean) => void }) {
+  return (
+    <>
+      <pre className="cc-task-notice">{buildTaskNotification(entry)}</pre>
+      <div className="cc-approval-copy">
+        <strong>{entry.title}</strong>
+        <span>{entry.body}</span>
+      </div>
+      {entry.approvalId && (
+        <div className="cc-approval-actions">
+          <button className="cc-mini-button cc-mini-button--primary" onClick={() => onResolve(entry.approvalId!, true)}>
+            批准发布
+          </button>
+          <button className="cc-mini-button" onClick={() => onResolve(entry.approvalId!, false)}>
+            暂不发布
+          </button>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -699,6 +1058,177 @@ function DataReferenceCard({ references }: { references: DataReferenceSummary[] 
   )
 }
 
+// ===== 新增 Plan / Task / Session 面板 =====
+
+function PlanPanel({ plan, onApprove, onEdit, entryVariants }: {
+  plan: NonNullable<ChatPanelProps['executionPlan']>
+  onApprove?: () => void
+  onEdit?: () => void
+  entryVariants: Variants
+}) {
+  return (
+    <m.div key="plan-panel" className="cc-timeline-item cc-timeline-item--notice" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
+      <span className="cc-timeline-dot" />
+      <div className="cc-timeline-body">
+        <div className="cc-plan-panel">
+          <div className="cc-plan-panel__header">
+            <AppIcon name="psychology" size={16} />
+            <span>执行计划</span>
+          </div>
+          <div className="cc-plan-panel__goal">{plan.goal}</div>
+          <div className="cc-plan-steps">
+            {plan.steps.map((step, i) => (
+              <div key={i} className="cc-plan-step">
+                <span className="cc-plan-step__num">{i + 1}</span>
+                <div className="cc-plan-step__body">
+                  <span className="cc-plan-step__tool">{step.tool}</span>
+                  {step.args && Object.keys(step.args).length > 0 && (
+                    <code className="cc-plan-step__args">{JSON.stringify(step.args)}</code>
+                  )}
+                  <span className="cc-plan-step__reason">{step.reason}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="cc-plan-actions">
+            {onApprove && (
+              <button className="cc-mini-button cc-mini-button--primary" onClick={onApprove}>确认执行</button>
+            )}
+            {onEdit && (
+              <button className="cc-mini-button" onClick={onEdit}>修改计划</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </m.div>
+  )
+}
+
+function TaskPanel({ tasks, entryVariants }: {
+  tasks: NonNullable<ChatPanelProps['tasks']>
+  entryVariants: Variants
+}) {
+  const completed = tasks.filter(t => t.status === 'completed').length
+  const total = tasks.length
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0
+  const currentTask = tasks.find((task) => task.status === 'running') ?? tasks.find((task) => task.status === 'pending') ?? tasks.at(-1)
+  const [isExpanded, setIsExpanded] = useState(true)
+
+  return (
+    <m.div key="task-progress" className="cc-timeline-item cc-timeline-item--todo" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
+      <span className="cc-timeline-dot" />
+      <div className="cc-timeline-body">
+        <div className="cc-task-progress">
+          <div className="cc-task-progress__header">
+            <strong>Todo</strong>
+            <span>{completed}/{total} 完成</span>
+          </div>
+          {currentTask && (
+            <div className="cc-task-progress__current">
+              <span>{formatTaskStatus(currentTask.status)}</span>
+              <strong>{currentTask.status === 'running' ? currentTask.activeForm || currentTask.content : currentTask.content}</strong>
+            </div>
+          )}
+          <div className="cc-task-progress__bar">
+            <div className="cc-task-progress__fill" style={{ width: `${pct}%` }} />
+          </div>
+          <button className="cc-thought-toggle" type="button" onClick={() => setIsExpanded(!isExpanded)}>
+            <ChevronDown size={14} className={`cc-chevron ${isExpanded ? 'cc-chevron--open' : ''}`} />
+            <span>{isExpanded ? '收起 Todo' : '展开 Todo'}</span>
+          </button>
+          <AnimatePresence initial={false}>
+            {isExpanded && (
+              <m.div className="cc-task-progress__list" {...buildFadeUpMotion(false, 0, 4)}>
+                {tasks.map(task => (
+                  <div key={task.id} className="cc-task-progress-item">
+                    <span className="cc-task-progress-item__content">{task.content}</span>
+                    <span className={`cc-task-progress-item__tag cc-task-progress-item__tag--${task.status}`}>
+                      {formatTaskStatus(task.status)}
+                    </span>
+                  </div>
+                ))}
+              </m.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </m.div>
+  )
+}
+
+function ProgressSessionPanel({ sessions, onSelectSession, onResume }: {
+  sessions: NonNullable<ChatPanelProps['sessions']>
+  onSelectSession?: (id: string) => void
+  onResume?: (sessionId: string) => void
+}) {
+  const [search, setSearch] = useState('')
+  const filtered = useMemo(() => {
+    const keyword = search.trim().toLowerCase()
+    if (!keyword) return sessions
+    return sessions.filter(s =>
+      s.title.toLowerCase().includes(keyword) ||
+      s.latest_query.toLowerCase().includes(keyword)
+    )
+  }, [sessions, search])
+
+  return (
+    <div className="cc-session-panel">
+      <div className="cc-session-panel__header">
+        <strong>历史会话</strong>
+        <span className="text-[12px] text-[#6e7781]">{sessions.length} 个</span>
+      </div>
+      <input
+        className="cc-session-panel__search"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder="搜索会话..."
+      />
+      <div className="cc-session-panel__list">
+        {filtered.length > 0 ? filtered.map(session => (
+          <div key={session.id} className="cc-session-item">
+            <div className="cc-session-item__info">
+              <strong className="cc-session-item__title">{session.title || '未命名会话'}</strong>
+              <span className="cc-session-item__query">{session.latest_query || '暂无查询记录'}</span>
+            </div>
+            <div className="cc-session-item__meta">
+              <span>{formatSessionDate(session.created_at)}</span>
+              <span>{session.run_count} 次运行</span>
+            </div>
+            <div className="cc-session-item__actions">
+              {onSelectSession && (
+                <button className="cc-mini-button" onClick={() => onSelectSession(session.id)}>查看</button>
+              )}
+              {onResume && (
+                <button className="cc-mini-button cc-mini-button--primary" onClick={() => onResume(session.id)}>恢复</button>
+              )}
+            </div>
+          </div>
+        )) : (
+          <div className="cc-session-empty">没有匹配的会话</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function formatTaskStatus(status: string) {
+  if (status === 'pending') return '待处理'
+  if (status === 'in_progress' || status === 'running') return '进行中'
+  if (status === 'completed') return '已完成'
+  if (status === 'failed') return '失败'
+  if (status === 'blocked') return '待确认'
+  return status
+}
+
+function formatSessionDate(dateStr: string) {
+  try {
+    const d = new Date(dateStr)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  } catch {
+    return dateStr
+  }
+}
+
 function buildActiveClarification(clarification: ClarificationState | null | undefined, intent: UserIntent | undefined) {
   // 澄清显示事实源。
   //
@@ -706,14 +1236,18 @@ function buildActiveClarification(clarification: ClarificationState | null | und
   // 写入 intent。UI 优先展示运行态事实，避免工具成功但前端只看 intent 而空白。
   if (clarification && !clarification.selectedOptionId) {
     return {
+      key: clarification.clarificationId,
       question: clarification.question,
       options: clarification.options,
+      allowFreeText: clarification.allowFreeText,
     }
   }
   if (intent?.clarificationRequired) {
     return {
+      key: `intent:${intent.clarificationQuestion ?? 'clarification'}`,
       question: intent.clarificationQuestion ?? '请确认下一步。',
       options: intent.clarificationOptions ?? [],
+      allowFreeText: true,
     }
   }
   return null
@@ -728,23 +1262,50 @@ function ToolCommandCard({
   expanded: boolean
   onToggle: () => void
 }) {
+  const isSearch = /Grep|Glob|ToolSearch|search/i.test(command.toolName ?? command.title)
+  const isRead = /Read|load_layer|inspect|list_/i.test(command.toolName ?? command.title)
+  const isRunning = command.status === 'running'
+  const resultText = formatCommandOutput(command)
+  const resultLong = resultText.length > 300
+  const ToolIcon = isSearch ? Search : isRead ? FileText : Settings2
+
   return (
     <div className="cc-tool-row">
       <button className="cc-tool-row-head" type="button" aria-expanded={expanded} onClick={onToggle}>
         <ChevronDown size={13} className={`cc-chevron ${expanded ? 'cc-chevron--open' : ''}`} />
-        <span className="cc-tool-row-title">{command.title}</span>
+        <span className={`cc-tool-row-icon ${isRunning ? 'cc-tool-row-icon--spin' : ''}`}>
+          {isRunning ? <LoaderCircle size={13} /> : <ToolIcon size={13} />}
+        </span>
+        <span className="cc-tool-row-copy">
+          <span className="cc-tool-row-title">{command.title}</span>
+          {!expanded && <span className="cc-tool-row-subtitle">{formatCommandPreview(command, resultText)}</span>}
+        </span>
         <span className={`cc-command-status cc-command-status--${command.status}`}>{formatCommandStatus(command.status)}</span>
       </button>
+      {!expanded && command.commandText && (
+        <div className="cc-tool-row-preview">
+          <code>{trimMiddle(command.commandText.replace(/^>\s*/u, ''), 92)}</code>
+        </div>
+      )}
       <AnimatePresence initial={false}>
         {expanded && (
           <m.div className="cc-tool-detail" {...buildFadeUpMotion(false, 0, 4)}>
             {command.commandText && (
-              <p>
-                <span>输入</span>
+              <p className="cc-tool-args-block">
+                <span>{command.toolName}</span>
                 <code>{command.commandText.replace(/^>\s*/u, '')}</code>
               </p>
             )}
-            <Markdown>{command.status === 'running' ? '等待工具返回...' : formatCommandOutput(command)}</Markdown>
+            {isRunning ? (
+              <p className="cc-tool-detail-progress">执行中，等待工具返回…</p>
+            ) : resultLong ? (
+              <details>
+                <summary>{resultText.slice(0, 200)}…</summary>
+                <Markdown>{resultText}</Markdown>
+              </details>
+            ) : (
+              <Markdown>{resultText}</Markdown>
+            )}
           </m.div>
         )}
       </AnimatePresence>
@@ -764,13 +1325,13 @@ function isThoughtEntry(entry: ConversationEntry) {
 }
 
 function formatThoughtLabel(entry: ConversationEntry) {
-  if (entry.status === 'running') return '思考中…'
+  if (entry.status === 'running') return '思考中'
   const startedAt = typeof entry.details?._startedAt === 'string' ? entry.details._startedAt : null
   const endedAt = typeof entry.details?._endedAt === 'string' ? entry.details._endedAt : entry.timestamp
   if (startedAt && endedAt) {
     const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime()
     if (ms >= 1000) {
-      return `思考过程（${fmtDuration(ms)}）`
+      return `思考了 ${fmtDuration(ms)}`
     }
   }
   return '思考过程'
@@ -803,6 +1364,22 @@ function formatCommandOutput(command: ConversationCommand) {
   }
   const body = command.body.replace(/\s+/gu, ' ').trim()
   return body || formatCommandStatus(command.status)
+}
+
+function formatCommandPreview(command: ConversationCommand, resultText: string) {
+  if (command.status === 'running') {
+    return '执行中，等待结果返回'
+  }
+  return trimMiddle(resultText, 96)
+}
+
+function trimMiddle(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/gu, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  const keep = Math.max(12, Math.floor((maxLength - 1) / 2))
+  return `${normalized.slice(0, keep)}…${normalized.slice(-keep)}`
 }
 
 function buildTaskNotification(entry: ConversationEntry) {

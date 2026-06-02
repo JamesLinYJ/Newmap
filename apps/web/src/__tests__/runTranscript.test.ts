@@ -936,12 +936,12 @@ describe('deriveConversationEntries', () => {
       },
     ]
     const result = deriveConversationEntries(transcript)
-    // Should produce a narration message and a command_batch
+    // 过程节点不再生成假旁白，工具命令直接以内联批次展示。
     const messages = result.filter((e) => e.kind === 'message')
     const commandBatches = result.filter((e) => e.kind === 'command_batch')
-    expect(messages.length).toBe(1) // narration
-    expect(messages[0].body).toContain('正在将地址解析为坐标')
+    expect(messages.length).toBe(0)
     expect(commandBatches.length).toBe(1)
+    expect(commandBatches[0].commands?.[0]?.body).toContain('执行中')
   })
 
   it('converts approval entries', () => {

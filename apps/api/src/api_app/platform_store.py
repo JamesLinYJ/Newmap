@@ -330,7 +330,11 @@ class PostgresPlatformStore:
         status = "completed"
         lifecycle_status = "completed"
         lifecycle_reason = "run_completed"
-        if state.errors:
+        if run.status == "cancelled" or state.run_lifecycle.status == "cancelled":
+            status = "cancelled"
+            lifecycle_status = "cancelled"
+            lifecycle_reason = "run_cancelled"
+        elif state.errors:
             status = "failed"
             lifecycle_status = "failed"
             lifecycle_reason = "run_failed"
@@ -783,7 +787,7 @@ class PostgresPlatformStore:
         *,
         dataset_id: str,
         session_id: str,
-        thread_id: str | None = None,
+        thread_id: str,
         filename: str,
         storage_relative_path: str,
         metadata: dict[str, Any] | None = None,
@@ -837,15 +841,15 @@ class PostgresPlatformStore:
                 ),
             )
 
-    def get_weather_dataset(self, dataset_id: str) -> WeatherDatasetRecord:
+    def get_weather_dataset(self, dataset_id: str, *, thread_id: str) -> WeatherDatasetRecord:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT dataset_id, session_id, thread_id, filename, status, storage_relative_path, metadata_json, created_at, updated_at
                 FROM platform_weather_datasets
-                WHERE dataset_id = %s
+                WHERE dataset_id = %s AND thread_id = %s
                 """,
-                (dataset_id,),
+                (dataset_id, thread_id),
             )
             row = cur.fetchone()
         if row is None:
@@ -862,26 +866,17 @@ class PostgresPlatformStore:
             updated_at=row[8],
         )
 
-    def list_weather_datasets(self, *, session_id: str | None = None, thread_id: str | None = None) -> list[WeatherDatasetRecord]:
-        conditions: list[str] = []
-        params: list[Any] = []
-        if session_id:
-            self.get_session(session_id)
-            conditions.append("session_id = %s")
-            params.append(session_id)
-        if thread_id:
-            conditions.append("(thread_id = %s OR thread_id IS NULL)")
-            params.append(thread_id)
-        where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    def list_weather_datasets(self, *, session_id: str, thread_id: str) -> list[WeatherDatasetRecord]:
+        self.get_session(session_id)
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
-                f"""
+                """
                 SELECT dataset_id, session_id, thread_id, filename, status, storage_relative_path, metadata_json, created_at, updated_at
                 FROM platform_weather_datasets
-                {where_sql}
+                WHERE session_id = %s AND thread_id = %s
                 ORDER BY updated_at DESC, created_at DESC
                 """,
-                tuple(params),
+                (session_id, thread_id),
             )
             rows = cur.fetchall()
         return [
@@ -899,8 +894,8 @@ class PostgresPlatformStore:
             for row in rows
         ]
 
-    def update_weather_dataset(self, dataset_id: str, *, status: str | None = None, metadata: dict[str, Any] | None = None) -> WeatherDatasetRecord:
-        current = self.get_weather_dataset(dataset_id)
+    def update_weather_dataset(self, dataset_id: str, *, thread_id: str, status: str | None = None, metadata: dict[str, Any] | None = None) -> WeatherDatasetRecord:
+        current = self.get_weather_dataset(dataset_id, thread_id=thread_id)
         updated = current.model_copy(
             update={
                 "status": status or current.status,
@@ -911,30 +906,30 @@ class PostgresPlatformStore:
         self.save_weather_dataset(updated)
         return updated
 
-    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service: Any, *, job_id: str | None = None) -> WeatherDatasetRecord:
+    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service: Any, *, job_id: str | None = None, thread_id: str) -> WeatherDatasetRecord:
         # 气象数据集懒解析状态机。
         #
         # 这是 dataset 状态推进的单一入口：上传只产生 uploaded；API、worker 和
         # Agent 工具真正消费数据时统一经这里推进 running / completed / failed。
-        dataset = self.get_weather_dataset(dataset_id)
+        dataset = self.get_weather_dataset(dataset_id, thread_id=thread_id)
         if dataset.status == "completed":
             return dataset
         path = self.resolve_runtime_path(dataset.storage_relative_path)
         metadata = {**dataset.metadata}
         if job_id:
             metadata["parseJobId"] = job_id
-        running = self.update_weather_dataset(dataset.dataset_id, status="running", metadata=metadata)
+        running = self.update_weather_dataset(dataset.dataset_id, thread_id=thread_id, status="running", metadata=metadata)
         try:
             parsed_metadata = weather_service.inspect(path, filename=running.filename)
         except Exception as exc:
             message = str(exc).strip() or f"气象文件解析失败：{exc.__class__.__name__}"
-            self.update_weather_dataset(running.dataset_id, status="failed", metadata={**running.metadata, "error": message})
+            self.update_weather_dataset(running.dataset_id, thread_id=thread_id, status="failed", metadata={**running.metadata, "error": message})
             if job_id:
                 self.update_weather_job(job_id, status="failed", result={}, error=message)
             raise ValueError(message) from exc
 
         merged_metadata = {**running.metadata, **parsed_metadata}
-        parsed = self.update_weather_dataset(running.dataset_id, status="completed", metadata=merged_metadata)
+        parsed = self.update_weather_dataset(running.dataset_id, thread_id=thread_id, status="completed", metadata=merged_metadata)
         if job_id:
             self.update_weather_job(job_id, status="completed", result={"metadata": merged_metadata}, error=None)
         return parsed
@@ -943,14 +938,16 @@ class PostgresPlatformStore:
         self,
         *,
         dataset_id: str,
+        thread_id: str,
         job_type: str = "parse",
         payload: dict[str, Any] | None = None,
     ) -> WeatherJobRecord:
-        self.get_weather_dataset(dataset_id)
+        self.get_weather_dataset(dataset_id, thread_id=thread_id)
         timestamp = now_utc()
         record = WeatherJobRecord(
             job_id=make_id("weather_job"),
             dataset_id=dataset_id,
+            thread_id=thread_id,
             job_type=job_type,
             status="queued",
             payload=payload or {},
@@ -967,9 +964,9 @@ class PostgresPlatformStore:
             cur.execute(
                 """
                 INSERT INTO platform_weather_jobs (
-                    job_id, dataset_id, job_type, status, payload_json, result_json, error, created_at, updated_at
+                    job_id, dataset_id, thread_id, job_type, status, payload_json, result_json, error, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
                 ON CONFLICT (job_id) DO UPDATE SET
                     status = EXCLUDED.status,
                     payload_json = EXCLUDED.payload_json,
@@ -980,6 +977,7 @@ class PostgresPlatformStore:
                 (
                     record.job_id,
                     record.dataset_id,
+                    record.thread_id,
                     record.job_type,
                     record.status,
                     json.dumps(record.payload, ensure_ascii=False),
@@ -994,7 +992,7 @@ class PostgresPlatformStore:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT job_id, dataset_id, job_type, status, payload_json, result_json, error, created_at, updated_at
+                SELECT job_id, dataset_id, thread_id, job_type, status, payload_json, result_json, error, created_at, updated_at
                 FROM platform_weather_jobs
                 WHERE job_id = %s
                 """,
@@ -1006,13 +1004,14 @@ class PostgresPlatformStore:
         return WeatherJobRecord(
             job_id=row[0],
             dataset_id=row[1],
-            job_type=row[2],
-            status=row[3],
-            payload=row[4] or {},
-            result=row[5] or {},
-            error=row[6],
-            created_at=row[7],
-            updated_at=row[8],
+            thread_id=row[2] or "",
+            job_type=row[3],
+            status=row[4],
+            payload=row[5] or {},
+            result=row[6] or {},
+            error=row[7],
+            created_at=row[8],
+            updated_at=row[9],
         )
 
     def update_weather_job(

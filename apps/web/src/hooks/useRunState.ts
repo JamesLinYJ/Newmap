@@ -17,7 +17,7 @@ import type {
   RunEvent,
   UserIntent,
 } from '@geo-agent-platform/shared-types'
-import { getRun, openRunEventStream } from '../api'
+import { getRun, getRunEvents, openRunEventStream } from '../api'
 
 // 运行状态所有权
 //
@@ -88,8 +88,8 @@ function runReducer(state: RunState, action: RunAction): RunState {
         placeResolution: action.agentState?.placeResolution ?? state.placeResolution,
         isSubmitting: isDifferentRun ? isRunning : isRunning ? state.isSubmitting : false,
         uiError: isDifferentRun ? undefined : state.uiError,
-        events: isDifferentRun ? [] : state.events,
-        seenEventIds: isDifferentRun ? new Set() : state.seenEventIds,
+        events: state.events,
+        seenEventIds: state.seenEventIds,
       }
     }
     case 'CLEAR_RUN':
@@ -153,6 +153,14 @@ export function useRunState() {
         artifacts: latestRun.state.artifacts,
       })
     })
+    // 异步加载历史事件，逐个注入恢复完整 transcript
+    getRunEvents(runId).then(events => {
+      startTransition(() => {
+        for (const event of events) {
+          dispatch({ type: 'APPEND_EVENT', event })
+        }
+      })
+    }).catch(() => {})
     return latestRun
   }, [])
 

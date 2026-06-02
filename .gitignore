@@ -12,6 +12,8 @@ __pycache__/
 venv/
 .env
 .env.local
+apps/api/.env
+docs/project-review-20260527.md
 *.egg-info/
 runtime/*
 !runtime/.gitkeep

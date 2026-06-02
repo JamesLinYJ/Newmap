@@ -23,6 +23,7 @@ class AnalysisRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     clarification_option_id: str | None = Field(default=None, alias="clarificationOptionId")
+    execution_mode: str = Field(default="auto", alias="executionMode")
 
 
 class ThreadCreateRequest(BaseModel):
@@ -35,6 +36,7 @@ class ThreadRunRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     clarification_option_id: str | None = Field(default=None, alias="clarificationOptionId")
+    execution_mode: str = Field(default="auto", alias="executionMode")
 
 
 class ThreadUpdateRequest(BaseModel):
@@ -83,6 +85,7 @@ class LayerUpdateRequest(BaseModel):
 
 
 class WeatherRenderRequest(BaseModel):
+    thread_id: str = Field(..., alias="threadId")
     variable: str | None = None
     time_index: int | None = Field(default=None, alias="timeIndex")
     level_index: int | None = Field(default=None, alias="levelIndex")
@@ -92,6 +95,7 @@ class WeatherRenderRequest(BaseModel):
 
 
 class WeatherStatsRequest(BaseModel):
+    thread_id: str = Field(..., alias="threadId")
     variable: str | None = None
     time_index: int | None = Field(default=None, alias="timeIndex")
     level_index: int | None = Field(default=None, alias="levelIndex")
@@ -99,6 +103,7 @@ class WeatherStatsRequest(BaseModel):
 
 
 class WeatherThresholdRequest(BaseModel):
+    thread_id: str = Field(..., alias="threadId")
     threshold: float
     operator: str = ">="
     variable: str | None = None
@@ -110,6 +115,7 @@ class WeatherThresholdRequest(BaseModel):
 
 
 class WeatherContoursRequest(BaseModel):
+    thread_id: str = Field(..., alias="threadId")
     levels: list[float] | None = None
     variable: str | None = None
     time_index: int | None = Field(default=None, alias="timeIndex")
@@ -120,6 +126,7 @@ class WeatherContoursRequest(BaseModel):
 
 
 class WeatherReportRequest(BaseModel):
+    thread_id: str = Field(..., alias="threadId")
     llm_interpretation: str = Field(..., alias="llmInterpretation")
     run_id: str | None = Field(default=None, alias="runId")
     result_name: str | None = Field(default=None, alias="resultName")

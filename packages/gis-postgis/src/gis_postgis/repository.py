@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from gis_common.geojson import ensure_feature_collection
 from gis_common.ids import make_id
 from shared_types.schemas import LayerDescriptor
 

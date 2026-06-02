@@ -17,6 +17,8 @@ import asyncio
 import json
 import logging
 import time as _time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 try:
@@ -46,12 +48,14 @@ from shared_types.schemas import (
     AgentFinalResponse,
     AgentStateModel,
     ApprovalRequest,
+    ArtifactRef,
     ClarificationState,
     ClarificationOption,
     ContextReference,
     ContextResolution,
     EventType,
     ExecutionPlan,
+    PlanStep,
     LoopTraceEntry,
     PlaceResolution,
     PlaceSearchCandidate,
@@ -63,9 +67,22 @@ from shared_types.schemas import (
 from tool_registry import ToolRegistry, ToolRuntime, ToolExecutionResult
 from tool_registry.value_refs import serialize_value_refs_for_model
 
-from .context_manager import AgentContextManager, LiveContextPacket
+from .context_manager import (
+    AgentContextManager, ContextPacket,
+    ToolResultBudget, AutoCompactTrackingState, AutoCompactResult,
+    autocompact_if_needed, build_compaction_boundary_message,
+    try_reactive_compact, prepend_user_context, append_system_context,
+)
+from .hooks import AgentHookManager, load_hooks_from_config
 from .parser import build_execution_plan, parse_user_intent, verify_execution_plan
-from .supervisor_config import LOOP_PHASES, build_default_runtime_config
+from .permissions import PermissionRule, evaluate_permission_chain, _match_tool_pattern
+from .project_context import load_context_prompt
+from .prompt_builder import SystemPromptParts, fetch_system_prompt_parts
+from .session_transcript import EVENT_ASSISTANT, EVENT_TOOL_RESULT, EVENT_USER_INPUT, SessionTranscript
+from .skills import SkillManager, SkillFrontmatter
+from .supervisor_config import LOOP_PHASES, build_default_runtime_config, merge_custom_agent_configs
+from .token_budget import BudgetTracker, BudgetStatus
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +221,13 @@ def _format_tool_observation(*, tool_name: str, result: Any) -> str:
         return str(compact_payload)
 
 
-_MAX_OBSERVATION_CHARS = 32000
+_MAX_TOOL_RESULT_CHARS = 32000
+# 工具结果截断后允许传递给 Agent 的最大字符数。
+
+_PERSIST_THRESHOLD_CHARS = 20000
+# 工具结果持久化阈值。当工具输出的 observation 超过此长度时，
+# 将完整结果写入 runtime artifact store，Agent 只接收截断版本 + artifact_id 引用。
+# 这样既保持 Agent 上下文的精炼，又不丢失完整数据供后续审计或调试使用。
 
 
 def _collect_thread_layer_keys(store: Any, thread_id: str | None) -> set[str]:
@@ -260,7 +283,7 @@ def _extract_summary_from_json(text: str) -> str | None:
     return None
 
 
-def _truncate_observation(text: str, max_chars: int = _MAX_OBSERVATION_CHARS) -> str:
+def _truncate_observation(text: str, max_chars: int = _MAX_TOOL_RESULT_CHARS) -> str:
     """截断过长工具输出：保留前半 + 后四分之一，中间标注省略量。"""
     if len(text) <= max_chars:
         return text
@@ -268,6 +291,39 @@ def _truncate_observation(text: str, max_chars: int = _MAX_OBSERVATION_CHARS) ->
     last_quarter = max_chars // 4
     omitted = len(text) - first_half - last_quarter
     return f"{text[:first_half]}\n[... {omitted} 个字符已省略 ...]\n{text[-last_quarter:]}"
+
+
+@dataclass
+class RuntimeStats:
+    """运行时统计对象。
+
+    在 GeoAgentRuntime 中追踪每次运行的统计指标，
+    最终写入 state 供 UI 展示和日志输出。
+
+    Attributes:
+        run_id:             运行 ID。
+        tool_attempts:      工具调用总次数。
+        tool_successes:     工具成功次数。
+        tool_failures:      工具失败次数。
+        approval_requests:  审批请求次数。
+        approval_granted:   审批通过次数。
+        approval_denied:    审批拒绝次数。
+        tokens_used:        总 token 消耗。
+        compaction_count:   压缩执行次数。
+        hook_triggers:      Hook 触发次数。
+        hook_blocks:        Hook 阻止次数。
+    """
+    run_id: str
+    tool_attempts: int = 0
+    tool_successes: int = 0
+    tool_failures: int = 0
+    approval_requests: int = 0
+    approval_granted: int = 0
+    approval_denied: int = 0
+    tokens_used: int = 0
+    compaction_count: int = 0
+    hook_triggers: int = 0
+    hook_blocks: int = 0
 
 
 class GeoAgentRuntime:
@@ -280,11 +336,108 @@ class GeoAgentRuntime:
     #
     # 运行时统一维护同一套 supervisor loop。
     # 不同 provider 只影响"如何决定下一步"，不应该拆成两套状态模型。
-    def __init__(self, *, store: Any, tool_registry: ToolRegistry, model_registry: Any):
+    def __init__(self, *, store: Any, tool_registry: ToolRegistry, model_registry: Any, skill_manager: SkillManager | None = None):
         self.store = store
         self.tool_registry = tool_registry
         self.model_registry = model_registry
+        self.skill_manager = skill_manager
+        # Hook 管理器，懒加载 — 首次调用 _get_hook_manager() 时从 runtime_config 读取
+        self._hook_manager: AgentHookManager | None = None
+        # Token 预算追踪，每次 run 开始时根据 provider 能力重新初始化
+        self.budget_tracker: BudgetTracker | None = None
+        # 运行时统计，在 run() 开始时初始化
+        self.stats: RuntimeStats | None = None
+        # Session Transcript — 懒加载，首次使用 SessionTranscript 时初始化
+        self._session_transcript: SessionTranscript | None = None
         # 每次 run 独立创建 store/checkpointer，避免并发 run 共享可变状态
+
+    # ------------------------------------------------------------------
+    # Session Transcript 延迟加载
+    # ------------------------------------------------------------------
+
+    def _get_session_transcript(self) -> SessionTranscript | None:
+        """懒加载 SessionTranscript 实例。
+
+        只有在有有效的 store 和 project_root 时才创建。
+        """
+        if self._session_transcript is not None:
+            return self._session_transcript
+        try:
+            project_root = getattr(self.store, 'project_root', None) or Path.cwd()
+            self._session_transcript = SessionTranscript(project_root=project_root)
+        except Exception as exc:
+            logger.debug("SessionTranscript 初始化失败（非关键）: %s", exc)
+            self._session_transcript = None
+        return self._session_transcript
+
+    def _serialize_run_to_transcript(
+        self,
+        run_id: str,
+        thread_id: str | None,
+        query: str,
+    ) -> None:
+        """将运行状态序列化为 JSONL 会话日志。
+
+        在 run 完成后调用，将用户输入、助手回复和工具结果写入 JSONL。
+
+        Args:
+            run_id: 运行 ID。
+            thread_id: 线程 ID。
+            query: 用户查询文本。
+        """
+        transcript = self._get_session_transcript()
+        if transcript is None:
+            return
+
+        try:
+            state = self.store.get_run(run_id).state
+        except Exception as exc:
+            logger.debug("读取 run 状态失败（跳过 JSONL 序列化）: %s", exc)
+            return
+
+        ts = now_utc()
+
+        # 写入 user_input 事件
+        transcript.append_event({
+            "ts": ts,
+            "type": EVENT_USER_INPUT,
+            "run_id": run_id,
+            "thread_id": thread_id,
+            "content": query,
+        })
+
+        # 从 tool_results 和 final_response 重建 assistant + tool_result 事件
+        tool_results = getattr(state, 'tool_results', None) or []
+        for tr in tool_results:
+            tool_name = getattr(tr, 'tool', None) or (isinstance(tr, dict) and tr.get('tool', ''))
+            message = getattr(tr, 'message', None) or (isinstance(tr, dict) and tr.get('message', ''))
+            status = getattr(tr, 'status', None) or (isinstance(tr, dict) and tr.get('status', ''))
+            if tool_name:
+                transcript.append_event({
+                    "ts": ts,
+                    "type": EVENT_TOOL_RESULT,
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "tool": tool_name,
+                    "result": message,
+                    "error": "" if status == "completed" else str(message),
+                })
+
+        # 写入 assistant 事件（final_response）
+        final_response = getattr(state, 'final_response', None)
+        summary = ""
+        if final_response is not None:
+            summary = getattr(final_response, 'summary', None) or (
+                isinstance(final_response, dict) and final_response.get('summary', '')
+            ) or ""
+        if summary:
+            transcript.append_event({
+                "ts": ts,
+                "type": EVENT_ASSISTANT,
+                "run_id": run_id,
+                "thread_id": thread_id,
+                "content": summary,
+            })
 
     async def run(
         self,
@@ -299,6 +452,7 @@ class GeoAgentRuntime:
         model_name: str | None,
         context_factory,
         clarification_option_id: str | None = None,
+        execution_mode: str = "auto",
     ) -> None:
         # 主运行入口。
         #
@@ -317,6 +471,23 @@ class GeoAgentRuntime:
             model_name=model_name,
         )
         try:
+            initial_state = self.store.get_run(run_id).state
+            runtime.state.plan_mode = execution_mode == "plan" or initial_state.plan_mode
+            runtime.state.todos = [item.model_dump(mode="json", by_alias=True) for item in initial_state.todos]
+        except Exception:
+            runtime.state.plan_mode = execution_mode == "plan"
+
+        # --- SESSION_START Hook ---
+        _hooks = self._get_hook_manager()
+        if _hooks:
+            _hooks.execute(
+                "session_start",
+                run_id=run_id,
+                thread_id=thread_id,
+                query=query,
+            )
+
+        try:
             await self._run_with_oai_agents(
                 run_id=run_id,
                 thread_id=thread_id,
@@ -325,25 +496,54 @@ class GeoAgentRuntime:
                 model_name=model_name,
                 runtime=runtime,
                 clarification_option_id=clarification_option_id,
+                execution_mode=execution_mode,
             )
         except asyncio.CancelledError:
+            # --- STOP_FAILURE Hook（取消导致轮次结束） ---
+            _hooks = self._get_hook_manager()
+            if _hooks:
+                _hooks.execute(
+                    "stop_failure",
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    error="cancelled",
+                )
             self.store.update_run_state(run_id, status="cancelled", final_response=AgentFinalResponse(
                 summary="分析已取消。",
                 limitations=["任务被系统终止。"],
                 next_actions=["重新发起分析"],
             ))
+            self._record_runtime_stats(run_id)
             self.store.complete_run(run_id, self.store.get_run(run_id).state)
             raise
         except Exception as exc:
             formatted_error = _format_agent_error(exc)
+            # --- STOP_FAILURE Hook（错误导致轮次结束） ---
+            _hooks = self._get_hook_manager()
+            if _hooks:
+                _hooks.execute(
+                    "stop_failure",
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    error=formatted_error,
+                )
+            # --- SESSION_END Hook（异常退出时结束会话） ---
+            if _hooks:
+                _hooks.execute(
+                    "session_end",
+                    run_id=run_id,
+                    thread_id=thread_id,
+                )
             final_response = AgentFinalResponse(
                 summary="抱歉，这次分析没能完成。",
                 limitations=[formatted_error],
                 next_actions=[],
             )
             self.store.update_run_state(run_id, errors=[formatted_error], final_response=final_response)
+            self._record_runtime_stats(run_id)
             final_state = self.store.get_run(run_id).state
             self.store.complete_run(run_id, final_state)
+            self._serialize_run_to_transcript(run_id=run_id, thread_id=thread_id, query=query)
             self._append_event(
                 run_id,
                 thread_id,
@@ -493,6 +693,8 @@ class GeoAgentRuntime:
         parent_intent = continuation["parent_intent"]
         selected_label = continuation["selected_label"]
         selected_candidate = continuation.get("selected_candidate")
+        parent_question = continuation.get("parent_question") or parent_intent.clarification_question or "请选择一个候选项。"
+        parent_options = continuation.get("parent_options") or parent_intent.clarification_options
         uncertainty_flags = [flag for flag in parent_intent.uncertainty_flags if flag != "ambiguous_place"]
         uncertainty_flags.append("clarification_resolved")
         continued_fields: dict[str, Any] = {
@@ -512,8 +714,8 @@ class GeoAgentRuntime:
                 clarification=ClarificationState(
                     clarification_id=f"clarification_{continuation['parent_run_id']}",
                     kind=str(continuation.get("selected_kind") or "place"),
-                    question=parent_intent.clarification_question or "请选择一个候选项。",
-                    options=parent_intent.clarification_options,
+                    question=parent_question,
+                    options=parent_options,
                     selected_option_id=continuation.get("selected_option_id"),
                 ),
                 place_resolution=PlaceResolution(
@@ -548,12 +750,24 @@ class GeoAgentRuntime:
             return None
 
         previous_intent = previous_run.state.parsed_intent
-        if previous_run.status != "clarification_needed" or previous_intent is None or not previous_intent.clarification_required:
+        previous_clarification = previous_run.state.clarification
+        if previous_run.status != "clarification_needed":
+            return None
+        if previous_clarification is not None and previous_clarification.selected_option_id is not None:
+            return None
+        if previous_intent is None:
+            return None
+        options = (
+            previous_intent.clarification_options
+            if previous_intent.clarification_required and previous_intent.clarification_options
+            else previous_clarification.options if previous_clarification is not None else []
+        )
+        if not options:
             return None
 
         selected_option = self._match_clarification_option(
             query,
-            previous_intent.clarification_options,
+            options,
             clarification_option_id=clarification_option_id,
         )
         selected_label = selected_option.label if selected_option else None
@@ -575,9 +789,11 @@ class GeoAgentRuntime:
             "parent_run_id": previous_run.id,
             "parent_query": previous_run.user_query,
             "parent_intent": previous_intent,
+            "parent_question": previous_clarification.question if previous_clarification else previous_intent.clarification_question,
+            "parent_options": options,
             "parent_place_resolution": previous_run.state.place_resolution,
             "selected_label": selected_label,
-            "selected_option_id": selected_option.option_id if selected_option else None,
+            "selected_option_id": (selected_option.option_id or selected_option.label) if selected_option else selected_label,
             "selected_kind": selected_option.kind if selected_option else None,
             "selected_candidate": selected_candidate,
         }
@@ -640,23 +856,46 @@ class GeoAgentRuntime:
         model_name: str | None,
         runtime: ToolRuntime,
         clarification_option_id: str | None = None,
+        execution_mode: str = "auto",
     ) -> None:
         """基于 OAI Agents SDK 的主运行路径。"""
         if Agent is None or FunctionTool is None or Runner is None:
             raise RuntimeError("OpenAI Agents SDK 未安装，请先安装 openai-agents 依赖后再启动分析。")
 
         runtime_config = self._get_runtime_config()
+        # 初始化 Token 预算追踪器（从 runtime_config 读取预算上限）
+        self.budget_tracker = BudgetTracker(
+            total_token_budget=getattr(runtime_config, 'max_tokens_per_run', 200000)
+        )
+        # 初始化运行时统计
+        self.stats = RuntimeStats(run_id=run_id)
         intent, continuation_note = self._build_effective_intent(
             run_id=run_id, thread_id=thread_id, query=query,
             latest_uploaded_layer_key=runtime.context.latest_uploaded_layer_key,
             clarification_option_id=clarification_option_id,
         )
         self.store.update_run_state(run_id, parsed_intent=intent, loop_phase=LOOP_PHASES["observe"])
+        if execution_mode == "plan":
+            self.store.update_run_state(run_id, plan_mode=True)
         self._append_event(run_id, thread_id, EventType.INTENT_PARSED, "已解析任务意图。", payload=intent.model_dump(mode="json"))
         self._record_loop(run_id, thread_id, iteration=1, phase=LOOP_PHASES["observe"], title="读取当前会话信息", description=continuation_note or "已装入当前问题、最近结果和会话上下文。")
 
         context_manager = AgentContextManager(store=self.store, config=runtime_config.context)
-        context_packet = context_manager.build_live_packet(run_id=run_id, thread_id=thread_id)
+        # 尝试加载会话摘要（用于 /resume 恢复时提供历史背景）
+        session_summary = ""
+        try:
+            transcript = self._get_session_transcript()
+            if transcript is not None and thread_id:
+                session_summary = transcript.build_summary(thread_id)
+        except Exception:
+            pass
+        context_packet = context_manager.build_live_packet(
+            run_id=run_id, thread_id=thread_id, query=query,
+            session_summary=session_summary,
+        )
+        # 初始化工具结果预算追踪和自动压缩追踪状态
+        tool_result_budget = ToolResultBudget(max_tokens=80000)
+        auto_compact_state = AutoCompactTrackingState()
         plan = ExecutionPlan(goal="oai_supervisor_decision", steps=[])
         catalog_layers = runtime.store.layer_repository.list_active_layers()
         thread_layer_keys = _collect_thread_layer_keys(self.store, thread_id)
@@ -672,7 +911,7 @@ class GeoAgentRuntime:
         self._append_event(run_id, thread_id, EventType.PLAN_READY, "已交给 Agent 决策。", payload=plan.model_dump(mode="json"))
         self._record_loop(run_id, thread_id, iteration=1, phase=LOOP_PHASES["decide"], title="判断下一步动作", description=f"{self._provider_display_name(provider)} 正在分析并决定下一步。")
 
-        supervisor = self._build_oai_supervisor(
+        supervisor = await self._build_oai_supervisor(
             provider=provider,
             model_name=model_name,
             run_id=run_id,
@@ -690,68 +929,150 @@ class GeoAgentRuntime:
         #
         # 允许把 guardrail/格式错误交还 Agent 做有限自修；到达上限仍然失败，
         # 不能把不合格的中间状态包装成成功结果。
+        #
+        # guardrail 重试由 tenacity 接管（OutputGuardrailTripwireTriggered），
+        # 上下文重建和压缩编排保持为平台业务逻辑。
         current_state = self.store.get_run(run_id).state
         final_summary = ""
         final_response: AgentFinalResponse | None = None
         validation_error: RuntimeError | None = None
         repair_limit = max(0, runtime_config.planning.max_plan_repair_rounds)
-        for repair_attempt in range(repair_limit + 1):
-            repair_input = query if repair_attempt == 0 else context_manager.build_repair_observation(
-                query=query,
-                validation_error=validation_error,
-                run_state=self.store.get_run(run_id).state,
-                packet=context_packet,
-            )
+        conversation_msgs: list[dict] = []
+        repair_attempt = 0
+        while repair_attempt <= repair_limit:
+            if repair_attempt == 0:
+                # 将 user_context（工作目录/OS/日期/用户）prepend 到第一条 user message 前。
+                # 为什么 prepend 到 user message 而不是 system prompt？
+                # —— user_context 描述的是用户的环境信息，属于"用户侧"上下文，
+                # 放在 user message 开头可以让模型在阅读用户问题之前先了解环境背景。
+                user_ctx = getattr(getattr(self, '_last_prompt_parts', None), 'user_context', '')
+                repair_input = f"{user_ctx}\n\n{query}" if user_ctx else query
+            else:
+                repair_input = context_manager.build_repair_observation(
+                    query=query,
+                    validation_error=validation_error,
+                    run_state=self.store.get_run(run_id).state,
+                    packet=context_packet,
+                )
+            # ---- 自动压缩检查：每次 streaming 前评估 token 使用情况 ----
             try:
-                streaming = Runner.run_streamed(supervisor, repair_input, max_turns=50, run_config=run_config)
-                sdk_caps = self.model_registry.agents_sdk_capabilities(provider, model_name)
-                final_summary = await self._consume_oai_stream(
-                    streaming,
+                current_state_for_compact = self.store.get_run(run_id).state
+            except Exception:
+                current_state_for_compact = None
+            if current_state_for_compact is not None:
+                conversation_msgs = _build_messages_for_compression(
+                    supervisor=supervisor,
+                    query=query,
+                    repair_input=repair_input,
+                    state=current_state_for_compact,
+                    context_prompt=context_packet.prompt_context,
+                )
+                if conversation_msgs:
+                    compacted_msgs, compact_result = autocompact_if_needed(
+                        conversation_msgs,
+                        model=getattr(runtime_config, "main_loop_model", "default"),
+                        tracking_state=auto_compact_state,
+                        tool_result_budget=tool_result_budget,
+                    )
+                    if compact_result.was_compacted:
+                        boundary = build_compaction_boundary_message(
+                            level="auto",
+                            summary=compact_result.summary,
+                        )
+                        repair_input = f"{repair_input}\n\n{boundary['content']}"
+            # ---- 工具结果预算警告 ----
+            if tool_result_budget.truncated:
+                budget_warning = tool_result_budget.get_warning()
+                if budget_warning:
+                    repair_input = f"{repair_input}\n\n{budget_warning}"
+
+            # ---- tenacity 替代手写 guardrail 重试 ----
+            _guardrail_retry = retry(
+                stop=stop_after_attempt(max(1, repair_limit + 1)),
+                wait=wait_exponential(multiplier=1, min=1, max=10),
+                retry=retry_if_exception_type(OutputGuardrailTripwireTriggered),
+                reraise=True,
+            )
+
+            @_guardrail_retry
+            async def _stream_with_retry():
+                _streaming = Runner.run_streamed(
+                    supervisor, repair_input,
+                    max_turns=runtime_config.max_turns,
+                    run_config=run_config,
+                )
+                _sdk_caps = self.model_registry.agents_sdk_capabilities(provider, model_name)
+                _final_summary = await self._consume_oai_stream(
+                    _streaming,
                     run_id=run_id,
                     thread_id=thread_id,
-                    output_contract=sdk_caps.final_output_contract,
+                    output_contract=_sdk_caps.final_output_contract,
                 )
-                if streaming.interruptions:
-                    self._persist_sdk_approval_interruptions(
-                        run_id=run_id,
-                        thread_id=thread_id,
-                        streaming=streaming,
-                        warnings=self.store.get_run(run_id).state.warnings,
-                    )
-                    return
-            except Exception as exc:
-                guardrail_error = self._extract_output_guardrail_error(exc)
-                if guardrail_error is None:
-                    self._record_loop(
-                        run_id,
-                        thread_id,
-                        iteration=max(self.store.get_run(run_id).state.loop_iteration, 1),
-                        phase=LOOP_PHASES["failed"],
-                        title="Agent SDK 运行失败",
-                        description=f"Agent SDK 运行失败：{exc}",
-                        status="failed",
-                    )
-                    raise RuntimeError(f"Agent SDK 运行失败：{exc}") from exc
-                validation_error = RuntimeError(guardrail_error)
+                return _streaming, _final_summary
+
+            try:
+                streaming, final_summary = await _stream_with_retry()
+            except OutputGuardrailTripwireTriggered as exc:
+                # guardrail 重试已达上限 -> 永久失败
+                guardrail_error = self._extract_output_guardrail_error(exc) or "结果边界校验未通过。"
                 state_snapshot = self.store.get_run(run_id).state
                 warnings = list(state_snapshot.warnings)
                 if guardrail_error not in warnings:
                     warnings.append(guardrail_error)
-                if repair_attempt >= repair_limit:
-                    self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1, warnings=warnings)
-                    self._record_loop(
-                        run_id,
-                        thread_id,
-                        iteration=max(self.store.get_run(run_id).state.loop_iteration, 1),
-                        phase=LOOP_PHASES["failed"],
-                        title="Agent 结果边界失败",
-                        description=f"Agent 结果边界校验失败且已达修正上限：{guardrail_error}",
-                        status="failed",
-                    )
-                    raise RuntimeError(f"Agent 结果边界校验失败且已达修正上限：{guardrail_error}") from exc
                 self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1, warnings=warnings)
-                self._record_loop(run_id, thread_id, iteration=max(self.store.get_run(run_id).state.loop_iteration, 1), phase=LOOP_PHASES["observe_result"], title="结果边界未通过，正在修正", description=f"结果校验未通过：{guardrail_error}", status="running")
-                continue
+                self._record_loop(
+                    run_id, thread_id,
+                    iteration=max(self.store.get_run(run_id).state.loop_iteration, 1),
+                    phase=LOOP_PHASES["failed"],
+                    title="Agent 结果边界失败",
+                    description=f"Agent 结果边界校验失败且已达修正上限：{guardrail_error}",
+                    status="failed",
+                )
+                raise RuntimeError(f"Agent 结果边界校验失败且已达修正上限：{guardrail_error}") from exc
+            except Exception as exc:
+                # ---- 响应式压缩：检测 context_length_exceeded ----
+                error_str = str(exc).lower()
+                if any(
+                    kw in error_str
+                    for kw in [
+                        "context_length_exceeded", "context length",
+                        "maximum context", "token limit",
+                        "too many tokens", "prompt too long",
+                    ]
+                ):
+                    if current_state_for_compact is not None and conversation_msgs:
+                        compressed_msgs, can_retry = try_reactive_compact(
+                            conversation_msgs, str(exc)
+                        )
+                        if can_retry:
+                            logger.warning(
+                                "响应式压缩触发: repair_attempt=%d, 重试中...",
+                                repair_attempt,
+                            )
+                            repair_input = (
+                                f"{repair_input}\n\n"
+                                f"[系统提示：上下文已被激进压缩以满足 token 限制。"
+                                f"部分历史对话已被移除。请基于当前可见消息继续。]"
+                            )
+                            continue  # 同一 repair_attempt 重试
+                self._record_loop(
+                    run_id, thread_id,
+                    iteration=max(self.store.get_run(run_id).state.loop_iteration, 1),
+                    phase=LOOP_PHASES["failed"],
+                    title="Agent SDK 运行失败",
+                    description=f"Agent SDK 运行失败：{exc}",
+                    status="failed",
+                )
+                raise RuntimeError(f"Agent SDK 运行失败：{exc}") from exc
+
+            if streaming.interruptions:
+                self._persist_sdk_approval_interruptions(
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    streaming=streaming,
+                    warnings=self.store.get_run(run_id).state.warnings,
+                )
+                return
 
             current_state = self.store.get_run(run_id).state
             if self._is_text_delivery_allowed(intent, current_state, final_summary):
@@ -783,8 +1104,7 @@ class GeoAgentRuntime:
                 if repair_attempt >= repair_limit:
                     self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1, warnings=warnings)
                     self._record_loop(
-                        run_id,
-                        thread_id,
+                        run_id, thread_id,
                         iteration=max(self.store.get_run(run_id).state.loop_iteration, 1),
                         phase=LOOP_PHASES["failed"],
                         title="Agent 结果校验失败",
@@ -794,20 +1114,41 @@ class GeoAgentRuntime:
                     raise RuntimeError(f"Agent SDK 结果校验失败且已达修正上限：{exc}") from exc
                 self.store.update_run_state(run_id, plan_repair_attempts=repair_attempt + 1, warnings=warnings)
                 self._record_loop(run_id, thread_id, iteration=max(self.store.get_run(run_id).state.loop_iteration, 1), phase=LOOP_PHASES["observe_result"], title="结果边界未通过，正在修正", description=f"校验未通过：{exc}", status="running")
+                repair_attempt += 1
+                continue
 
         # 最终响应与发布审批
         if final_response is None:
             raise RuntimeError("OpenAI Agents SDK 没有产出合格的最终答复。")
 
         self.store.update_run_state(run_id, final_response=final_response)
+        # 运行完成时记录统计
+        self._record_runtime_stats(run_id)
         final_state = self.store.get_run(run_id).state
         completed_run = self.store.complete_run(run_id, final_state)
+        self._serialize_run_to_transcript(run_id=run_id, thread_id=thread_id, query=query)
+
+        # --- STOP + SESSION_END Hooks（正常结束） ---
+        _hooks = self._get_hook_manager()
+        if _hooks:
+            _hooks.execute(
+                "stop",
+                run_id=run_id,
+                thread_id=thread_id,
+            )
+            _hooks.execute(
+                "session_end",
+                run_id=run_id,
+                thread_id=thread_id,
+            )
+
         event_type = EventType.CLARIFICATION_REQUIRED if completed_run.status == "clarification_needed" else EventType.RUN_COMPLETED
+        # 流式消息已通过 MESSAGE_DELTA 事件发送完整文本。此处仅发送运行状态，不重复文本。
         self._append_event(
             run_id,
             thread_id,
             event_type,
-            final_response.summary,
+            "",
             payload={
                 "finalResponse": final_response.model_dump(mode="json"),
                 "clarification": completed_run.state.clarification.model_dump(mode="json") if completed_run.state.clarification else None,
@@ -815,7 +1156,7 @@ class GeoAgentRuntime:
             },
         )
 
-    def _build_oai_supervisor(
+    async def _build_oai_supervisor(
         self,
         *,
         provider: str,
@@ -827,7 +1168,7 @@ class GeoAgentRuntime:
         plan: ExecutionPlan,
         available_layers: list[str],
         runtime: ToolRuntime,
-        context_packet: LiveContextPacket,
+        context_packet: ContextPacket | None = None,
     ):
         # SDK supervisor 装配。
         #
@@ -843,6 +1184,34 @@ class GeoAgentRuntime:
 
         sdk_capabilities = self.model_registry.agents_sdk_capabilities(provider, model_name)
         output_contract = sdk_capabilities.final_output_contract
+
+        # ---- 使用 prompt_builder 组装系统 prompt 的各个组成部分 ----
+        # fetch_system_prompt_parts 统一负责：
+        # 1. 从 supervisor_config 读取默认系统 prompt
+        # 2. 加载 MEMORY.md 索引并构建 memory_mechanics prompt
+        # 3. 构建 user_context（工作目录/OS/日期）和 system_context（日期）
+        #
+        # 为什么在 _build_oai_supervisor 中调用而不是在 _build_live_supervisor_prompt 中？
+        # —— fetch_system_prompt_parts 是 async 函数，需要在此处 await，
+        # 而 _build_live_supervisor_prompt 是同步函数。
+        prompt_parts: SystemPromptParts = await fetch_system_prompt_parts(
+            supervisor_config=runtime_config.supervisor,
+            memory_base_dir=(
+                (Path.cwd() / runtime_config.context.memory_base_dir)
+                if runtime_config.context.memory_enabled
+                else None
+            ),
+            project_root=Path.cwd(),
+        )
+
+        # 读取运行时状态中的 plan_mode 标记
+        plan_mode_enabled = False
+        try:
+            run_state = self.store.get_run(run_id).state
+            plan_mode_enabled = getattr(run_state, "plan_mode", False) or False
+        except Exception:
+            pass
+
         supervisor_base = self._build_live_supervisor_prompt(
             query=query,
             intent=intent,
@@ -850,12 +1219,45 @@ class GeoAgentRuntime:
             available_layers=available_layers,
             output_contract=output_contract,
             weather_dataset_id=runtime.context.latest_weather_dataset_id,
+            memory_mechanics=prompt_parts.memory_mechanics,
+            system_context=prompt_parts.system_context,
+            plan_mode_enabled=plan_mode_enabled,
         )
-        instructions = f"{supervisor_base}\n\n{context_packet.prompt_context}" if context_packet.prompt_context else supervisor_base
+
+        # 注入项目上下文（CLAUDE.md / CONTEXT.md 自动发现）
+        project_context_prompt: str = load_context_prompt(project_root=Path.cwd())
+
+        # 组装最终 instructions：项目上下文 + 基础 prompt + 运行时上下文包
+        parts: list[str] = [supervisor_base]
+        if project_context_prompt:
+            parts.append(project_context_prompt)
+        if context_packet and context_packet.prompt_context:
+            parts.append(context_packet.prompt_context)
+        instructions = "\n\n".join(parts)
+
+        # 将 prompt_parts 暂存到实例，供 _run_with_oai_agents 在构建 user message 时
+        # 读取 user_context 并 prepend 到第一条用户消息前。
+        self._last_prompt_parts = prompt_parts
+
         all_tools = [self._build_oai_tool(defn.name, runtime, run_id, thread_id) for defn in self.tool_registry.list_definitions()]
 
+        # --- SUBAGENT_START Hook（子智能体开始创建前触发） ---
+        _subagent_hook_manager = self._get_hook_manager()
+        if _subagent_hook_manager:
+            _subagent_hook_manager.execute(
+                "subagent_start",
+                agent_type="",
+                agent_id="",
+                run_id=run_id,
+            )
+
         oai_subagents: list[Any] = []
-        for item in runtime_config.sub_agents:
+        # 合并静态 sub_agents 和动态加载的自定义 Agent 定义
+        merged_sub_agents = merge_custom_agent_configs(
+            sub_agents=runtime_config.sub_agents,
+            project_root=Path.cwd(),
+        )
+        for item in merged_sub_agents:
             sub_tools = [tool for tool in all_tools if tool.name in set(item.tools)]
             oai_subagents.append(Agent(
                 name=item.agent_id,
@@ -864,6 +1266,15 @@ class GeoAgentRuntime:
                 tools=sub_tools,
                 model=subagent_model or model,
             ))
+
+        # --- SUBAGENT_STOP Hook（子智能体创建完成后触发） ---
+        if _subagent_hook_manager:
+            _subagent_hook_manager.execute(
+                "subagent_stop",
+                agent_type="",
+                agent_id="",
+                run_id=run_id,
+            )
 
         agent_kwargs: dict[str, Any] = {
             "name": runtime_config.supervisor.name,
@@ -1064,7 +1475,12 @@ class GeoAgentRuntime:
         approvals: list[ApprovalRequest] = []
         for index, interruption in enumerate(streaming.interruptions):
             tool_name = getattr(interruption, "tool_name", None) or "unknown_tool"
+            # 审批请求计数
+            if self.stats is not None:
+                self.stats.approval_requests += 1
             raw_item = self._dump_sdk_item(getattr(interruption, "raw_item", None))
+            if self.stats is not None:
+                self.stats.approval_requests += 1
             approval = ApprovalRequest(
                 approval_id=make_id("approval"),
                 action=tool_name,
@@ -1139,6 +1555,11 @@ class GeoAgentRuntime:
             raise RuntimeError("OpenAI Agents SDK RunState 不可用，无法恢复审批中的运行。")
 
         state = run.state
+        if self.stats is not None:
+            if approved:
+                self.stats.approval_granted += 1
+            else:
+                self.stats.approval_denied += 1
         resolved = target.model_copy(update={"status": "approved" if approved else "rejected", "resolved_at": now_utc()})
         approvals = [item if item.approval_id != target.approval_id else resolved for item in state.approvals]
         self.store.update_run_state(run.id, approvals=approvals, status="running")
@@ -1156,7 +1577,7 @@ class GeoAgentRuntime:
         catalog_layers = runtime.store.layer_repository.list_active_layers()
         thread_layer_keys = _collect_thread_layer_keys(self.store, run.thread_id)
         available_layers = [item.layer_key for item in catalog_layers if item.layer_key in thread_layer_keys or item.source_type == "managed"]
-        supervisor = self._build_oai_supervisor(
+        supervisor = await self._build_oai_supervisor(
             provider=run.model_provider or self.model_registry.default_provider,
             model_name=run.model_name,
             run_id=run.id,
@@ -1178,15 +1599,21 @@ class GeoAgentRuntime:
         approval_item = interruptions[interruption_index]
         if approved:
             sdk_state.approve(approval_item)
+            # 审批通过 → 重置该工具的拒绝计数
+            self._denial_track_approval(run.id, target.action)
         else:
             sdk_state.reject(approval_item, rejection_message="用户拒绝执行这个敏感操作。")
+            # 审批拒绝 → 增加该工具的拒绝计数
+            self._denial_track_rejection(run.id, target.action)
+            if self.stats is not None:
+                self.stats.approval_denied += 1
 
         final_summary = ""
         try:
             streaming = Runner.run_streamed(
                 supervisor,
                 sdk_state,
-                max_turns=50,
+                max_turns=self._get_runtime_config().max_turns,
                 run_config=self._build_oai_run_config(run_id=run.id, thread_id=run.thread_id),
             )
             final_summary = await self._consume_oai_stream(
@@ -1225,7 +1652,7 @@ class GeoAgentRuntime:
                 run.id,
                 run.thread_id,
                 EventType.RUN_COMPLETED,
-                final_response.summary,
+                "",
                 payload={"finalResponse": final_response.model_dump(mode="json"), "approval": resolved.model_dump(mode="json")},
             )
             return self.store.get_run(run.id)
@@ -1243,25 +1670,23 @@ class GeoAgentRuntime:
                 run.id,
                 run.thread_id,
                 EventType.RUN_FAILED,
-                final_response.summary,
+                "",
                 payload={"errors": [formatted_error], "finalResponse": final_response.model_dump(mode="json"), "summaryHint": final_summary},
             )
             return self.store.get_run(run.id)
 
     async def _consume_oai_stream(self, streaming: Any, *, run_id: str, thread_id: str | None, output_contract: str) -> str:
-        """消费 OAI SDK 流式事件。
+        """消费 OAI SDK 流式事件。按思考→工具→回答三段式处理。
 
-        无论 output_contract 如何声明，一律在流末端尝试 _extract_summary_from_json。
-        流式过程中：
-        - json_object / sdk_structured: 缓存不发送（确定是 JSON）
-        - plain_text: 正常流式发送；一旦检测到 JSON 开头则切换为缓存模式
+        思考完整缓存，文本用稳定 ID 增量更新，前端同一位置替换不追加。
         """
         final_summary = ""
         iter_thinking = ""
         thinking_started_at: str | None = None
-        _last_thinking_emit = 0.0
-        _last_message_emit = 0.0
         _buffer = output_contract in ("json_object", "sdk_structured")
+        _thinking_id = f"think:{run_id}"
+        _message_id = f"msg:{run_id}"
+
         async for event in streaming.stream_events():
             if RawResponsesStreamEvent is not None and isinstance(event, RawResponsesStreamEvent):
                 data = event.data
@@ -1272,44 +1697,61 @@ class GeoAgentRuntime:
                         if thinking_started_at is None:
                             thinking_started_at = now_utc()
                         iter_thinking += delta
-                        _now = _time.monotonic()
-                        if _now - _last_thinking_emit >= 0.12:
-                            self._append_event(run_id, thread_id, EventType.THINKING_DELTA, iter_thinking, payload={"_done": False, "_startedAt": thinking_started_at})
-                            _last_thinking_emit = _now
                     elif "Text" in data_type:
                         if iter_thinking:
-                            self._append_event(run_id, thread_id, EventType.THINKING_DELTA, iter_thinking, payload={"_done": True, "_startedAt": thinking_started_at or now_utc()})
+                            self._append_event(
+                                run_id, thread_id, EventType.THINKING_DELTA,
+                                iter_thinking,
+                                payload={"_done": True, "_startedAt": thinking_started_at or now_utc(), "_id": _thinking_id},
+                            )
                             iter_thinking = ""
                             thinking_started_at = None
-                            _last_thinking_emit = 0.0
                         final_summary += delta
                         if not _buffer:
                             stripped = final_summary.strip()
-                            # 检测到 JSON 开头 → 切换为缓存模式，避免流式发送原始 JSON
                             if stripped.startswith("{"):
                                 _buffer = True
                             else:
-                                _now = _time.monotonic()
-                                if _now - _last_message_emit >= 0.04:
-                                    self._append_event(run_id, thread_id, EventType.MESSAGE_DELTA, stripped, payload={})
-                                    _last_message_emit = _now
-                    await asyncio.sleep(0)
+                                self._append_event(
+                                    run_id, thread_id, EventType.MESSAGE_DELTA,
+                                    stripped,
+                                    payload={"_id": _message_id},
+                                )
+                await asyncio.sleep(0)
+
         if iter_thinking:
-            self._append_event(run_id, thread_id, EventType.THINKING_DELTA, iter_thinking, payload={"_done": True, "_startedAt": thinking_started_at or now_utc()})
+            self._append_event(
+                run_id, thread_id, EventType.THINKING_DELTA,
+                iter_thinking,
+                payload={"_done": True, "_startedAt": thinking_started_at or now_utc(), "_id": _thinking_id},
+            )
+
         streamed = final_summary.strip()
-        # 统一在流末端尝试从 JSON 中提取 summary，处理所有 provider 可能的 JSON 输出
         clean = _extract_summary_from_json(streamed)
         if clean:
-            self._append_event(run_id, thread_id, EventType.MESSAGE_DELTA, clean, payload={"_done": True})
+            self._append_event(run_id, thread_id, EventType.MESSAGE_DELTA, clean, payload={"_done": True, "_id": _message_id})
             return clean
         if not _buffer:
-            # plain_text 且未检测到 JSON：文本已流式发送，无需重复
             final_output = self._extract_sdk_final_summary(streaming.final_output)
             return streamed or final_output
-        # 缓存模式但 JSON 解析失败，发送原始文本
         if streamed:
-            self._append_event(run_id, thread_id, EventType.MESSAGE_DELTA, streamed, payload={"_done": True})
+            self._append_event(run_id, thread_id, EventType.MESSAGE_DELTA, streamed, payload={"_done": True, "_id": _message_id})
         final_output = self._extract_sdk_final_summary(streaming.final_output)
+
+        if self.budget_tracker is not None:
+            try:
+                response = getattr(streaming, 'raw_response', None) or getattr(streaming, 'response', None)
+                usage = getattr(response, 'usage', None) if response is not None else None
+                if usage is not None:
+                    if hasattr(usage, 'model_dump'):
+                        usage = usage.model_dump()
+                    elif hasattr(usage, '_asdict'):
+                        usage = usage._asdict()
+                    self.budget_tracker.track_response(usage)
+                    if self.stats is not None:
+                        self.stats.tokens_used = self.budget_tracker.budget.used_tokens
+            except Exception:
+                pass
         return streamed or final_output
 
     # ToolExecutionResult → ToolCall 共享字段。
@@ -1402,6 +1844,24 @@ class GeoAgentRuntime:
                 options=options,
                 allow_free_text=bool(payload.get("allowFreeText", True)),
             )
+        elif tool_name == "exit_plan_mode":
+            steps: list[PlanStep] = []
+            for index, item in enumerate(payload.get("steps", []), start=1):
+                if not isinstance(item, dict):
+                    continue
+                steps.append(
+                    PlanStep(
+                        id=str(item.get("id") or f"plan-step:{index}"),
+                        tool=str(item.get("tool") or "待定"),
+                        args=dict(item.get("args") or {}),
+                        reason=str(item.get("reason") or ""),
+                    )
+                )
+            updates["execution_plan"] = ExecutionPlan(
+                goal=str(payload.get("plan_summary") or state_for_context.user_query or "执行计划"),
+                steps=steps,
+            )
+            updates["plan_mode"] = False
         selected_context = self._match_context_reference_from_args(state_for_context.context_references, query_kwargs)
         if selected_context is not None:
             updates["context_resolution"] = ContextResolution(
@@ -1449,15 +1909,97 @@ class GeoAgentRuntime:
         """构建 OAI SDK function_tool，内部复用现有的工具执行与状态同步逻辑。"""
         definition = self.tool_registry.get_definition(tool_name)
         tool_description = definition.metadata.description or definition.metadata.label
+        runtime_config = self._get_runtime_config()
+
+        # 静态权限规则列表（转换为本地 PermissionRule 对象），供闭包共享
+        _raw_rules = getattr(runtime_config.supervisor, "permission_rules", None) or []
+        _rules = [
+            PermissionRule(
+                tool_pattern=r.tool_pattern,
+                decision=r.decision,
+                priority=r.priority,
+                description=r.description,
+            )
+            for r in _raw_rules
+        ]
+        _approval_interrupt_set = set(runtime_config.supervisor.approval_interrupt_tools)
+
+        async def _needs_approval_checker(_ctx: Any, tool_args: dict[str, Any], _raw_json: str) -> bool:
+            """动态判断工具是否需要 SDK 审批中断。
+
+            决策优先级（从高到低）：
+              1. 动态回调优先: is_destructive_fn(args) → True(需审批)
+              2. 动态回调优先: is_read_only_fn(args) → False(跳过审批)
+              3. 静态标记: is_destructive/is_read_only
+              4. AlwaysDeny 规则 → True
+              5. AlwaysAllow 规则 → False
+              6. DenialTracking 连续拒绝≥3次 → False
+              7. 回退 → approval_interrupt_tools 列表
+            """
+            # 动态回调优先于静态标记
+            meta = definition.metadata
+            if meta.is_destructive_fn is not None:
+                return meta.is_destructive_fn(tool_args)
+            if meta.is_read_only_fn is not None:
+                if meta.is_read_only_fn(tool_args):
+                    return False
+            elif meta.is_read_only:
+                return False
+
+            if meta.is_destructive:
+                return True
+
+            try:
+                state = self.store.get_run(run_id).state
+            except Exception:
+                return tool_name in _approval_interrupt_set
+
+            denial_counts = getattr(state, "denial_counts", None) or {}
+
+            needs_approval, block_reason = evaluate_permission_chain(
+                tool_name=tool_name,
+                args=tool_args,
+                rules=_rules,
+                denial_counts=denial_counts,
+            )
+
+            # 权限链决策
+            if needs_approval is not None:
+                return needs_approval
+            # block_reason 不为空表示 AlwaysDeny：返回 True 走 SDK 审批以便在 _invoke 中拦截
+            if block_reason is not None:
+                return True
+            return tool_name in _approval_interrupt_set
 
         async def _invoke(**kwargs: Any) -> str:
             # =========================================================================
             # 批次写入策略：
             #   执行前：1 次 state write（sub_agents + loop_trace + tool_results）
             #   执行后：1 次 state write（tool_results + artifacts + loop_trace + 工具特定字段）
-            #   错误路径：1 次 state write（tool_results + errors + loop_trace）
+            #   错误路径：1 次 state write（tool_results + errors + loop_trace + error_category）
             #   事件独立于状态写入：从计算好的数据发射，不从 DB 反读。
             # =========================================================================
+
+            # --- AlwaysDeny 层（SDK needs_approval=False 时不会拦截，_invoke 层兜底） ---
+            for rule in _rules:
+                if rule.decision == "always_deny" and _match_tool_pattern(rule.tool_pattern, tool_name):
+                    raise RuntimeError(
+                        f"工具 {tool_name} 已被系统策略禁止执行（规则: {rule.description or rule.tool_pattern}）。"
+                    )
+
+            # --- PRE_TOOL_USE Hook（工具执行前触发，可通过 exit_code=2 阻断调用） ---
+            hook_manager = self._get_hook_manager()
+            if hook_manager:
+                pre_results = hook_manager.execute(
+                    "pre_tool_use",
+                    tool_name=tool_name,
+                    args=kwargs,
+                    run_id=run_id,
+                )
+                if any(r.blocked for r in pre_results):
+                    if self.stats is not None:
+                        self.stats.hook_blocks += 1
+                    raise RuntimeError(f"工具 {tool_name} 被 Hook 策略阻止执行。")
 
             # --- 读取初始状态（整个 _invoke 仅此一次 get_run） ---
             state = self.store.get_run(run_id).state
@@ -1487,7 +2029,7 @@ class GeoAgentRuntime:
                 iteration=iteration,
                 phase=LOOP_PHASES["act"],
                 title=f"调用工具 {tool_name}",
-                description=f"准备执行工具 {tool_name}。",
+                description=f"调用 {tool_name}",
                 status="running",
                 timestamp=now_utc(),
                 agent_id=owner.agent_id if owner is not None else None,
@@ -1532,14 +2074,30 @@ class GeoAgentRuntime:
             self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, act_entry.description, payload=act_entry.model_dump(mode="json"))
             if owner is not None:
                 self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 正在执行 {tool_name}", payload=self._find_sub_agent(sub_agents, owner.agent_id).model_dump(mode="json"))
-            self._append_event(run_id, thread_id, EventType.TOOL_STARTED, f"开始调用工具：{tool_name}", payload={"tool": tool_name, "args": kwargs, "loopPhase": LOOP_PHASES["act"], "loopIteration": iteration})
+            self._append_event(run_id, thread_id, EventType.TOOL_STARTED, f"开始调用工具：{tool_name}", payload={"tool": tool_name, "args": kwargs, "stepId": call.step_id, "loopPhase": LOOP_PHASES["act"], "loopIteration": iteration})
 
             # --- 执行工具 ---
             try:
                 result = await self.tool_registry.execute(tool_name, kwargs, runtime)
             except Exception as exc:
                 # === 错误路径：内存计算 + 1 次批次写入 ===
+                error_category = self._classify_tool_error(exc, tool_name, kwargs)
                 formatted_error = _format_agent_error(exc, tool=tool_name, step_id=tool_name)
+
+                # --- POST_TOOL_USE_FAILURE Hook（工具执行失败后触发） ---
+                if hook_manager:
+                    hook_manager.execute(
+                        "post_tool_use_failure",
+                        tool_name=tool_name,
+                        args=kwargs,
+                        run_id=run_id,
+                        error=str(exc),
+                        error_category=error_category,
+                    )
+
+                if self.stats is not None:
+                    self.stats.tool_attempts += 1
+                    self.stats.tool_failures += 1
                 tool_results[-1] = tool_results[-1].model_copy(update={"status": "failed", "message": formatted_error, "completed_at": now_utc()})
 
                 fail_trace = list(state.loop_trace)
@@ -1572,12 +2130,31 @@ class GeoAgentRuntime:
                         latest_message=formatted_error,
                     )
                 self.store.update_run_state(run_id, **error_updates)
+                self._append_event(
+                    run_id,
+                    thread_id,
+                    EventType.TOOL_COMPLETED,
+                    formatted_error,
+                    payload={
+                        "tool": tool_name,
+                        "args": kwargs,
+                        "stepId": call.step_id,
+                        "status": "failed",
+                        "errorCategory": error_category,
+                        "loopPhase": LOOP_PHASES["failed"],
+                        "loopIteration": iteration,
+                    },
+                )
                 self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, formatted_error, payload=fail_entry.model_dump(mode="json"))
                 if owner is not None:
                     self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 执行 {tool_name} 失败", payload=self._find_sub_agent(error_updates["sub_agents"], owner.agent_id).model_dump(mode="json"))
                 raise RuntimeError(formatted_error) from exc
 
             # --- 执行后：内存计算所有状态变更 ---
+            # 统计工具执行成功
+            if self.stats is not None:
+                self.stats.tool_attempts += 1
+                self.stats.tool_successes += 1
             tool_results[-1] = tool_results[-1].model_copy(update={"status": "completed", "message": result.message, "completed_at": now_utc()})
             tool_results[-1] = self._attach_tool_result_metadata(tool_results[-1], result)
 
@@ -1618,6 +2195,17 @@ class GeoAgentRuntime:
                 "loop_phase": LOOP_PHASES["observe_result"],
                 "loop_trace": post_trace,
             }
+
+            # 同步 ToolRuntimeState → AgentStateModel 的状态变更
+            if getattr(runtime.state, "plan_mode", False) != getattr(state, "plan_mode", False):
+                state_updates["plan_mode"] = runtime.state.plan_mode
+            # 始终同步 todos/tasks（工具可能清空列表）
+            runtime_todos = getattr(runtime.state, "todos", None)
+            if runtime_todos is not None:
+                state_updates["todos"] = runtime_todos
+            runtime_tasks = getattr(runtime.state, "tasks", None)
+            if runtime_tasks is not None:
+                state_updates["tasks"] = runtime_tasks
             if owner is not None:
                 state_updates["sub_agents"] = self._mark_sub_agent(
                     list(state.sub_agents), owner.agent_id,
@@ -1637,16 +2225,60 @@ class GeoAgentRuntime:
             # === 执行后批次写入（1 次替代原来的 3-4 次 update_run_state） ===
             self.store.update_run_state(run_id, **state_updates)
 
+            # --- POST_TOOL_USE Hook（工具执行成功后触发） ---
+            if hook_manager:
+                hook_manager.execute(
+                    "post_tool_use",
+                    tool_name=tool_name,
+                    args=kwargs,
+                    run_id=run_id,
+                    result_message=result.message,
+                )
+
             # --- 发射执行后事件 ---
             if has_new_artifact:
                 self._append_event(run_id, thread_id, EventType.ARTIFACT_CREATED, f"已生成图层：{result.artifact.name}", payload=result.artifact.model_dump(mode="json"))
             if owner is not None:
                 updated_sub_agents = state_updates.get("sub_agents") or state.sub_agents
                 self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 已完成 {tool_name}", payload=self._find_sub_agent(updated_sub_agents, owner.agent_id).model_dump(mode="json"))
-            self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, result.message, payload={"tool": tool_name, "args": kwargs, "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})
+            self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, result.message, payload={"tool": tool_name, "args": kwargs, "stepId": call.step_id, "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})
             self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, result.message, payload=observe_entry.model_dump(mode="json"))
             observation = _format_tool_observation(tool_name=tool_name, result=result)
-            return _truncate_observation(observation)
+
+            # 工具结果累积预算消费 — 在截断之前记录原始大小，
+            # 确保累积计数器反映真实的工具输出量。
+            if self.budget_tracker is not None:
+                self.budget_tracker.budget.consume(len(observation) // 2, 0)
+
+            # 使用 per-tool 配置的最大结果大小（fallback 到全局默认值）
+            _max_chars = definition.metadata.max_result_size_chars or _MAX_TOOL_RESULT_CHARS
+            observation = _truncate_observation(observation, _max_chars)
+
+            # 工具结果持久化：当 observation 超过持久化阈值时，
+            # 将完整结果写入 runtime artifact store，Agent 只收到截断版本 + artifact_id 引用。
+            if len(observation) > _PERSIST_THRESHOLD_CHARS:
+                persist_artifact_id = make_id("tool_persist")
+                persist_artifact = ArtifactRef(
+                    artifact_id=persist_artifact_id,
+                    run_id=run_id,
+                    uri=f"runtime://tool_persist/{persist_artifact_id}",
+                    name=f"{tool_name}_result_{make_id('res')}",
+                    artifact_type="tool_result_persist",
+                    metadata={"tool": tool_name, "size_chars": len(observation)},
+                )
+                raw_result_str = json.dumps(result.payload, ensure_ascii=False, default=str) if result.payload else observation
+                try:
+                    if hasattr(runtime.store, "artifact_export_store") and runtime.store.artifact_export_store is not None:
+                        runtime.store.artifact_export_store.put(persist_artifact_id, raw_result_str)
+                        updated_artifacts = list(state_updates.get("artifacts", state.artifacts))
+                        updated_artifacts.append(persist_artifact)
+                        self.store.update_run_state(run_id, artifacts=updated_artifacts)
+                except Exception as exc:
+                    logger.warning("工具结果持久化失败：%s —— %s", tool_name, exc)
+                observation = _truncate_observation(observation) + f"\n\n[完整结果已持久化: artifact_id={persist_artifact_id}]"
+            else:
+                observation = _truncate_observation(observation)
+            return observation
 
         # 用 Pydantic model 的 JSON Schema 作为工具参数定义。
         #
@@ -1667,13 +2299,134 @@ class GeoAgentRuntime:
             params_json_schema=params_schema,
             on_invoke_tool=_tool_handler,
             strict_json_schema=False,
-            needs_approval=tool_name in set(self._get_runtime_config().supervisor.approval_interrupt_tools),
+            needs_approval=_needs_approval_checker,
             timeout_seconds=self._SDK_TOOL_TIMEOUT_SECONDS,
             timeout_behavior="raise_exception",
         )
 
     _LLM_TIMEOUT_SECONDS = 120
     _SDK_TOOL_TIMEOUT_SECONDS = 180
+
+    # ================================================================
+    # Hook 注册中心懒加载
+    # ================================================================
+
+    def _get_hook_manager(self) -> AgentHookManager | None:
+        """懒加载 AgentHookManager，从运行时配置的 hook_configs 中初始化。
+
+        仅在 Run 开始后、配置已加载完毕时才能调用。
+        如果配置中没有 hook_configs，返回 None。
+        """
+        if self._hook_manager is None:
+            try:
+                config = self._get_runtime_config()
+                hook_configs = getattr(config, "hook_configs", None) or []
+                if hook_configs:
+                    self._hook_manager = load_hooks_from_config(
+                        [item.model_dump(mode="json", by_alias=True) for item in hook_configs]
+                    )
+            except Exception:
+                # 运行时配置尚未就绪时静默跳过
+                pass
+        return self._hook_manager
+
+    # ================================================================
+    # 工具错误分类
+    # ================================================================
+
+    @staticmethod
+    def _classify_tool_error(exc: Exception, tool_name: str, args: dict[str, Any]) -> str:
+        """根据异常类型和参数对工具执行错误进行分类。
+
+        分类结果用于 ToolExecutionResult.error_category，帮助调用方判断
+        错误来源并决定重试策略。
+
+        分类逻辑：
+        - invalid_input: 入参校验失败（ValueError/KeyError/TypeError）
+        - timeout: 执行超时
+        - permission_denied: 权限错误
+        - external_api_failure: 外部 API 调用失败
+        - data_format_error: 数据格式错误
+        - unknown: 无法分类
+        """
+        exc_name = type(exc).__name__
+        exc_str = str(exc).lower()
+
+        if isinstance(exc, (ValueError, KeyError, TypeError)):
+            return "invalid_input"
+        if "timeout" in exc_name.lower() or "timeout" in exc_str:
+            return "timeout"
+        if any(kw in exc_str for kw in ["permission", "forbidden", "denied", "unauthorized"]):
+            return "permission_denied"
+        if any(kw in exc_str for kw in ["api", "connection", "http ", "request", "response"]):
+            return "external_api_failure"
+        if any(kw in exc_str for kw in ["format", "parse", "schema", "validation"]):
+            return "data_format_error"
+        return "unknown"
+
+    # ================================================================
+    # 权限评估（工具构建时的初步判断，不含 DenialTracking）
+    # ================================================================
+
+    def _evaluate_tool_permission(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> tuple[bool | None, str | None]:
+        """工具权限决策链求值（无状态版本，用于工具构建时的初步判断）。
+
+        与 permissions.evaluate_permission_chain 不同，此方法不需要 denial_counts，
+        因此不包含 DenialTracking 层。动态 denial tracking 在 _needs_approval_checker 中实现。
+
+        Returns:
+            (needs_approval, block_reason):
+            - needs_approval: True=需审批, False=不需, None=由调用方决定
+            - block_reason: 拒绝原因，不为 None 表示 AlwaysDeny
+        """
+        runtime_config = self._get_runtime_config()
+        raw_rules = getattr(runtime_config.supervisor, "permission_rules", None) or []
+        rules = [
+            PermissionRule(
+                tool_pattern=r.tool_pattern,
+                decision=r.decision,
+                priority=r.priority,
+                description=r.description,
+            )
+            for r in raw_rules
+        ]
+        needs_approval, block_reason = evaluate_permission_chain(
+            tool_name=tool_name,
+            args=args,
+            rules=rules,
+            denial_counts={},
+        )
+        if block_reason:
+            return False, block_reason
+        return needs_approval, None
+
+    # ================================================================
+    # 审批拒绝追踪
+    # ================================================================
+
+    def _denial_track_rejection(self, run_id: str, tool_name: str) -> None:
+        """记录一次审批拒绝，更新 denial_counts。"""
+        try:
+            state = self.store.get_run(run_id).state
+            denial_counts = dict(getattr(state, "denial_counts", None) or {})
+            denial_counts[tool_name] = denial_counts.get(tool_name, 0) + 1
+            self.store.update_run_state(run_id, denial_counts=denial_counts)
+        except Exception as exc:
+            logger.debug("拒绝计数更新失败: %s", exc)
+
+    def _denial_track_approval(self, run_id: str, tool_name: str) -> None:
+        """审批通过时重置拒绝计数。"""
+        try:
+            state = self.store.get_run(run_id).state
+            denial_counts = dict(getattr(state, "denial_counts", None) or {})
+            denial_counts.pop(tool_name, None)
+            self.store.update_run_state(run_id, denial_counts=denial_counts)
+        except Exception as exc:
+            logger.debug("拒绝计数重置失败: %s", exc)
 
     def _supports_sdk_response_format(self, provider: str, model_name: str | None = None) -> bool:
         # SDK structured output 能力边界由 model adapter 声明。
@@ -1704,15 +2457,17 @@ class GeoAgentRuntime:
 
     @staticmethod
     def _build_oai_model_settings(output_contract: str):
-        # SDK 模型调用统一设置。
-        #
-        # 工具循环仍由 Agents SDK 执行，但平台状态写回是按单工具调用顺序投影的；
-        # 禁用并行工具调用可以避免多个工具同时改写同一个 run snapshot。
+        """构建 SDK ModelSettings。
+
+        平台状态写回已被批次写入保护（_invoke 中 1 次 update_run_state
+        替代多次写入），安全启用并行工具调用以提升多工具场景的延迟。
+        json_object contract 通过 extra_body 显式设置 response_format。
+        """
         if ModelSettings is None:
             return None
         if output_contract == "json_object":
             return GeoAgentRuntime._build_json_object_model_settings()
-        return ModelSettings(parallel_tool_calls=False)
+        return ModelSettings(parallel_tool_calls=True)
 
 
     def _resolve_oai_live_adapter(self, provider: str):
@@ -1766,19 +2521,92 @@ class GeoAgentRuntime:
         model_class = _StrictToolHistoryChatCompletionsModel or OpenAIChatCompletionsModel
         return model_class(model=subagent_model_name, openai_client=client)
 
-    def _build_live_supervisor_prompt(self, *, query: str, intent: UserIntent, plan: ExecutionPlan, available_layers: list[str], output_contract: str, weather_dataset_id: str | None = None) -> str:
+    def _get_active_skills(self) -> list[tuple[SkillFrontmatter, str]]:
+        """获取当前运行上下文中激活的技能列表。
+
+        激活条件（满足任一即可）：
+            1. 技能 paths 模式匹配当前 state 中 artifacts 关联的文件路径。
+            2. 技能 user_invocable=True 且用户已显式调用 /<name>。
+
+        Returns:
+            (SkillFrontmatter, prompt_text) 列表。
+        """
+        if not self.skill_manager:
+            return []
+        active_skills: list[tuple[SkillFrontmatter, str]] = []
+        # 从当前 state 中收集被操作过的文件路径
+        operated_paths: set[str] = set()
+        try:
+            state = self.store.get_run("").state
+        except Exception:
+            state = None
+        if state is not None:
+            for artifact in state.artifacts or []:
+                name = artifact.name or ""
+                artifact_id = artifact.artifact_id or ""
+                if name:
+                    operated_paths.add(name)
+                if artifact_id:
+                    operated_paths.add(artifact_id)
+                meta_path = artifact.metadata.get("source_path") or artifact.metadata.get("file_path") or ""
+                if meta_path:
+                    operated_paths.add(meta_path)
+        if operated_paths:
+            matched_by_path = self.skill_manager.match_skills_by_paths(list(operated_paths))
+            for skill_fm in matched_by_path:
+                try:
+                    prompt = self.skill_manager.get_skill_prompt(skill_fm.name)
+                    active_skills.append((skill_fm, prompt))
+                except KeyError:
+                    continue
+        return active_skills
+
+    def _build_live_supervisor_prompt(
+        self,
+        *,
+        query: str,
+        intent: UserIntent,
+        plan: ExecutionPlan,
+        available_layers: list[str],
+        output_contract: str,
+        weather_dataset_id: str | None = None,
+        memory_mechanics: str = "",
+        system_context: str = "",
+        plan_mode_enabled: bool = False,
+    ) -> str:
         # live supervisor prompt 只负责角色、约束和当前任务边界，
         # 不在这里重复塞整套状态快照，避免 prompt 与上下文文件职责重叠。
         runtime_config = self._get_runtime_config()
         lines = [runtime_config.supervisor.system_prompt.strip()]
+
+        # 计划模式提示插入在角色定义之后、工作方式之前。
+        if plan_mode_enabled:
+            lines.extend(
+                [
+                    "",
+                    "## 当前处于计划模式",
+                    "- 你当前处于 **计划模式（只读探索）**。",
+                    "- 你可以执行探索和只读分析操作（加载数据、查询属性、空间分析、气象分析、生成图表）。",
+                    "- 你不能执行发布、导出、删除等写操作。",
+                    "- 完成探索后，调用 **exit_plan_mode** 提交执行计划给用户审批。",
+                    "- 在计划中列出每一步需要的工具、参数和原因。",
+                    "- 进入探索前先调用 **todo_write** 写出计划模式待办；每完成一个探索步骤都更新待办状态。",
+                ]
+            )
+
+        # 记忆系统说明插入在角色定义和工具约束规则之间。
+        # 为什么放在这里？—— Agent 需要在了解自己是谁（角色）后、动手工作前，
+        # 就知道如何管理和使用持久记忆。
+        if memory_mechanics:
+            lines.extend(["", memory_mechanics])
         lines.extend(
             [
                 "",
                 "## 你的工作方式",
-                "- 所有空间信息必须通过工具获取，不要凭记忆直接背书。工具调用失败就直接告诉用户出了问题，不要编造结果、不要虚构「之前的对话」、不要假装有数据。",
-                "- 调用工具前，用一句话解释为什么需要这一步。比如「先查一下澳门的坐标，后面才能做范围分析」→ 然后调 geocode_place。不要沉默调工具。",
-                "- 工具返回后，用一句话总结拿到了什么、下一步做什么。「坐标拿到了，现在查周边医院」→ 然后调 search_external_pois。",
-                "- 简单问题（查地点、问定义）直接回答。复杂问题按上面方式逐步推进。",
+                "- 所有空间信息必须通过工具获取，不要凭记忆背书。工具失败直接报错，不编造结果。",
+                "- 直接调用工具，不需要在调用前解释或预告。工具结果会自动展示给用户。",
+                "- 简单问题直接回答。复杂问题逐步推进，每步用工具验证。",
+                "- 除非一次回答即可完成，否则先调用 **todo_write** 写出 2-6 个待办项；每完成一步立刻调用 **todo_write** 更新 pending/running/completed 状态。自动模式也必须善用 Todo，不要只在文本里描述计划。",
                 "- 历史上下文不是默认事实源；不要表现得自动知道上一轮细节。只有用户明确说「刚才」「上一轮」「用已有结果」等延续指令时，才调用 list_context_references 或 search_thread_context 查真实对象。",
                 '- 遇到指代词（「这个地点」「刚才那个结果」），先用上下文工具找它对应的真实对象；找不到就向用户确认。',
                 "- 以下情况主动确认，别替用户做主：地点有多个候选、用户意图模糊、操作代价大（如发布、删除）、查询条件不明确。用 request_clarification 生成选项让用户选。",
@@ -1848,6 +2676,23 @@ class GeoAgentRuntime:
                     "- 可以文本回答、地点定位、POI 汇总、生成 GeoJSON 成果或向用户澄清；不要引用不存在的图层。",
                 ]
             )
+
+        # 技能注入：将条件触发匹配到的技能 prompt 追加到 supervisor instructions 末尾。
+        # 当工具操作了与技能 paths 模式匹配的文件时，该技能自动激活并提供指引。
+        active_skills = self._get_active_skills()
+        for skill_fm, skill_prompt in active_skills:
+            lines.append("")
+            lines.append(f"## 已激活技能: {skill_fm.name}")
+            lines.append(f"（{skill_fm.description}）")
+            lines.append("")
+            lines.append(skill_prompt)
+
+        # 系统上下文（如当前日期）追加到 prompt 最末尾。
+        # 放在末尾的原因：日期信息不影响角色定义和工具规则，
+        # 但模型在生成回答时需要知道当前时间上下文。
+        if system_context:
+            lines.extend(["", system_context])
+
         return "\n".join(item for item in lines if item is not None).strip()
 
     def _build_live_subagent_prompt(self, subagent_config) -> str:
@@ -1945,6 +2790,52 @@ class GeoAgentRuntime:
             corrected = corrected.replace(phrase, f"找到 {latest_count} 个")
         return corrected
 
+    def _record_runtime_stats(self, run_id: str) -> None:
+        """将当前的运行时统计写入 state。
+
+        在 run 完成或失败时调用，将 stats 保存到 state 中供 UI 展示和日志输出。
+        """
+        if self.stats is None:
+            return
+        stats_dict = {
+            "tool_attempts": self.stats.tool_attempts,
+            "tool_successes": self.stats.tool_successes,
+            "tool_failures": self.stats.tool_failures,
+            "approval_requests": self.stats.approval_requests,
+            "approval_granted": self.stats.approval_granted,
+            "approval_denied": self.stats.approval_denied,
+            "tokens_used": self.stats.tokens_used,
+        }
+        try:
+            self.store.update_run_state(run_id, runtime_stats=stats_dict)
+        except Exception as exc:
+            logger.debug("运行时统计写入失败：%s", exc)
+
+    @staticmethod
+    def _format_stats_summary(stats: RuntimeStats | None) -> str:
+        """生成运行时统计摘要（用于日志输出）。
+
+        Args:
+            stats: 运行时统计对象。
+
+        Returns:
+            人类可读的统计摘要字符串。stats 为 None 时返回空字符串。
+        """
+        if stats is None:
+            return ""
+        parts: list[str] = [
+            f"工具调用: {stats.tool_attempts} 次",
+            f"成功: {stats.tool_successes}",
+            f"失败: {stats.tool_failures}",
+        ]
+        if stats.tokens_used > 0:
+            parts.append(f"Token: {stats.tokens_used}")
+        if stats.approval_requests > 0:
+            parts.append(f"审批: {stats.approval_requests} 次")
+            parts.append(f"通过: {stats.approval_granted}")
+            parts.append(f"拒绝: {stats.approval_denied}")
+        return f"运行时统计 —— {'; '.join(parts)}"
+
     def _find_sub_agent_definition(self, *, agent_id: str | None = None, tool_name: str | None = None):
         for item in self._get_runtime_config().sub_agents:
             if agent_id and item.agent_id == agent_id:
@@ -2027,3 +2918,62 @@ def _collect_selected_data_sources(plan: ExecutionPlan) -> list[str]:
         if step.tool == "geocode_place" and step.args.get("query"):
             sources.append(f"geosearch:{step.args['query']}")
     return list(dict.fromkeys(str(item) for item in sources))
+
+
+def _build_messages_for_compression(
+    supervisor: Any,
+    query: str,
+    repair_input: str,
+    state: Any,
+    context_prompt: str,
+) -> list[dict]:
+    """从当前运行时状态构建消息列表，用于压缩检查。
+
+    构建后的消息列表可以输入给 autocompact_if_needed() 进行压缩评估。
+    消息列表包含系统 prompt、用户 query、工具结果等。
+
+    Args:
+        supervisor: OAI SDK Agent 对象（用于获取 instructions）。
+        query: 原始用户查询。
+        repair_input: 当前迭代的输入文本。
+        state: 当前运行状态（AgentStateModel）。
+        context_prompt: 上下文 prompt（来自 ContextPacket）。
+
+    Returns:
+        用于压缩检查的消息列表（dict 格式）。无可压缩内容时返回空列表。
+    """
+    messages: list[dict] = []
+
+    # 1. 系统 prompt（来自 supervisor 的 instructions + 上下文 prompt）
+    instructions = getattr(supervisor, 'instructions', None) or ''
+    system_content = f"{instructions}\n\n{context_prompt}" if context_prompt else instructions
+    if system_content:
+        messages.append({"role": "system", "content": system_content})
+
+    # 2. 用户原始查询
+    if query:
+        messages.append({"role": "user", "content": query})
+
+    # 3. 工具执行结果（从 state.tool_results 构建 assistant + tool 消息对）
+    tool_results = getattr(state, 'tool_results', None) or []
+    for tr in tool_results:
+        tool_name = getattr(tr, 'tool', None) or (isinstance(tr, dict) and tr.get('tool', ''))
+        message = getattr(tr, 'message', None) or (isinstance(tr, dict) and tr.get('message', ''))
+        step_id = getattr(tr, 'step_id', None) or (isinstance(tr, dict) and tr.get('step_id', ''))
+        if tool_name:
+            messages.append({
+                "role": "assistant",
+                "content": f"工具调用: {tool_name}",
+            })
+            if message:
+                messages.append({
+                    "role": "tool",
+                    "content": str(message),
+                    "tool_call_id": str(step_id or tool_name),
+                })
+
+    # 4. 当前 repair_input（第一轮与 query 相同，后续轮次为修正观察）
+    if repair_input and repair_input != query:
+        messages.append({"role": "user", "content": repair_input})
+
+    return messages

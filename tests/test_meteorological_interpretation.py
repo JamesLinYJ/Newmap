@@ -199,7 +199,7 @@ class _FakeWeatherPlatformStore:
     def __init__(self, datasets: list[WeatherDatasetRecord]):
         self.datasets = {dataset.dataset_id: dataset for dataset in datasets}
 
-    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service) -> WeatherDatasetRecord:
+    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service, *, thread_id: str, job_id: str | None = None) -> WeatherDatasetRecord:
         return self.datasets[dataset_id]
 
     def resolve_runtime_path(self, relative_path: str) -> Path:

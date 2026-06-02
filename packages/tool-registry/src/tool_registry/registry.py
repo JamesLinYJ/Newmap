@@ -42,6 +42,17 @@ from shapely.ops import unary_union
 
 from .base import ToolArgsModel, ToolExecutionResult, ToolRuntime
 from .charting import render_stat_chart
+from .plan_tools import EnterPlanModeArgs, ExitPlanModeArgs, enter_plan_mode_handler, exit_plan_mode_handler
+from .task_tools import (
+    TaskCreateArgs,
+    TaskListArgs,
+    TaskUpdateArgs,
+    TodoWriteArgs,
+    task_create_handler,
+    task_list_handler,
+    task_update_handler,
+    todo_write_handler,
+)
 from .value_refs import (
     ToolValueStore,
     make_value_ref_id,
@@ -67,6 +78,22 @@ class ToolMetadata:
     tags: list[str] = field(default_factory=list)
     tool_kind: str = "registry"
     meta: dict[str, Any] = field(default_factory=dict)
+    is_read_only: bool = False
+    is_destructive: bool = False
+    is_concurrency_safe: bool = True
+    user_facing_name_template: str = ""
+    search_hint: str = ""
+    max_result_size_chars: int | None = None
+    is_enabled_fn: Callable[[], bool] | None = field(default=None, hash=False, compare=False)
+    is_read_only_fn: Callable[[dict[str, Any]], bool] | None = field(default=None, hash=False, compare=False)
+    is_destructive_fn: Callable[[dict[str, Any]], bool] | None = field(default=None, hash=False, compare=False)
+    is_concurrency_safe_fn: Callable[[dict[str, Any]], bool] | None = field(default=None, hash=False, compare=False)
+    is_search_or_read_command_fn: Callable[[dict[str, Any]], dict[str, bool]] | None = field(default=None, hash=False, compare=False)
+    should_defer: bool = False
+    always_load: bool = False
+    interrupt_behavior: str = "block"
+    prompt_fn: Callable[[dict[str, Any]], str] | None = field(default=None, hash=False, compare=False)
+    description_fn: Callable[[dict[str, Any]], str] | None = field(default=None, hash=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -889,8 +916,9 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             session_id=runtime.context.session_id,
             thread_id=runtime.context.thread_id,
         )
+        message = f"Found {len(datasets)} weather dataset(s)." if datasets else "No weather datasets in current thread. Upload .nc/.tif/.grib files first."
         return ToolExecutionResult(
-            message=f"已读取 {len(datasets)} 个气象数据集。",
+            message=message,
             payload={"datasets": [item.model_dump(mode="json") for item in datasets]},
             source="meteorological_store",
             provenance={"sessionId": runtime.context.session_id, "threadId": runtime.context.thread_id},
@@ -1239,6 +1267,12 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         ToolDefinition("list_available_layers", list_available_layers, ToolMetadata("列出可用图层", "查看系统当前有哪些图层可以直接加载使用，返回图层名和 layer_key。调用 load_layer 前如果不确定 key 可以先调这个。", "catalog", ["catalog", "layers"])),
         ToolDefinition("list_context_references", list_context_references, ToolMetadata("查看可复用结果", "查看当前对话线程里已经生成过的地点解析、图层、产物，以及上传的文件。返回列表包含每个结果的引用 ID，后续工具可以直接用这些 ID。", "context", ["context", "thread"])),
         ToolDefinition("search_thread_context", search_thread_context, ToolMetadata("搜索对话历史", "用自然语言搜索当前线程的对话历史，比如「上一轮查到的那个地点叫什么」。", "context", ["context", "memory"]), SearchThreadContextArgs),
+        ToolDefinition("todo_write", todo_write_handler, ToolMetadata("更新待办清单", "为当前分析写入完整待办列表。复杂任务开始前先调用一次，之后每完成一步就更新状态。", "control", ["todo", "task", "progress"]), TodoWriteArgs),
+        ToolDefinition("task_create", task_create_handler, ToolMetadata("创建后台任务", "把一个可独立推进的子任务登记为后台任务，同时写入待办清单。", "control", ["task", "todo"]), TaskCreateArgs),
+        ToolDefinition("task_list", task_list_handler, ToolMetadata("查看待办任务", "查看当前 run 的待办任务，可按状态过滤。", "control", ["task", "todo"]), TaskListArgs),
+        ToolDefinition("task_update", task_update_handler, ToolMetadata("更新任务状态", "按任务 ID 更新待办任务状态。", "control", ["task", "todo"]), TaskUpdateArgs),
+        ToolDefinition("enter_plan_mode", enter_plan_mode_handler, ToolMetadata("进入计划模式", "将当前 run 标记为计划模式，只允许只读探索并准备执行计划。", "control", ["plan", "mode"]), EnterPlanModeArgs),
+        ToolDefinition("exit_plan_mode", exit_plan_mode_handler, ToolMetadata("提交执行计划", "计划模式探索完成后，提交执行计划步骤供用户确认。", "control", ["plan", "approval"]), ExitPlanModeArgs),
         ToolDefinition("request_clarification", request_clarification, ToolMetadata("向用户确认", "当地点有歧义、候选太多、缺少关键条件时，生成选项让用户选择。不要让用户自由文本输入模糊信息。", "control", ["clarification", "control"]), RequestClarificationArgs),
         ToolDefinition("geocode_place", geocode_place, ToolMetadata("地名查找坐标", "输入地名或地址（如「巴黎」「澳门机场」），返回经纬度坐标和候选列表。这是查找地点位置的第一步，拿到结果后可以传给 search_external_pois 的 anchor 参数。", "lookup", ["geocode", "lookup"]), GeocodePlaceArgs),
         ToolDefinition("reverse_geocode", reverse_geocode, ToolMetadata("坐标反查地名", "输入经纬度，返回该位置的地名和地址信息。", "lookup", ["geocode", "reverse"]), ReverseGeocodeArgs),
@@ -1325,8 +1359,11 @@ def _ensure_weather_dataset_parsed(runtime: ToolRuntime, dataset_id: str):
     # Agent 工具懒解析代理。
     #
     # dataset 状态推进由 platform_store.ensure_weather_dataset_parsed 统一负责；
-    # 工具只表达“我现在需要这个 dataset 的解析结果”。
-    return runtime.store.platform_store.ensure_weather_dataset_parsed(dataset_id, _weather_service(runtime))
+    # 工具只表达”我现在需要这个 dataset 的解析结果”。
+    try:
+        return runtime.store.platform_store.ensure_weather_dataset_parsed(dataset_id, _weather_service(runtime), thread_id=runtime.context.thread_id)
+    except NotFoundError:
+        raise ValueError(f"weather dataset {dataset_id} not found in current thread, use list_meteorological_datasets to discover available datasets") from None
 
 
 def _resolve_interpretation_datasets(runtime: ToolRuntime, args: dict[str, Any]) -> list[Any]:

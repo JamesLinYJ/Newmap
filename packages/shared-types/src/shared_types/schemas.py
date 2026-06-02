@@ -242,8 +242,29 @@ class TodoItem(CamelModel):
     title: str
     status: str = "pending"
     description: str | None = None
+    activeForm: str | None = None
+    """当前进度的动态描述，如"正在处理数据..."，用于前端实时展示。"""
     owner_agent_id: str | None = None
     step_id: str | None = None
+
+
+class TaskRecord(CamelModel):
+    """后台任务记录 — Agent 异步任务的元数据。
+
+    由 task_create / task_list / task_update 工具管理。
+    任务的业务结果由 Agent 在执行完成后写回最终消息。
+    """
+    task_id: str
+    agent_type: str
+    """子智能体类型标识，如 spatial_analyst、weather_analyst。"""
+    prompt: str
+    """任务描述 / 要执行的指令文本。"""
+    status: str = "pending"
+    """pending / in_progress / completed / failed"""
+    created_at: datetime
+    updated_at: datetime | None = None
+    result_summary: str | None = None
+    """任务完成时的简短结论摘要。"""
 
 
 class SubAgentState(CamelModel):
@@ -287,7 +308,7 @@ class WeatherDatasetRecord(CamelModel):
     # 避免把多维数组塞进平台业务表。
     dataset_id: str
     session_id: str
-    thread_id: str | None = None
+    thread_id: str
     filename: str
     status: str = "uploaded"
     storage_relative_path: str
@@ -302,6 +323,7 @@ class WeatherJobRecord(CamelModel):
     # worker 只认 job 状态推进；API 和前端通过这份记录观察解析进度。
     job_id: str
     dataset_id: str
+    thread_id: str
     job_type: str = "parse"
     status: str = "queued"
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -326,10 +348,49 @@ class RuntimeSubAgentConfig(CamelModel):
     tools: list[str] = Field(default_factory=list)
 
 
+class PermissionRuleEntry(CamelModel):
+    """权限规则配置条目
+
+    tool_pattern 支持通配符 *，如 "geocode_*" 匹配所有 geocode 开头的工具。
+    decision 取值: 'always_allow' | 'always_deny' | 'always_ask'
+    """
+    tool_pattern: str
+    """工具名或前缀匹配模式，支持 * 通配符。"""
+    decision: str
+    """决策: 'always_allow'（永远允许）| 'always_deny'（永远拒绝）| 'always_ask'（始终询问）"""
+    priority: int = 0
+    """优先级，数字越小越优先。"""
+    description: str = ""
+    """规则说明。"""
+
+
+class HookConfigEntry(CamelModel):
+    """Hook 配置条目
+
+    对应 HookHandler 的配置化表示，可从 YAML 或 JSON 配置加载。
+    """
+    event_type: str
+    """Hook 事件类型字符串，如 "pre_tool_use"。"""
+    command_type: str = "command"
+    """执行方式: 'command' | 'prompt'。"""
+    command: str
+    """shell 命令或 prompt 文本。"""
+    matcher: dict[str, str] = Field(default_factory=dict)
+    """匹配条件，如 {"tool_name": "geocode_place"}。"""
+    priority: int = 0
+    """优先级，数字越小越优先执行。"""
+    description: str = ""
+    """可读描述。"""
+    timeout_seconds: int = 30
+    """命令执行超时秒数，仅对 command 类型有效。"""
+
+
 class SupervisorRuntimeConfig(CamelModel):
     name: str = "geo_agent_supervisor"
     system_prompt: str = ""
     approval_interrupt_tools: list[str] = Field(default_factory=list)
+    permission_rules: list[PermissionRuleEntry] = Field(default_factory=list)
+    """分层权限规则列表，按决策链 AlwaysDeny→AlwaysAllow→AlwaysAsk 顺序求值。"""
 
 
 class RuntimeUiConfig(CamelModel):
@@ -353,6 +414,10 @@ class RuntimeContextConfig(CamelModel):
     prompt_max_chars: int = 12000
     context_entry_window: int = 18
     memory_file_char_limit: int = 4000
+    memory_enabled: bool = True
+    """是否启用记忆系统。关闭后将不会加载 MEMORY.md 索引，也不会注入 memory_mechanics prompt。"""
+    memory_base_dir: str = ".geoagent/memory"
+    """记忆存储基础目录（相对 project_root）。Agent 持久化记忆文件的根路径。"""
 
 
 class RuntimeGeosearchConfig(CamelModel):
@@ -397,6 +462,8 @@ class RuntimePlanningConfig(CamelModel):
 
 class AgentRuntimeConfig(CamelModel):
     loop_trace_limit: int = 80
+    max_turns: int = 50
+    """Agent 运行最大轮次。超出后强制终止，防止无限循环。"""
     supervisor: SupervisorRuntimeConfig = Field(default_factory=SupervisorRuntimeConfig)
     sub_agents: list[RuntimeSubAgentConfig] = Field(default_factory=list)
     ui: RuntimeUiConfig = Field(default_factory=RuntimeUiConfig)
@@ -406,6 +473,8 @@ class AgentRuntimeConfig(CamelModel):
     geosearch: RuntimeGeosearchConfig = Field(default_factory=RuntimeGeosearchConfig)
     external_poi: RuntimePoiConfig = Field(default_factory=RuntimePoiConfig)
     nowcast: RuntimeNowcastConfig = Field(default_factory=RuntimeNowcastConfig)
+    hook_configs: list[HookConfigEntry] = Field(default_factory=list)
+    """Hook 配置列表，运行时加载到 AgentHookManager。"""
 
 
 class LoopTraceEntry(CamelModel):
@@ -494,6 +563,10 @@ class AgentStateModel(CamelModel):
     loop_phase: str = "idle"
     loop_trace: list[LoopTraceEntry] = Field(default_factory=list)
     todos: list[TodoItem] = Field(default_factory=list)
+    tasks: list[TaskRecord] = Field(default_factory=list)
+    """后台异步任务列表，由 task_* 工具管理。"""
+    plan_mode: bool = False
+    """是否处于计划模式（只读探索），由 enter_plan_mode / exit_plan_mode 控制。"""
     sub_agents: list[SubAgentState] = Field(default_factory=list)
     approvals: list[ApprovalRequest] = Field(default_factory=list)
     tool_results: list[ToolCall] = Field(default_factory=list)
@@ -507,6 +580,10 @@ class AgentStateModel(CamelModel):
     failed_step_id: str | None = None
     failed_tool: str | None = None
     final_response: AgentFinalResponse | None = None
+    denial_counts: dict[str, int] = Field(default_factory=dict)
+    """拒绝追踪计数，键为工具名，值为连续被拒次数。"""
+    runtime_stats: dict[str, int] = Field(default_factory=dict)
+    """运行时统计：tool_success_count / tool_failure_count / approval_count / hook_block_count"""
 
 
 class SessionRecord(CamelModel):

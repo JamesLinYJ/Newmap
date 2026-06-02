@@ -12,7 +12,7 @@
 //
 // 负责地图实例管理、底图切换、结果图层渲染和视角同步。
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
 import maplibregl, { LngLatBounds, Map, type StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -92,10 +92,11 @@ export function MapCanvas({
   const [mapError, setMapError] = useState<string | null>(null)
   const [tileWarning, setTileWarning] = useState<string | null>(null)
   const reducedMotion = useReducedMotion() ?? false
+  const availableBasemaps = useMemo(() => basemaps.filter((item) => item.available !== false), [basemaps])
   const activeBasemap =
-    basemaps.find((item) => item.basemapKey === selectedBasemapKey) ??
-    basemaps.find((item) => item.isDefault) ??
-    basemaps[0] ??
+    availableBasemaps.find((item) => item.basemapKey === selectedBasemapKey) ??
+    availableBasemaps.find((item) => item.isDefault) ??
+    availableBasemaps[0] ??
     DEFAULT_BASEMAP
   const initialBasemapRef = useRef(activeBasemap)
 
@@ -103,13 +104,13 @@ export function MapCanvas({
     // 底图轮转
     //
     // 维持一个极简但高频可用的交互：不弹复杂菜单，直接在可用底图间循环切换。
-    if (!basemaps.length) {
+    if (!availableBasemaps.length) {
       return
     }
-    const currentIndex = basemaps.findIndex((item) => item.basemapKey === selectedBasemapKey)
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % basemaps.length : 0
-    onSelectBasemap(basemaps[nextIndex]?.basemapKey ?? basemaps[0].basemapKey)
-  }, [basemaps, onSelectBasemap, selectedBasemapKey])
+    const currentIndex = availableBasemaps.findIndex((item) => item.basemapKey === selectedBasemapKey)
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % availableBasemaps.length : 0
+    onSelectBasemap(availableBasemaps[nextIndex]?.basemapKey ?? availableBasemaps[0].basemapKey)
+  }, [availableBasemaps, onSelectBasemap, selectedBasemapKey])
 
   const focusSelection = useCallback(() => {
     // 定位到当前结果

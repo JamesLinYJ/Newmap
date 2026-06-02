@@ -72,6 +72,7 @@ async def create_thread_run(
             provider=req.provider,
             model=req.model,
             clarificationOptionId=req.clarification_option_id,
+            executionMode=req.execution_mode,
         ),
         store,
         runtime,

@@ -36,6 +36,8 @@ import type {
 } from '@geo-agent-platform/shared-types'
 
 import {
+  type AgentExecutionMode,
+  cancelRun,
   createSession,
   deleteLayer,
   deleteThread,
@@ -175,6 +177,7 @@ function App() {
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [uploadedLayerName, setUploadedLayerName] = useState<string>()
   const [uploadReferences, setUploadReferences] = useState<UploadReference[]>([])
+  const [memories, setMemories] = useState<Array<{ name: string; description: string; type: string; age: string }>>([])
   const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
   const [isToolSubmitting, setIsToolSubmitting] = useState(false)
   const [isToolCatalogSubmitting, setIsToolCatalogSubmitting] = useState(false)
@@ -225,6 +228,104 @@ function App() {
     }),
     [deferredEvents, run, threadRuns, agentState, artifacts, query, runtimeConfig],
   )
+
+  // 从 compaction.executed 事件中提取压缩级别
+  const compactionLevel = useMemo(() => {
+    for (const event of deferredEvents) {
+      if ((event.type as string) !== 'compaction.executed') continue
+      const p = event.payload as Record<string, unknown> | undefined
+      const level = String(p?.level ?? p?.compaction_level ?? '')
+      if (level) return level
+    }
+    return null
+  }, [deferredEvents])
+
+  // 从事件流中提取 Token 预算（任意事件的 payload 中带 tokens_used 即可）
+  const tokenBudget = useMemo(() => {
+    for (const event of events) {
+      const p = event.payload as Record<string, unknown> | undefined
+      if (!p) continue
+      const tokensUsed = p.tokens_used ?? (p.usage as Record<string, unknown> | undefined)?.tokens_used
+      if (typeof tokensUsed !== 'number') continue
+      const max = p.tokens_max ?? p.budget_max ?? (p.usage as Record<string, unknown> | undefined)?.max_tokens ?? 100000
+      const budgetStatus = (p.budget_status as string) ?? (tokensUsed > max ? 'exceeded' : tokensUsed > max * 0.9 ? 'critical' : tokensUsed > max * 0.7 ? 'warning' : 'normal')
+      return {
+        used: tokensUsed,
+        max: Number(max),
+        status: budgetStatus as 'normal' | 'warning' | 'critical' | 'exceeded',
+      }
+    }
+    return undefined
+  }, [events])
+
+  // 从事件和 agentState 中提取活跃技能
+  const activeSkills = useMemo(() => {
+    const skills = new Set<string>()
+    for (const event of deferredEvents) {
+      const p = event.payload as Record<string, unknown> | undefined
+      const eventSkills = p?.active_skills ?? p?.skills
+      if (Array.isArray(eventSkills)) {
+        for (const skill of eventSkills) {
+          if (typeof skill === 'string') skills.add(skill)
+        }
+      }
+    }
+    const agentSkills = (agentState as Record<string, unknown> | undefined)?.activeSkills
+    if (Array.isArray(agentSkills)) {
+      for (const skill of agentSkills) {
+        if (typeof skill === 'string') skills.add(skill)
+      }
+    }
+    return skills.size > 0 ? [...skills] : undefined
+  }, [agentState, deferredEvents])
+
+  // 从 run.completed 事件中提取运行统计
+  const runStats = useMemo(() => {
+    for (const event of events) {
+      if (event.type !== 'run.completed') continue
+      const p = event.payload as Record<string, unknown> | undefined
+      if (!p) continue
+      const attempts = p.tool_attempts ?? p.toolAttempts
+      const successes = p.tool_successes ?? p.toolSuccesses
+      const failures = p.tool_failures ?? p.toolFailures
+      const tokensUsed = p.tokens_used ?? p.tokensUsed ?? p.total_tokens ?? p.totalTokens
+      if (
+        typeof attempts === 'number' ||
+        typeof successes === 'number' ||
+        typeof failures === 'number' ||
+        typeof tokensUsed === 'number'
+      ) {
+        return {
+          toolAttempts: Number(attempts ?? 0),
+          toolSuccesses: Number(successes ?? 0),
+          toolFailures: Number(failures ?? 0),
+          tokensUsed: Number(tokensUsed ?? 0),
+        }
+      }
+      // Fallback: scan runtime_stats in run state
+      const stats = p.runtime_stats as Record<string, unknown> | undefined
+      if (stats) {
+        return {
+          toolAttempts: Number(stats.tool_attempts ?? stats.toolAttempts ?? stats.tool_success_count ?? 0) + Number(stats.tool_failure_count ?? 0),
+          toolSuccesses: Number(stats.tool_success_count ?? stats.toolSuccesses ?? 0),
+          toolFailures: Number(stats.tool_failure_count ?? stats.toolFailures ?? 0),
+          tokensUsed: Number(stats.tokens_used ?? stats.tokensUsed ?? 0),
+        }
+      }
+    }
+    return null
+  }, [events])
+
+  // 从 agentState 提取拒绝计数
+  const denialCounts = useMemo(() => {
+    return (agentState as Record<string, unknown> | undefined)?.denialCounts as Record<string, number> | undefined
+  }, [agentState])
+
+  const progressTasks = useMemo(
+    () => buildAgentTodoItems(agentState, executionPlan, run?.status),
+    [agentState, executionPlan, run?.status],
+  )
+
   const dataReferences = useMemo(
     () => buildDataReferences({ layers, weatherDatasets, uploadReferences, artifacts, threadRuns, currentThreadId }),
     [artifacts, layers, uploadReferences, weatherDatasets, threadRuns, currentThreadId],
@@ -585,6 +686,24 @@ function App() {
   }, [setUiError])
 
   useEffect(() => {
+    // 记忆系统初始化
+    //
+    // 从后端获取记忆条目，接口不可用时静默降级为空列表。
+    const controller = new AbortController()
+    fetch(`${apiBaseUrl}/api/memories`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : [] as unknown[]))
+      .then((data) => {
+        startTransition(() => {
+          setMemories(Array.isArray(data) ? data : [])
+        })
+      })
+      .catch(() => {
+        // API 可能还不存在，静默降级
+      })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
     void getRuntimeConfig()
       .then((loadedRuntimeConfig) => {
         startTransition(() => {
@@ -714,11 +833,13 @@ function App() {
       clarificationOptionId,
       forceNewThread = false,
       updateComposer = false,
+      executionMode = 'auto',
     }: {
       text?: string
       clarificationOptionId?: string | null
       forceNewThread?: boolean
       updateComposer?: boolean
+      executionMode?: AgentExecutionMode
     } = {}) => {
       // 连续对话提交入口
       //
@@ -752,14 +873,16 @@ function App() {
         setActiveNav('analysis')
         setPanelMode('summary')
         setActiveSidebarItem('assistant')
-        setArtifactData({})
-        setArtifactMetadata({})
-        setSelectedArtifactId(undefined)
-        setToolRunResult(null)
+        if (forceNewThread) {
+          setArtifactData({})
+          setArtifactMetadata({})
+          setSelectedArtifactId(undefined)
+          setToolRunResult(null)
+        }
 
         const createdRun = targetThreadId
-          ? await startThreadRun(targetThreadId, submittedQuery, provider, model || undefined, clarificationOptionId)
-          : await startAnalysis(session.id, submittedQuery, provider, model || undefined, clarificationOptionId)
+          ? await startThreadRun(targetThreadId, submittedQuery, provider, model || undefined, clarificationOptionId, executionMode)
+          : await startAnalysis(session.id, submittedQuery, provider, model || undefined, clarificationOptionId, executionMode)
         const nextThreadId = createdRun.threadId ?? targetThreadId
         startTransition(() => {
           acceptRun(createdRun)
@@ -778,12 +901,33 @@ function App() {
     [acceptRun, currentThreadId, model, provider, providers, query, refreshSessionHistory, session, setUiError, startRun, stopSubmitting],
   )
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(async (executionMode: AgentExecutionMode = 'auto') => {
     if (!query.trim()) {
       return
     }
-    await submitMessage()
+    await submitMessage({ executionMode })
   }, [query, submitMessage])
+
+  const handleInterruptRun = useCallback(async () => {
+    if (!run?.id) {
+      stopSubmitting()
+      return
+    }
+    try {
+      setUiError(undefined)
+      const cancelledRun = await cancelRun(run.id)
+      startTransition(() => {
+        acceptRun(cancelledRun)
+      })
+      if (cancelledRun.sessionId) {
+        void refreshSessionHistory(cancelledRun.sessionId).catch((error) => reportNonBlockingError('refreshSessionHistory:cancelRun', error))
+      }
+    } catch (error) {
+      setUiError(formatUiError(error, '中断运行失败，请稍后再试。'))
+    } finally {
+      stopSubmitting()
+    }
+  }, [acceptRun, refreshSessionHistory, run?.id, setUiError, stopSubmitting])
 
   const handleClarificationSelect = useCallback(
     async (value: string, optionId?: string | null) => {
@@ -1417,6 +1561,7 @@ function App() {
                         availableTools={availableTools}
                         onQueryChange={setQuery}
                         onSubmit={onSubmitStable}
+                        onInterrupt={handleInterruptRun}
                         onNewConversation={handleNewConversation}
                         onFillSample={handleSampleSelect}
                         onSelectClarification={onSelectClarificationStable}
@@ -1430,6 +1575,32 @@ function App() {
                         onDeleteTask={onDeleteTaskStable}
                         onResolveApproval={onResolveApprovalStable}
                         dataReferences={dataReferences}
+                        memories={memories}
+                        onRefreshMemories={() => {
+                          const c = new AbortController()
+                          fetch(`${apiBaseUrl}/api/memories`, { signal: c.signal })
+                            .then((res) => (res.ok ? res.json() : [] as unknown[]))
+                            .then((data) => {
+                              startTransition(() => {
+                                setMemories(Array.isArray(data) ? data : [])
+                              })
+                            })
+                            .catch(() => {})
+                        }}
+                        tokenBudget={tokenBudget}
+                        activeSkills={activeSkills}
+                        compactionLevel={compactionLevel}
+                        runStats={runStats}
+                        denialCounts={denialCounts}
+                        executionPlan={executionPlan}
+                        tasks={progressTasks}
+                        sessions={sessionRuns?.map(run => ({
+                          id: run.id,
+                          title: run.title ?? run.userQuery ?? '',
+                          created_at: run.createdAt,
+                          latest_query: run.userQuery ?? '',
+                          run_count: 1,
+                        }))}
                       />
                     </m.div>
 
@@ -1888,6 +2059,53 @@ async function retryAsync<T>(task: () => Promise<T>, retries: number, delayMs: n
   throw lastError
 }
 
+type ProgressTodoItem = { id: string; content: string; status: string; activeForm: string }
+
+function buildAgentTodoItems(
+  agentState: AgentState | undefined,
+  executionPlan: ExecutionPlan | undefined,
+  runStatus?: AnalysisRun['status'],
+): ProgressTodoItem[] {
+  // Todo 面板只投影后端事实源。
+  //
+  // 优先使用 todo_write 写回的 AgentState.todos；如果计划模式只提交了
+  // executionPlan，则把计划步骤作为只读任务清单展示，不额外发明进度。
+  const rawTodos = agentState?.todos ?? []
+  if (rawTodos.length) {
+    return rawTodos
+      .map((todo, index) => {
+        const record = todo as typeof todo & Record<string, unknown>
+        const content = String(record.title ?? record.content ?? `待办 ${index + 1}`)
+        const activeForm = String(record.activeForm ?? record.active_form ?? record.description ?? content)
+        return {
+          id: String(record.todoId ?? record.todo_id ?? record.id ?? `todo:${index + 1}`),
+          content,
+          status: normalizeTodoStatus(String(record.status ?? 'pending')),
+          activeForm,
+        }
+      })
+      .filter((item) => item.content.trim())
+  }
+
+  const steps = executionPlan?.steps ?? []
+  if (!steps.length) {
+    return []
+  }
+  const completed = runStatus === 'completed'
+  return steps.map((step, index) => ({
+    id: step.id || `plan-step:${index + 1}`,
+    content: step.reason || step.tool || `计划步骤 ${index + 1}`,
+    status: completed ? 'completed' : index === 0 && runStatus === 'running' ? 'running' : 'pending',
+    activeForm: step.tool ? `准备调用 ${step.tool}` : '准备执行计划步骤',
+  }))
+}
+
+function normalizeTodoStatus(status: string) {
+  if (status === 'in_progress' || status === 'doing') return 'running'
+  if (status === 'done') return 'completed'
+  return status || 'pending'
+}
+
 function buildProgressItems({
   runStatus,
   intent,
@@ -2042,4 +2260,3 @@ function describeRasterMetadata(metadata: Record<string, unknown>) {
   }
   return variable
 }
-

@@ -353,7 +353,7 @@ class _FakeMeteorologicalPlatformStore:
         self.dataset = dataset
         self.artifact: ArtifactRef | None = None
 
-    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service) -> WeatherDatasetRecord:
+    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service, *, thread_id: str, job_id: str | None = None) -> WeatherDatasetRecord:
         assert dataset_id == self.dataset.dataset_id
         return self.dataset
 

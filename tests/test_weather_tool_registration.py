@@ -152,6 +152,6 @@ class _FakeWeatherStore:
     def __init__(self):
         self.calls: list[dict[str, str | None]] = []
 
-    def list_weather_datasets(self, *, session_id: str | None = None, thread_id: str | None = None):
+    def list_weather_datasets(self, *, session_id: str, thread_id: str):
         self.calls.append({"session_id": session_id, "thread_id": thread_id})
         return []

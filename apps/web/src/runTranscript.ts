@@ -12,7 +12,7 @@
 // 把 run、agent state、events 和 artifacts 统一派生成前端 REPL 可直接渲染的记录列表。
 import type { AgentRuntimeConfig, AgentState, AnalysisRun, ArtifactRef, RunEvent, ToolDescriptor } from '@geo-agent-platform/shared-types'
 
-export type TranscriptEntryKind = 'user' | 'assistant' | 'supervisor' | 'subagent' | 'tool' | 'approval' | 'artifact' | 'error'
+export type TranscriptEntryKind = 'user' | 'assistant' | 'supervisor' | 'subagent' | 'tool' | 'approval' | 'artifact' | 'error' | 'system'
 export type TranscriptEntryStatus = 'idle' | 'running' | 'completed' | 'blocked' | 'failed'
 
 export interface TranscriptEntry {
@@ -42,7 +42,7 @@ export interface ConversationCommand {
   details?: Record<string, unknown> | null
 }
 
-export type ConversationEntryKind = 'message' | 'command_batch' | 'approval' | 'artifact' | 'error'
+export type ConversationEntryKind = 'message' | 'command_batch' | 'approval' | 'artifact' | 'error' | 'system'
 
 export interface ConversationEntry {
   id: string
@@ -102,7 +102,7 @@ export function deriveThreadTranscript({
     deriveRunTranscript({
       run: item,
       agentState: item.id === run?.id ? agentState ?? item.state : item.state,
-      events: item.id === run?.id ? events : [],
+      events: item.id === run?.id ? events : filterEventsByRunId(events, item.id),
       artifacts: item.id === run?.id ? artifacts : item.state.artifacts,
       query: item.userQuery,
       runtimeConfig,
@@ -126,10 +126,11 @@ export function deriveRunTranscript({
   // 它只消费事实源：run / state / events / artifacts，
   // 不额外发明阶段文案，保证首页和 debug 页能共享同一套记录语义。
   const entries: TranscriptEntry[] = []
+  const effectiveAgentState = agentState ?? run?.state
   const userQuery =
     run?.userQuery ??
-    agentState?.userQuery ??
-    (run || agentState || events.length > 0 ? query?.trim() : undefined)
+    effectiveAgentState?.userQuery ??
+    (run || effectiveAgentState || events.length > 0 ? query?.trim() : undefined)
   if (userQuery) {
     entries.push({
       id: `user:${run?.id ?? 'draft'}`,
@@ -145,19 +146,41 @@ export function deriveRunTranscript({
     appendEventTranscriptEntry(entries, event, events)
   }
 
-  const finalSummary = sanitizeUserFacingText(normalizeTranscriptText(agentState?.finalResponse?.summary))
+  const completionEvent = [...events].reverse().find((event) => event.type === 'run.completed')
+  const completionPayload = completionEvent?.payload ?? {}
+  const completionFinalResponse = completionPayload.finalResponse as Record<string, unknown> | undefined
+  const completionApprovals = Array.isArray(completionPayload.approvals) ? completionPayload.approvals : []
+  const rawFinalSummary =
+    normalizeTranscriptText(effectiveAgentState?.finalResponse?.summary) ||
+    normalizeTranscriptText(completionFinalResponse?.summary) ||
+    normalizeTranscriptText(completionEvent?.message)
+  const finalSummary = sanitizeUserFacingText(rawFinalSummary)
+  const finalStatus: TranscriptEntryStatus =
+    run?.status === 'failed'
+      ? 'failed'
+      : run?.status === 'waiting_approval' || completionApprovals.length > 0 || Boolean(effectiveAgentState?.approvals?.length)
+        ? 'blocked'
+        : 'completed'
+  const hasStreamedAnswer = entries.some(
+    (entry) =>
+      entry.kind === 'assistant' &&
+      (entry.details?._streaming === true || entry.details?.streamingDelta === true) &&
+      entry.body.trim().length > 20,
+  )
+  // 仅当没有流式文本时才追加 final summary（失败/澄清场景）
   if (
     finalSummary &&
     !isGenericFailureSummary(finalSummary) &&
+    !hasStreamedAnswer &&
     !entries.some((entry) => normalizeComparableText(entry.body) === normalizeComparableText(finalSummary))
   ) {
     entries.push({
       id: `assistant:final:${run?.id ?? 'current'}`,
       kind: 'assistant',
-      timestamp: run?.updatedAt ?? agentState?.loopTrace.at(-1)?.timestamp ?? new Date().toISOString(),
+      timestamp: run?.updatedAt ?? effectiveAgentState?.loopTrace.at(-1)?.timestamp ?? completionEvent?.timestamp ?? new Date().toISOString(),
       title: '',
       body: finalSummary,
-      status: run?.status === 'failed' ? 'failed' : run?.status === 'waiting_approval' ? 'blocked' : 'completed',
+      status: finalStatus,
     })
   }
 
@@ -265,10 +288,23 @@ export function deriveConversationEntries(
         role: 'assistant',
         timestamp: entry.timestamp,
         title: '结果已生成',
-        body: `我已经生成结果“${sanitizeUserFacingText(entry.title)}”，现在可以在地图里继续查看。`,
+        body: `我已经生成结果”${sanitizeUserFacingText(entry.title)}”，现在可以在地图里继续查看。`,
         status: entry.status,
         artifactId: entry.artifactId,
         note: '如果你想继续分析，我会直接基于这个结果往下处理。',
+        details: entry.details,
+      })
+      continue
+    }
+
+    if (entry.kind === 'system') {
+      conversation.push({
+        id: `system:${entry.id}`,
+        kind: 'system',
+        timestamp: entry.timestamp,
+        title: entry.title,
+        body: entry.body,
+        status: entry.status,
         details: entry.details,
       })
       continue
@@ -298,14 +334,17 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
   // 否则用户会看到“同一条运行记录在不同页面像两回事”。
   const payload = event.payload ?? {}
   if (event.type === 'message.delta') {
+    const streamId = (payload._id as string) || `msg-delta:${event.runId ?? 'stream'}`
+    const body = sanitizeUserFacingText(normalizeTranscriptText(event.message))
+    const isDone = !!(payload._done)
     return {
-      id: `msg-delta:${event.runId ?? 'stream'}`,
+      id: streamId,
       kind: 'assistant',
       timestamp: event.timestamp,
       title: '',
-      body: sanitizeUserFacingText(normalizeTranscriptText(event.message)),
-      status: 'running',
-      details: payload,
+      body,
+      status: isDone ? 'completed' : 'running',
+      details: { ...payload, _streaming: true },
     }
   }
   if (event.type === 'loop.updated') {
@@ -347,13 +386,15 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
     const toolName = stringOrNull(payload.tool)
     const toolArgs = payload.args ?? findPreviousToolArgs(event, events)
     const commandText = toolName ? buildToolCommandText(toolName, toolArgs) : null
+    const toolStatus: TranscriptEntryStatus =
+      event.type === 'tool.started' ? 'running' : payload.status === 'failed' ? 'failed' : 'completed'
     return {
       id: event.eventId,
       kind: 'tool',
       timestamp: event.timestamp,
       title: toolName ?? '工具调用',
       body: event.type === 'tool.started' ? `正在调用工具“${toolName ?? '未知工具'}”。` : sanitizeUserFacingText(event.message),
-      status: event.type === 'tool.started' ? 'running' : 'completed',
+      status: toolStatus,
       commandText,
       toolName,
       stepId: stringOrNull(payload.stepId),
@@ -412,13 +453,30 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
     }
   }
   if (event.type === 'run.completed') {
+    // 流式文本已通过 message.delta 事件发送，不再重复输出
+    return null
+  }
+  if ((event.type as string) === 'compaction.executed') {
+    const level = stringOrNull(payload.level ?? payload.compaction_level) ?? 'auto'
     return {
       id: event.eventId,
-      kind: 'assistant',
+      kind: 'system',
       timestamp: event.timestamp,
-      title: '',
-      body: sanitizeUserFacingText(normalizeTranscriptText((payload.finalResponse as Record<string, unknown> | undefined)?.summary ?? event.message)),
-      status: payload.approvals ? 'blocked' : 'completed',
+      title: '上下文压缩',
+      body: `上下文已压缩（${level}）`,
+      status: 'completed',
+      details: payload,
+    }
+  }
+  if ((event.type as string) === 'hook.triggered') {
+    const hookEventType = stringOrNull(payload.event_type ?? payload.hook_type) ?? 'unknown'
+    return {
+      id: event.eventId,
+      kind: 'system',
+      timestamp: event.timestamp,
+      title: 'Hook 触发',
+      body: `Hook: ${hookEventType} triggered`,
+      status: 'completed',
       details: payload,
     }
   }
@@ -431,42 +489,69 @@ function appendEventTranscriptEntry(entries: TranscriptEntry[], event: RunEvent,
   // message.delta 是同一条助手回复的增量片段。这里在事件映射阶段把它们吸收到
   // 一个 transcript entry 里，避免 UI 先生成一串 token 节点再靠渲染层补救。
   if (event.type === 'message.delta') {
-    const delta = sanitizeUserFacingText(normalizeTranscriptText(event.message))
-    if (!delta) {
+    const payload = event.payload ?? {}
+    const streamId = stringOrNull(payload._id) ?? `msg-delta:${event.runId ?? event.eventId}`
+    const body = sanitizeUserFacingText(normalizeTranscriptText(event.message))
+    if (!body) {
       return
     }
-    const previous = entries.at(-1)
-    if (previous?.kind === 'assistant' && previous.status === 'running' && previous.details?.streamingDelta === true) {
-      entries[entries.length - 1] = {
+    const isDone = payload._done === true
+    const isOperationalNarration = shouldCollapseOperationalNarration(event, events, body)
+    const entryStatus: TranscriptEntryStatus = isOperationalNarration ? 'completed' : isDone ? 'completed' : 'running'
+    let existingIndex = -1
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].id === streamId) {
+        existingIndex = i
+        break
+      }
+    }
+    if (existingIndex >= 0) {
+      const previous = entries[existingIndex]
+      entries[existingIndex] = {
         ...previous,
-        body: mergeStreamingDelta(previous.body, delta),
+        body: mergeStreamingDelta(previous.body, body),
         timestamp: event.timestamp,
-        details: { ...(previous.details ?? {}), ...(event.payload ?? {}), streamingDelta: true },
+        title: isOperationalNarration ? '思考过程' : previous.title,
+        status: entryStatus,
+        details: {
+          ...(previous.details ?? {}),
+          ...payload,
+          _streaming: true,
+          streamingDelta: true,
+          _thinking: isOperationalNarration ? true : previous.details?._thinking,
+          _startedAt: previous.details?._startedAt ?? event.timestamp,
+          _endedAt: entryStatus === 'completed' ? event.timestamp : undefined,
+        },
       }
       return
     }
     entries.push({
-      id: event.eventId,
+      id: streamId,
       kind: 'assistant',
       timestamp: event.timestamp,
-      title: '思考过程',
-      body: delta,
-      status: 'running',
-      details: { ...(event.payload ?? {}), streamingDelta: true },
+      title: isOperationalNarration ? '思考过程' : '',
+      body,
+      status: entryStatus,
+      details: {
+        ...payload,
+        _streaming: true,
+        streamingDelta: true,
+        _thinking: isOperationalNarration ? true : undefined,
+        _startedAt: event.timestamp,
+        _endedAt: entryStatus === 'completed' ? event.timestamp : undefined,
+      },
     })
     return
   }
 
-  // thinking.delta 遵循与 message.delta 相同的增量合并模式。
-  // 后端每个推理阶段开始时记录 _startedAt，同一阶段的所有 delta 携带相同的时间戳；
-  // 不同推理阶段用不同的 _startedAt 区分，避免跨阶段的条目产生重复 key。
+  // thinking.delta — 同一 run 内使用稳定 _id 合并为一个块，增量替换不追加
   if (event.type === 'thinking.delta') {
     const delta = sanitizeUserFacingText(normalizeTranscriptText(event.message))
     if (!delta) {
       return
     }
     const phaseKey = (event.payload?._startedAt as string) ?? event.timestamp
-    const streamId = `think-delta:${event.runId ?? event.eventId}:${phaseKey}`
+    const streamId = (event.payload?._id as string) || `think-delta:${event.runId ?? event.eventId}:${phaseKey}`
     const isDone = !!(event.payload?._done)
     // 向前查找同 ID 的条目——因为相邻条目可能被中间的消息 delta 隔开（多阶段推理）
     let existingIndex = -1
@@ -542,50 +627,27 @@ function mergeStreamingDelta(previousBody: string, delta: string) {
   return `${previousBody}${delta}`
 }
 
+function shouldCollapseOperationalNarration(event: RunEvent, events: RunEvent[], body: string) {
+  // 部分模型会把工具调用前的自我规划当 message.delta 输出。
+  //
+  // 如果这类英文计划文本后面紧跟真实工具事件，UI 应把它折叠进“思考过程”，
+  // 不能当成最终回答占满对话流。
+  const currentIndex = events.findIndex((item) => item.eventId === event.eventId)
+  const hasLaterToolEvent = currentIndex >= 0 && events
+    .slice(currentIndex + 1)
+    .some((item) => item.type === 'tool.started' || item.type === 'tool.completed')
+  if (!hasLaterToolEvent) {
+    return false
+  }
+  return /\b(the user wants|i need to|let me|now let me|i'll use|got both coordinates|coordinate refs?|simultaneously since)\b/iu.test(body)
+}
+
 function buildNarrationEntry(
-  activityEntries: TranscriptEntry[],
-  runStatus: string | undefined,
-  toolMetadataByName: ReadonlyMap<string, ToolDescriptor>,
+  _activityEntries: TranscriptEntry[],
+  _runStatus: string | undefined,
+  _toolMetadataByName: ReadonlyMap<string, ToolDescriptor>,
 ): ConversationEntry | null {
-  const toolEntries = activityEntries.filter((entry) => entry.kind === 'tool')
-  const runningTool = [...toolEntries].reverse().find((entry) => entry.status === 'running')
-  const latestSupervisor = [...activityEntries].reverse().find((entry) => entry.kind === 'supervisor')
-  const latestSubagent = [...activityEntries].reverse().find((entry) => entry.kind === 'subagent')
-  const latestEntry = activityEntries.at(-1)
-  if (!latestEntry) {
-    return null
-  }
-
-  const runtimeNarration = latestSupervisor?.body || latestSubagent?.body
-  if (runtimeNarration) {
-    return {
-      id: `narration:${latestEntry.id}`,
-      kind: 'message',
-      role: 'assistant',
-      timestamp: latestEntry.timestamp,
-      title: '',
-      body: `${stripTrailingPunctuation(sanitizeUserFacingText(runtimeNarration))}。`,
-      status: latestEntry.status,
-      note: buildNarrationNote(latestSupervisor, latestSubagent, runStatus, runtimeNarration),
-      details: latestSupervisor?.details ?? latestSubagent?.details ?? latestEntry.details,
-    }
-  }
-
-  if (runningTool) {
-    const body = buildRunningNarration(runningTool, toolMetadataByName)
-    return {
-      id: `narration:${latestEntry.id}`,
-      kind: 'message',
-      role: 'assistant',
-      timestamp: latestEntry.timestamp,
-      title: '',
-      body,
-      status: 'running',
-      note: buildNarrationNote(latestSupervisor, latestSubagent, runStatus),
-      details: latestSupervisor?.details ?? latestSubagent?.details ?? runningTool.details,
-    }
-  }
-
+  // CC 不生成人工叙述文本。工具调用以紧凑卡片内联在对话中，不额外制造假对话消息。
   return null
 }
 
@@ -612,8 +674,10 @@ function buildCommandBatchEntry(activityEntries: TranscriptEntry[], toolMetadata
         : `已运行 ${commands.length} 个命令`
   const latest = commands.at(-1)
 
+  // batch ID 从最早的 tool entry ID 派生，保证同批次稳定，避免 React key 跳动
+  const batchId = toolEntries[0]?.id ?? 'current'
   return {
-    id: `command-batch:${toolEntries.at(-1)?.id ?? 'current'}`,
+    id: `command-batch:${batchId}`,
     kind: 'command_batch',
     timestamp: toolEntries.at(-1)?.timestamp ?? new Date().toISOString(),
     title,
@@ -626,48 +690,58 @@ function buildCommandBatchEntry(activityEntries: TranscriptEntry[], toolMetadata
 }
 
 function mergeConversationCommands(toolEntries: TranscriptEntry[], toolMetadataByName: ReadonlyMap<string, ToolDescriptor>): ConversationCommand[] {
-  const commands: ConversationCommand[] = []
-  const commandIndexBySignature = new Map<string, number>()
-  for (const entry of toolEntries) {
-    const signature = `${entry.toolName ?? entry.title}:${entry.commandText ?? ''}`
-    const existingIndex = commandIndexBySignature.get(signature)
-    if (existingIndex !== undefined) {
-      const previous = commands[existingIndex]
-      commands[existingIndex] = {
-        ...previous,
-        status: entry.status,
-        body: entry.body || previous.body,
-        details: entry.details ?? previous.details,
-      }
-      continue
-    }
+  // 优先按后端 stepId 配对 started/completed；旧历史事件没有 stepId 时，
+  // 回退到 toolName + commandText 签名，避免同一次工具调用显示成“执行中/完成”两条。
+  const orderedPairs: Array<{ key: string; started?: TranscriptEntry; completed?: TranscriptEntry }> = []
+  const pairsByKey = new Map<string, Array<{ key: string; started?: TranscriptEntry; completed?: TranscriptEntry }>>()
 
-    const previous = commands.at(-1)
-    if (
-      previous &&
-      previous.toolName === (entry.toolName ?? null) &&
-      previous.commandText === (entry.commandText ?? null)
-    ) {
-      commands[commands.length - 1] = {
-        ...previous,
-        status: entry.status,
-        body: entry.body,
-        details: entry.details ?? previous.details,
+  for (const entry of toolEntries) {
+    const key = buildCommandPairKey(entry)
+    const pairs = pairsByKey.get(key) ?? []
+    pairsByKey.set(key, pairs)
+    if (entry.status === 'running') {
+      const pair = { key, started: entry }
+      pairs.push(pair)
+      orderedPairs.push(pair)
+    } else {
+      let pair = pairs.find((item) => !item.completed)
+      if (!pair) {
+        pair = { key }
+        pairs.push(pair)
+        orderedPairs.push(pair)
       }
-      continue
+      pair.completed = entry
     }
-    commandIndexBySignature.set(signature, commands.length)
+  }
+
+  const commands: ConversationCommand[] = []
+  for (const pair of orderedPairs) {
+    const anchorEntry = pair.started ?? pair.completed
+    if (!anchorEntry) continue
+    const status: TranscriptEntryStatus = pair.completed
+      ? pair.completed.status
+      : 'running'
+    const body = pair.completed ? pair.completed.body : (pair.started ? '执行中…' : '')
+    const displayEntry = pair.started ?? pair.completed ?? anchorEntry
+
     commands.push({
-      id: entry.id,
-      title: humanizeToolLabel(entry.title, entry.toolName, toolMetadataByName),
-      status: entry.status,
-      body: entry.body,
-      commandText: entry.commandText,
-      toolName: entry.toolName,
-      details: entry.details,
+      id: anchorEntry.id,
+      title: humanizeToolLabel(displayEntry.title, displayEntry.toolName, toolMetadataByName),
+      status,
+      body,
+      commandText: pair.started?.commandText ?? pair.completed?.commandText,
+      toolName: displayEntry.toolName,
+      details: pair.completed?.details ?? pair.started?.details,
     })
   }
   return commands
+}
+
+function buildCommandPairKey(entry: TranscriptEntry) {
+  if (entry.stepId) {
+    return `step:${entry.stepId}`
+  }
+  return `signature:${entry.toolName ?? entry.title}:${entry.commandText ?? ''}`
 }
 
 function buildToolCommandText(toolName: string, args: unknown) {
@@ -682,20 +756,6 @@ function buildToolCommandText(toolName: string, args: unknown) {
   return pairs.length ? `> ${toolName} ${pairs.join(' ')}` : `> ${toolName}`
 }
 
-function buildRunningNarration(
-  runningTool: TranscriptEntry,
-  toolMetadataByName: ReadonlyMap<string, ToolDescriptor>,
-) {
-  const label = humanizeToolLabel(runningTool.title, runningTool.toolName, toolMetadataByName)
-  if (runningTool.toolName === 'geocode_place') {
-    const query = extractArgumentValue(runningTool.details?.args, 'query')
-    return query
-      ? `我先确认“${query}”对应的实际位置，再继续往下做空间分析。`
-      : `我先确认“${label}”这一步对应的位置结果，再继续往下推进。`
-  }
-  return `我先处理“${label}”这一步，${describeToolIntent(runningTool.toolName ?? runningTool.title, toolMetadataByName)}`
-}
-
 function formatCommandValue(value: unknown) {
   if (typeof value === 'string') {
     return JSON.stringify(value)
@@ -704,46 +764,6 @@ function formatCommandValue(value: unknown) {
     return String(value)
   }
   return JSON.stringify(value)
-}
-
-function describeToolIntent(toolName: string, toolMetadataByName: ReadonlyMap<string, ToolDescriptor>) {
-  if (toolName === 'geocode_place') {
-    return '先把地点文本解析成可以用于空间分析的坐标锚点。'
-  }
-  if (toolName === 'buffer') {
-    return '先围绕当前锚点生成空间范围，方便后续筛选结果。'
-  }
-  if (toolName === 'intersect') {
-    return '先把目标对象和分析范围叠加，筛出真正命中的结果。'
-  }
-  if (toolName === 'load_layer') {
-    return '先把这一步需要的图层装入运行上下文。'
-  }
-  const descriptor = toolMetadataByName.get(toolName)
-  if (descriptor?.description?.trim()) {
-    return `${stripTrailingPunctuation(sanitizeUserFacingText(descriptor.description))}。`
-  }
-  return '先整理当前步骤所需的空间结果。'
-}
-
-function buildNarrationNote(
-  supervisorEntry: TranscriptEntry | undefined,
-  subagentEntry: TranscriptEntry | undefined,
-  runStatus?: string,
-  currentBody?: string,
-) {
-  const source = supervisorEntry?.body || subagentEntry?.body
-  if (source && stripTrailingPunctuation(sanitizeUserFacingText(source)) !== stripTrailingPunctuation(sanitizeUserFacingText(currentBody ?? ''))) {
-    return `我接下来会继续围绕这一步往下推进：${stripTrailingPunctuation(sanitizeUserFacingText(source))}。`
-  }
-  if (runStatus === 'running') {
-    return '我会继续把这轮分析往下做，下面会同步补充实际运行的命令。'
-  }
-  return null
-}
-
-function stripTrailingPunctuation(value: string) {
-  return value.replace(/[。！!？?]+$/u, '').trim()
 }
 
 function humanizeToolLabel(label: string, toolName: string | null | undefined, toolMetadataByName: ReadonlyMap<string, ToolDescriptor>) {
@@ -914,12 +934,14 @@ function sanitizeUserFacingText(value: string) {
   return value
     .replaceAll('Spatial Analyst', '空间分析')
     .replaceAll('Publisher', '结果发布')
-    .replaceAll('live supervisor', '主智能体')
-    .replaceAll('supervisor', '主智能体')
-    .replaceAll('thread', '会话')
-    .replaceAll('run', '任务')
-    .replaceAll('OpenAI Agents SDK', '系统')
-    .replaceAll('Agents SDK', '系统')
+    .replace(/\blive supervisor\b/giu, '主智能体')
+    .replace(/\bsupervisor\b/giu, '主智能体')
+    .replace(/\bthread\b/giu, '会话')
+    .replace(/\brun\b/giu, '任务')
+    .replace(/\bAgent SDK\b/gu, '系统')
+    .replace(/\bOpenAI Agents SDK\b/gu, '系统')
+    .replace(/\bAgents SDK\b/gu, '系统')
+    .replace(/\bError running tool\b/giu, '工具调用失败')
     .trim()
 }
 
@@ -988,14 +1010,6 @@ function stringOrNull(value: unknown) {
   return typeof value === 'string' ? value : null
 }
 
-function extractArgumentValue(args: unknown, key: string) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) {
-    return null
-  }
-  const rawValue = (args as Record<string, unknown>)[key]
-  return typeof rawValue === 'string' && rawValue.trim() ? rawValue.trim() : null
-}
-
 function normalizeTranscriptText(value: unknown): string {
   if (value == null) {
     return ''
@@ -1028,6 +1042,10 @@ function normalizeTranscriptText(value: unknown): string {
     return ''
   }
   return String(value).trim()
+}
+
+function filterEventsByRunId(events: RunEvent[], runId: string): RunEvent[] {
+  return events.filter((event) => event.runId === runId)
 }
 
 function dedupeRunsById(runs: ReadonlyArray<AnalysisRun>) {

@@ -96,6 +96,7 @@ async def lifespan(app: FastAPI):
     app.state.tool_catalog_store = tool_catalog_store
     app.state.runtime = runtime
     app.state.background_tasks = set()
+    app.state.background_run_tasks = {}
     yield
     pending_tasks = list(app.state.background_tasks)
     for task in pending_tasks:

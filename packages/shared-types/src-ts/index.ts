@@ -191,6 +191,7 @@ export interface TodoItem {
   title: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   description?: string | null
+  activeForm?: string | null
   ownerAgentId?: string | null
   stepId?: string | null
 }

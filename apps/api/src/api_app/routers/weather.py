@@ -38,11 +38,13 @@ async def upload_weather_dataset(
     file: UploadFile = File(...),
     store: PostgresPlatformStore = Depends(get_store),
 ):
+    if not thread_id:
+        raise HTTPException(status_code=400, detail="上传气象数据需要指定 threadId，请先在会话中创建或选择对话线程。")
     filename = Path(file.filename or "weather-data").name
     if not is_supported_weather_file(filename):
         raise HTTPException(status_code=400, detail="仅支持上传 .nc/.nc4/.tif/.tiff/.grib/.grb/.grb2/.h5/.hdf5/.bz2 气象或雷达数据。")
     dataset_id = make_id("weather")
-    target_dir = settings.resolved_runtime_root / "weather" / "datasets" / dataset_id
+    target_dir = settings.resolved_runtime_root / "weather" / "threads" / thread_id / "datasets" / dataset_id
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / filename
     await _stream_upload_to_path(file, target_path, max_bytes=settings.weather_upload_max_bytes)
@@ -66,16 +68,20 @@ async def get_weather_job(job_id: str, store: PostgresPlatformStore = Depends(ge
 
 @router.get("/api/v1/weather/datasets")
 async def list_weather_datasets(
-    session_id: str | None = Query(None, alias="sessionId"),
+    session_id: str = Query(..., alias="sessionId"),
     thread_id: str | None = Query(None, alias="threadId"),
     store: PostgresPlatformStore = Depends(get_store),
 ):
+    if not thread_id:
+        return []
     return store.list_weather_datasets(session_id=session_id, thread_id=thread_id)
 
 
 @router.get("/api/v1/weather/datasets/{dataset_id}")
-async def get_weather_dataset(dataset_id: str, store: PostgresPlatformStore = Depends(get_store)):
-    return store.get_weather_dataset(dataset_id)
+async def get_weather_dataset(dataset_id: str, thread_id: str | None = Query(None, alias="threadId"), store: PostgresPlatformStore = Depends(get_store)):
+    if not thread_id:
+        raise HTTPException(status_code=400, detail="缺少 threadId 参数，无法查询气象数据集。")
+    return store.get_weather_dataset(dataset_id, thread_id=thread_id)
 
 
 @router.post("/api/v1/weather/datasets/{dataset_id}/render")
@@ -90,6 +96,7 @@ async def render_weather_dataset(
             store=store,
             weather_service=request.app.state.weather_service,
             dataset_id=dataset_id,
+            thread_id=payload.thread_id,
             run_id=payload.run_id,
             variable=payload.variable,
             time_index=payload.time_index,
@@ -116,6 +123,7 @@ async def stats_weather_dataset(
             store=store,
             weather_service=request.app.state.weather_service,
             dataset_id=dataset_id,
+            thread_id=payload.thread_id,
             variable=payload.variable,
             time_index=payload.time_index,
             level_index=payload.level_index,
@@ -139,6 +147,7 @@ async def threshold_weather_dataset(
             store=store,
             weather_service=request.app.state.weather_service,
             dataset_id=dataset_id,
+            thread_id=payload.thread_id,
             run_id=payload.run_id,
             threshold=payload.threshold,
             operator=payload.operator,
@@ -167,6 +176,7 @@ async def contours_weather_dataset(
             store=store,
             weather_service=request.app.state.weather_service,
             dataset_id=dataset_id,
+            thread_id=payload.thread_id,
             run_id=payload.run_id,
             levels=payload.levels,
             variable=payload.variable,
@@ -194,6 +204,7 @@ async def report_weather_dataset(
             store=store,
             weather_service=request.app.state.weather_service,
             dataset_id=dataset_id,
+            thread_id=payload.thread_id,
             run_id=payload.run_id,
             llm_interpretation=payload.llm_interpretation,
             result_name=payload.result_name,

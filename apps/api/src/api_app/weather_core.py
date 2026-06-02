@@ -30,17 +30,17 @@ def process_weather_parse_job(store: PostgresPlatformStore, weather_service: Any
     # 保留显式后台任务兼容，但上传接口不再自动创建 parse job。
     job = store.get_weather_job(job_id)
     try:
-        ensure_weather_dataset_parsed(store, weather_service, job.dataset_id, job_id=job.job_id)
+        ensure_weather_dataset_parsed(store, weather_service, job.dataset_id, thread_id=job.thread_id, job_id=job.job_id)
     except ValueError:
         return
 
 
-def ensure_weather_dataset_parsed(store: PostgresPlatformStore, weather_service: Any, dataset_id: str, *, job_id: str | None = None):
+def ensure_weather_dataset_parsed(store: PostgresPlatformStore, weather_service: Any, dataset_id: str, *, thread_id: str, job_id: str | None = None):
     # 懒解析入口代理。
     #
     # 状态推进的单一事实源在 PostgresPlatformStore；weather_core 只负责把
     # API/worker 的业务路径统一接到这一条生命周期入口。
-    return store.ensure_weather_dataset_parsed(dataset_id, weather_service, job_id=job_id)
+    return store.ensure_weather_dataset_parsed(dataset_id, weather_service, thread_id=thread_id, job_id=job_id)
 
 
 def render_weather_artifact(
@@ -48,6 +48,7 @@ def render_weather_artifact(
     store: PostgresPlatformStore,
     weather_service: Any,
     dataset_id: str,
+    thread_id: str,
     run_id: str | None,
     variable: str | None,
     time_index: int | None,
@@ -55,7 +56,7 @@ def render_weather_artifact(
     bbox: list[float] | None = None,
     result_name: str | None = None,
 ) -> tuple[ArtifactRef, dict[str, Any]]:
-    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id)
+    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id, thread_id=thread_id)
     output_run_id, created_output_run = _ensure_output_run(store, run_id=run_id, session_id=dataset.session_id, title=f"气象热力图：{dataset.filename}")
     artifact_id = make_id("artifact")
     output_path = _weather_output_dir(store, dataset.dataset_id) / f"{artifact_id}.png"
@@ -93,12 +94,13 @@ def weather_stats(
     store: PostgresPlatformStore,
     weather_service: Any,
     dataset_id: str,
+    thread_id: str,
     variable: str | None,
     time_index: int | None,
     level_index: int | None,
     bbox: list[float] | None = None,
 ) -> dict[str, Any]:
-    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id)
+    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id, thread_id=thread_id)
     return weather_service.stats(
         store.resolve_runtime_path(dataset.storage_relative_path),
         variable=variable,
@@ -113,6 +115,7 @@ def threshold_weather_artifact(
     store: PostgresPlatformStore,
     weather_service: Any,
     dataset_id: str,
+    thread_id: str,
     run_id: str | None,
     threshold: float,
     operator: str,
@@ -122,7 +125,7 @@ def threshold_weather_artifact(
     bbox: list[float] | None,
     result_name: str | None,
 ) -> tuple[ArtifactRef, dict[str, Any]]:
-    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id)
+    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id, thread_id=thread_id)
     output_run_id, created_output_run = _ensure_output_run(store, run_id=run_id, session_id=dataset.session_id, title=f"气象阈值区：{dataset.filename}")
     collection = weather_service.threshold_geojson(
         store.resolve_runtime_path(dataset.storage_relative_path),
@@ -151,6 +154,7 @@ def contours_weather_artifact(
     store: PostgresPlatformStore,
     weather_service: Any,
     dataset_id: str,
+    thread_id: str,
     run_id: str | None,
     levels: list[float] | None,
     variable: str | None,
@@ -159,7 +163,7 @@ def contours_weather_artifact(
     bbox: list[float] | None,
     result_name: str | None,
 ) -> tuple[ArtifactRef, dict[str, Any]]:
-    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id)
+    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id, thread_id=thread_id)
     output_run_id, created_output_run = _ensure_output_run(store, run_id=run_id, session_id=dataset.session_id, title=f"气象等值线：{dataset.filename}")
     collection = weather_service.contours_geojson(
         store.resolve_runtime_path(dataset.storage_relative_path),
@@ -187,6 +191,7 @@ def report_weather_artifact(
     store: PostgresPlatformStore,
     weather_service: Any,
     dataset_id: str,
+    thread_id: str,
     run_id: str | None,
     llm_interpretation: str,
     result_name: str | None,
@@ -195,7 +200,7 @@ def report_weather_artifact(
     #
     # 报告必须包含大模型解读正文；weather_service 负责校验并生成正式文档，
     # 这里只处理运行记录和 artifact 持久化。
-    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id)
+    dataset = ensure_weather_dataset_parsed(store, weather_service, dataset_id, thread_id=thread_id)
     output_run_id, created_output_run = _ensure_output_run(store, run_id=run_id, session_id=dataset.session_id, title=f"气象解读报告：{dataset.filename}")
     artifact_id = make_id("artifact")
     output_path = _weather_output_dir(store, dataset.dataset_id) / f"{artifact_id}.docx"
@@ -227,8 +232,8 @@ def report_weather_artifact(
     return artifact, report_metadata
 
 
-def _require_completed_dataset(store: PostgresPlatformStore, dataset_id: str):
-    dataset = store.get_weather_dataset(dataset_id)
+def _require_completed_dataset(store: PostgresPlatformStore, dataset_id: str, *, thread_id: str):
+    dataset = store.get_weather_dataset(dataset_id, thread_id=thread_id)
     if dataset.status != "completed":
         raise ValueError(f"气象数据集尚未解析完成，当前状态：{dataset.status}")
     return dataset

@@ -26,6 +26,10 @@ from .providers import (
 from .registry import ToolDefinition, ToolMetadata, ToolRegistry, build_default_registry, build_default_tool_definitions
 from .value_refs import ToolValueStore, make_value_ref_id, resolve_value_ref
 
+# 暴露 plan_tools 和 task_tools 模块，供测试直接导入 handler
+from . import plan_tools as plan_tools_module
+from . import task_tools as task_tools_module
+
 __all__ = [
     "ToolArgsModel",
     "ToolDefinition",
@@ -45,8 +49,10 @@ __all__ = [
     "build_registry_with_providers",
     "load_enabled_tool_providers",
     "make_value_ref_id",
+    "plan_tools_module",
     "register_provider_tools",
     "resolve_value_ref",
+    "task_tools_module",
     "validate_provider",
     "validate_tool_definition",
 ]

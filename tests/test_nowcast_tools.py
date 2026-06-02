@@ -150,15 +150,15 @@ class _FakePlatformStore:
     def __init__(self, datasets: list[WeatherDatasetRecord]):
         self.datasets = {dataset.dataset_id: dataset for dataset in datasets}
 
-    def list_weather_datasets(self, *, session_id: str | None = None, thread_id: str | None = None):
+    def list_weather_datasets(self, *, session_id: str, thread_id: str):
         assert session_id == "session_test"
         assert thread_id == "thread_test"
         return list(self.datasets.values())
 
-    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service):
+    def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service, *, thread_id: str, job_id: str | None = None):
         return self.datasets[dataset_id]
 
-    def get_weather_dataset(self, dataset_id: str):
+    def get_weather_dataset(self, dataset_id: str, *, thread_id: str):
         return self.datasets[dataset_id]
 
     def resolve_runtime_path(self, relative_path: str) -> Path:

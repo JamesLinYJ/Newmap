@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agent_core import GeoAgentRuntime
@@ -46,6 +46,40 @@ async def get_thread_run(run_id: str, store: PostgresPlatformStore = Depends(get
 @router.get("/api/v2/runs/{run_id}/events")
 async def stream_thread_run_events(run_id: str, request: Request, store: PostgresPlatformStore = Depends(get_store)):
     return await _stream_analysis_events(run_id, store)
+
+
+@router.get("/api/v2/runs/{run_id}/events.json")
+async def get_run_events_json(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
+    """返回历史事件列表（JSON），供前端 hydrate 使用。"""
+    return store.list_events(run_id)
+
+
+@router.post("/api/v2/runs/{run_id}/cancel")
+async def cancel_run(
+    run_id: str,
+    request: Request,
+    store: PostgresPlatformStore = Depends(get_store),
+):
+    # 中断以后台 task 为事实源；找不到 task 时只允许返回已终止 run，
+    # 避免把已完成/已失败的历史任务重新改写成取消。
+    run = store.get_run(run_id)
+    if run.status != "running":
+        return run
+    run_tasks = getattr(request.app.state, "background_run_tasks", {})
+    task: asyncio.Task | None = run_tasks.get(run_id)
+    if task is None or task.done():
+        raise HTTPException(status_code=409, detail="该运行任务已经不在后台执行队列中。")
+
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=2)
+    except asyncio.CancelledError:
+        pass
+    except asyncio.TimeoutError:
+        # 取消信号已经发出；先把快照标记为 cancelled，让前端按钮立即回到可用状态。
+        store.update_run_state(run_id, status="cancelled")
+
+    return store.get_run(run_id)
 
 
 @router.post("/api/v2/runs/{run_id}/approvals/{approval_id}")

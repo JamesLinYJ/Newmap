@@ -259,20 +259,22 @@ export function deleteToolCatalogEntry(toolKind: string, toolName: string) {
   })
 }
 
-export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null) {
+export type AgentExecutionMode = 'plan' | 'auto'
+
+export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null, executionMode: AgentExecutionMode = 'auto') {
   // v1 仍保留作主工作台入口，内部会启动一次完整 run。
   // 后端会同步调用 LLM 生成线程标题，超时放宽到 60 秒。
   return requestJson<AnalysisRun>('/api/v1/chat', {
     method: 'POST',
-    body: JSON.stringify({ sessionId, query, provider, model, clarificationOptionId }),
+    body: JSON.stringify({ sessionId, query, provider, model, clarificationOptionId, executionMode }),
   }, 60_000)
 }
 
-export function startThreadRun(threadId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null) {
+export function startThreadRun(threadId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null, executionMode: AgentExecutionMode = 'auto') {
   // v2 明确把“线程”和“运行”拆开，便于任务历史与上下文管理。
   return requestJson<AnalysisRun>(`/api/v2/threads/${threadId}/runs`, {
     method: 'POST',
-    body: JSON.stringify({ query, provider, model, clarificationOptionId }),
+    body: JSON.stringify({ query, provider, model, clarificationOptionId, executionMode }),
   })
 }
 
@@ -283,6 +285,10 @@ export function getRun(runId: string) {
 
 export function getThreadRun(runId: string) {
   return requestJson<AnalysisRun>(`/api/v2/runs/${runId}`)
+}
+
+export function getRunEvents(runId: string) {
+  return requestJson<RunEvent[]>(`/api/v2/runs/${runId}/events.json`)
 }
 
 export function getArtifacts(runId: string) {
@@ -303,6 +309,13 @@ export function resolveApproval(runId: string, approvalId: string, approved: boo
     method: 'POST',
     body: JSON.stringify({ approved }),
   })
+}
+
+export function cancelRun(runId: string) {
+  // 中断当前后台 run。后端会取消对应 asyncio task 并回写 cancelled 快照。
+  return requestJson<AnalysisRun>(`/api/v2/runs/${runId}/cancel`, {
+    method: 'POST',
+  }, 10_000)
 }
 
 export function runTool(payload: Record<string, unknown>) {
