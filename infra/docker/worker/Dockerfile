@@ -2,7 +2,7 @@
 FROM python:3.12-slim
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV PIP_INDEX_URL=https://pypi.org/simple
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 WORKDIR /app
 
