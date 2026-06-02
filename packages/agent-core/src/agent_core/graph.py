@@ -994,12 +994,24 @@ class GeoAgentRuntime:
                             "content": context_packet.prompt_context,
                             "isCompactAttachment": True,
                         })
-                    if skill_descriptions:
-                        _compact_attachments.append({
-                            "role": "user",
-                            "content": f"## Active Skills\n{skill_descriptions}",
-                            "isCompactAttachment": True,
-                        })
+                    # 重建活跃技能描述（如果 skill_manager 可用）
+                    if self.skill_manager is not None:
+                        try:
+                            _skill_list = self.skill_manager.list_all()
+                            if _skill_list:
+                                _skill_lines: list[str] = []
+                                for _sfm in _skill_list[:8]:  # 最多挂 8 个技能描述
+                                    _name = getattr(_sfm, "name", str(_sfm))
+                                    _desc = getattr(_sfm, "description", "") or ""
+                                    _skill_lines.append(f"- {_name}: {_desc}" if _desc else f"- {_name}")
+                                if _skill_lines:
+                                    _compact_attachments.append({
+                                        "role": "user",
+                                        "content": "## Active Skills\n" + "\n".join(_skill_lines),
+                                        "isCompactAttachment": True,
+                                    })
+                        except Exception:
+                            pass  # 技能列表加载非关键，静默跳过
 
                     compacted_msgs, compact_result = autocompact_if_needed(
                         conversation_msgs,
