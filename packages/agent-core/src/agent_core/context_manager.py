@@ -1162,28 +1162,50 @@ def _get_prompt_too_long_token_gap(error_message: str) -> int | None:
     """从 PTL 错误消息中解析需要减少的 token 数。
 
     """
-    # 尝试匹配类似 "expected X, found Y" 的格式
-    import re
-
-    # 常见 PTL 错误格式
+    # 常见 PTL 错误格式（按 provider 覆盖）：
+    #   OpenAI/Azure: "maximum context length is X tokens. you requested Y tokens"
+    #   DeepSeek:     "input length too long" / "context length exceeded"
+    #   Gemini:       "maximum token limit (X) exceeded"
+    #   Anthropic:    "prompt is too long: X tokens, max allowed: Y"
+    #   Ollama/vLLM:  "this model's maximum context length is X tokens"
     patterns = [
+        # OpenAI / Azure: "maximum context length is X tokens. you requested Y"
+        r"maximum\s+context\s+length\s+is\s+(\d+).*?requested\s+(\d+)",
+        r"requested\s+(\d+)\s+tokens.*?maximum\s+(?:context\s+length\s+)?is\s+(\d+)",
+        # DeepSeek / 通用: "input length too long" "reduce your input"
+        r"(?:input|prompt|context).*?(?:too\s+long|exceed|limit).*?(\d+).*?(\d+)",
+        # Gemini: "maximum token limit (X) exceeded"
+        r"maximum\s+token\s+limit\s*\(?(\d+)\)?\s*(?:exceeded|reached)",
+        # Anthropic: "prompt is too long: X tokens, max allowed: Y"
+        r"prompt\s+is\s+too\s+long.*?(\d+).*?max\s+allowed.*?(\d+)",
+        # 通用: "reduce by X tokens" 或 "至少需要减少 X"
+        r"reduce\s+(?:by\s+)?(\d+)\s+tokens?",
+        r"至少需要\s*(?:减少|释放)\s*(\d+)",
+        # 回退: 任意两个数字，选差值最大的
         r"expected\s+(\d+)[^,]*,\s*found\s+(\d+)",
-        r"reduce\s+by\s+(\d+)\s+tokens?",
-        r"maximum\s+context\s+length\s+is\s+(\d+).*?(\d+)",
     ]
 
+    candidates: list[int] = []
     for pattern in patterns:
         match = re.search(pattern, error_message, re.IGNORECASE)
         if match:
             groups = match.groups()
-            if len(groups) == 2:
-                # expected 和 found: gap = found - expected
-                expected = int(groups[0])
-                found = int(groups[1])
-                if found > expected:
-                    return found - expected
+            if len(groups) >= 2:
+                try:
+                    a, b = int(groups[0]), int(groups[1])
+                    if abs(a - b) > 0:
+                        candidates.append(abs(a - b))
+                except (ValueError, IndexError):
+                    pass
             elif len(groups) == 1:
-                return int(groups[0])
+                try:
+                    candidates.append(int(groups[0]))
+                except ValueError:
+                    pass
+
+    if candidates:
+        # 取最大差值 — 这是需要减少的最小 token 数
+        return max(candidates)
 
     return None
 

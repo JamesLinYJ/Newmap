@@ -72,6 +72,7 @@ from .context_manager import (
     ToolResultBudget, AutoCompactTrackingState, AutoCompactResult,
     autocompact_if_needed, build_compaction_boundary_message,
     try_reactive_compact, prepend_user_context, append_system_context,
+    set_context_window_override, _build_compact_summary_prompt,
 )
 from .hooks import AgentHookManager, load_hooks_from_config
 from .parser import build_execution_plan, parse_user_intent, verify_execution_plan
@@ -863,6 +864,10 @@ class GeoAgentRuntime:
             raise RuntimeError("OpenAI Agents SDK 未安装，请先安装 openai-agents 依赖后再启动分析。")
 
         runtime_config = self._get_runtime_config()
+        # 根据运行时配置设置上下文窗口（不硬编码模型映射）
+        context_window_override = getattr(runtime_config.context, 'context_window', 0) or 0
+        if context_window_override > 0:
+            set_context_window_override(context_window_override)
         # 初始化 Token 预算追踪器（从 runtime_config 读取预算上限）
         self.budget_tracker = BudgetTracker(
             total_token_budget=getattr(runtime_config, 'max_tokens_per_run', 200000)
