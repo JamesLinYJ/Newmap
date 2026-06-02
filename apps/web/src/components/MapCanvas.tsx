@@ -319,6 +319,15 @@ export function MapCanvas({
         return
       }
 
+      // 捕获异步 WebGL 上下文创建失败（软件渲染/无 GPU 环境）
+      const canvas = map.getCanvas()
+      const onWebglError = (event: Event) => {
+        const webglEvent = event as WebGLContextEvent
+        setMapError(`WebGL 不可用：${webglEvent.statusMessage || '无法创建地图渲染上下文'}`)
+        setInteractionHint('当前浏览器不支持硬件加速地图，请开启 GPU 加速或切换到支持 WebGL 的浏览器')
+      }
+      canvas.addEventListener('webglcontextcreationerror', onWebglError)
+
       map.on('error', (event) => {
         const msg = event.error?.message ?? '地图资源加载失败'
         // 仅展示非阻塞警告，不切换底图（切换会调用 setStyle 清除所有图层）
