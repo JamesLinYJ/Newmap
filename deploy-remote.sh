@@ -406,7 +406,7 @@ ENVEOF
   # ===== 5c. nginx 配置 =====
   step_run "  配置 nginx..."
   ssh_exec bash -s <<NGX
-cat > /etc/nginx/conf.d/geoagent.conf <<CONF
+cat > /etc/nginx/conf.d/geoagent.conf <<'NGFILE'
 server {
     listen ${WEB_PORT};
     server_name _;
@@ -437,7 +437,7 @@ server {
         try_files \$uri /index.html;
     }
 }
-CONF
+NGFILE
 rm -f /etc/nginx/conf.d/default.conf
 nginx -t && systemctl restart nginx && systemctl enable nginx 2>&1 | tail -2
 NGX
