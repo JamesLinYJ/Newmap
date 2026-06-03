@@ -857,14 +857,10 @@ export const DetailPanel = memo(function DetailPanel({
             <div className="dc-panel-list">
               {allFiles && allFiles.length ? (
                 allFiles.map((f) => (
-                  <div key={`${f.source}:${f.id}`} className="dc-panel-item dc-panel-item--static">
+                  <div key={f.id} className="dc-panel-item dc-panel-item--static">
                     <div>
                       <strong>{f.name}</strong>
-                      <span>
-                        <span className="dc-pill-meta dc-pill-meta--inline">{f.typeLabel}</span>
-                        {' '}{f.size}{f.status === 'completed' ? '' : ` · ${f.status}`}
-                      </span>
-                      <span>{f.uploadedAtFmt}{f.variables?.length ? ` · ${f.variables.length} 变量` : ''}{f.featureCount ? ` · ${f.featureCount} 要素` : ''}</span>
+                      <span>{f.size}</span>
                     </div>
                     {onDeleteFile && (
                       <button

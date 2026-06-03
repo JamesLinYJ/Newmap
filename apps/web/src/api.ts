@@ -467,10 +467,8 @@ export function openRunEventStream(
 // ---- 统一文件管理 API ----
 
 export interface FileEntry {
-  id: string; name: string; type: string; typeLabel: string
-  size: string; sizeBytes: number; status: string
-  uploadedAt: string; uploadedAtFmt: string; source: string
-  geometryType?: string; featureCount?: number; variables?: string[]
+  id: string; name: string; size: string; sizeBytes: number
+  uploadedAt: string; status: string
 }
 
 export interface FileListResponse {
@@ -491,13 +489,13 @@ export async function uploadAnyFile(file: File, threadId?: string | null) {
   const resp = await fetch(`${API_BASE_URL}/api/v1/files/upload`, {
     method: 'POST', body: form, signal: AbortSignal.timeout(600_000),
   })
-  return handleResponse<{ id: string; name: string; type: string; typeLabel: string; size: string; status: string }>(resp)
+  return handleResponse<{ id: string; name: string; size: string; sizeBytes: number }>(resp)
 }
 
 export function deleteAnyFile(fileId: string, threadId?: string | null) {
   const params = new URLSearchParams()
   if (threadId) params.set('threadId', threadId)
-  return requestJson<{ deleted: boolean; id: string; source: string }>(
+  return requestJson<{ deleted: boolean; id: string }>(
     `/api/v1/files/${encodeURIComponent(fileId)}${params.toString() ? `?${params}` : ''}`,
     { method: 'DELETE' },
   )
