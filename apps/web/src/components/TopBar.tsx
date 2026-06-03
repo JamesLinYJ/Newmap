@@ -35,6 +35,7 @@ export function TopBar({ activeNav, artifactCount, providerLabel, runStatusLabel
         <div className="w-8 h-8 grid place-items-center rounded-[10px] border border-white/42 bg-white/38 text-[#1c1c1e] shadow-[inset_0_1px_0_rgb(255_255_255/0.62),0_8px_18px_rgb(28_28_30/0.07)] backdrop-blur-xl">
           <Compass size={17} />
         </div>
+        <span className="text-[15px] font-bold text-slate-800 tracking-tight">地理智能</span>
         <nav className="flex items-center gap-0.5" aria-label="主导航">
           {NAV.map(({ id, label, icon: Icon }) => (
             <button key={id} type="button"

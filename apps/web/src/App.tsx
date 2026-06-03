@@ -38,13 +38,14 @@ import type {
 import {
   type AgentExecutionMode,
   cancelRun,
-  createSession,
   deleteLayer,
   deleteThread,
   deleteToolCatalogEntry,
   getArtifactGeoJson,
   getArtifactMetadata,
+  getDefaultSession,
   getRuntimeConfig,
+  getRun,
   getSession,
   getSystemComponents,
   getThread,
@@ -572,25 +573,33 @@ function App() {
   useEffect(() => {
     // 首次加载初始化
     //
-    // URL 参数只作为“分享链接”读取一次；普通刷新恢复走 localStorage
-    // 里的 active thread 指针。读取完成后会立刻清理地址栏，避免内部
-    // session/thread/run 变成用户主界面的一部分。
+    // 会话解析顺序：
+    // 1. URL ?session= 参数 — 显式共享/深度链接，优先级最高。
+    // 2. 后端默认工作台会话 GET /api/v1/sessions/default — 跨浏览器/设备的稳态会话，
+    //    所有无共享链接的用户复用同一份服务器端历史。
+    //
+    // localStorage 只保存 activeThreadId / activeRunId 作为 UI 选中提示，
+    // 不再是“历史属于哪个会话”的数据源。如果本地提示的 thread/run 不属于
+    // 当前会话，则优雅降级到默认视图，不创建新的本地会话。
     const searchParams = new URLSearchParams(window.location.search)
     const workspacePointer = readWorkspacePointer()
     const sharedSessionId = searchParams.get('session') ?? undefined
     const sharedThreadId = searchParams.get('thread') ?? undefined
     const sharedRunId = searchParams.get('run') ?? undefined
-    const sessionId = sharedSessionId ?? workspacePointer.sessionId
-    const threadId = sharedThreadId ?? workspacePointer.activeThreadId
-    const runId = sharedRunId ?? workspacePointer.activeRunId
+    // localStorage 仅作为 UI 选中提示，不决定会话归属。
+    const hintedThreadId = sharedThreadId ?? workspacePointer.activeThreadId
+    const hintedRunId = sharedRunId ?? workspacePointer.activeRunId
 
     void (async () => {
       try {
-        const sessionPromise = retryAsync(
-          () => (sessionId ? getSession(sessionId).catch(() => createSession()) : createSession()),
-          2,
-          300,
-        )
+        // 会话解析：URL 分享链接优先；否则走服务器端默认工作台会话。
+        //
+        // 显式分享 session 失效时直接暴露错误，不能悄悄切到默认会话，
+        // 否则用户会误以为当前页面就是分享链接指向的历史。
+        const sessionPromise = sharedSessionId
+          ? retryAsync(() => getSession(sharedSessionId), 2, 300)
+          : retryAsync(() => getDefaultSession(), 2, 300)
+
         const [sessionRecord, basemapList] = await Promise.all([
           sessionPromise,
           retryAsync(() => listBasemaps(), 2, 300),
@@ -612,32 +621,59 @@ function App() {
         void refreshSessionHistory(sessionRecord.id).catch((error) => reportNonBlockingError('refreshSessionHistory:bootstrap', error))
         void refreshWeatherDatasets(sessionRecord.id, currentThreadId).catch((error) => reportNonBlockingError('refreshWeatherDatasets:bootstrap', error))
 
-        const threadToRestore = threadId || undefined
-        const runToRestore = runId || undefined
+        // 恢复 UI 选中提示的 thread/run。
+        //
+        // 只有当这些 ID 属于当前 session 时才恢复；
+        // 否则降级到 session 默认视图，不在服务端创建新 thread。
+        const threadToRestore = hintedThreadId || undefined
+        const runToRestore = hintedRunId || undefined
         if (threadToRestore) {
           try {
             const threadPayload = await getThread(threadToRestore)
-            startTransition(() => {
-              setActiveThreadId(threadPayload.thread.id)
-              setThreadRuns(threadPayload.runs ?? [])
-            })
-            const preferredRunId =
-              runToRestore && threadPayload.runs.some((item) => item.id === runToRestore)
-                ? runToRestore
-                : threadPayload.latestRun?.id
-            if (preferredRunId) {
-              await hydrateRunState(preferredRunId)
+            // 校验 thread 是否属于当前 session。
+            if (threadPayload.thread.sessionId !== sessionRecord.id) {
+              if (sharedThreadId) {
+                throw new Error('分享链接中的对话不属于当前会话。')
+              }
+              // 本地提示的 thread 不属于当前默认会话，优雅降级。
+              syncUrl(sessionRecord.id)
             } else {
-              syncUrl(sessionRecord.id, undefined, threadPayload.thread.id)
+              startTransition(() => {
+                setActiveThreadId(threadPayload.thread.id)
+                setThreadRuns(threadPayload.runs ?? [])
+              })
+              const preferredRunId =
+                runToRestore && threadPayload.runs.some((item) => item.id === runToRestore)
+                  ? runToRestore
+                  : threadPayload.latestRun?.id
+              if (preferredRunId) {
+                await hydrateRunState(preferredRunId)
+              } else {
+                syncUrl(sessionRecord.id, undefined, threadPayload.thread.id)
+              }
             }
-          } catch {
+          } catch (error) {
+            if (sharedThreadId) {
+              throw error
+            }
             clearActiveRunState()
             syncUrl(sessionRecord.id)
           }
         } else if (runToRestore) {
           try {
-            await hydrateRunState(runToRestore)
-          } catch {
+            const hintedRun = await getRun(runToRestore)
+            if (hintedRun.sessionId === sessionRecord.id) {
+              await hydrateRunState(runToRestore)
+            } else if (sharedRunId) {
+              throw new Error('分享链接中的运行记录不属于当前会话。')
+            } else {
+              clearActiveRunState()
+              syncUrl(sessionRecord.id)
+            }
+          } catch (error) {
+            if (sharedRunId) {
+              throw error
+            }
             clearActiveRunState()
             syncUrl(sessionRecord.id)
           }
@@ -1478,9 +1514,9 @@ function App() {
               <div className="app-shell-grid grid min-h-screen grid-cols-[220px_minmax(0,1fr)] gap-0 pt-16">
                 <aside className="app-sidebar sticky top-16 flex h-[calc(100vh-64px)] flex-col gap-6 self-start border-r border-white/30 bg-white/40 p-5 backdrop-blur-md" aria-label="工作空间导航">
                   <div className="app-sidebar-copy">
-                    <div className="detail-label">GeoCanvas</div>
+                    <div className="detail-label">地理智能平台</div>
                     <h2 className="mt-1.5 text-xl font-bold text-slate-800 font-mono">工作空间</h2>
-                    <p className="mt-2 text-[13px] text-slate-500 leading-relaxed">GIS 智能助手统一组织查询、分析、发布和审批。</p>
+                    <p className="mt-2 text-[13px] text-slate-500 leading-relaxed">自然语言驱动空间分析，从查询到发布一站式完成。</p>
                   </div>
                   <nav className="app-sidebar-nav flex flex-col gap-1.5">
                     {SIDEBAR_ITEMS.map((item) => (
