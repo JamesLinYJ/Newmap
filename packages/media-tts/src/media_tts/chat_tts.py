@@ -62,11 +62,14 @@ class ChatTTSEngine(BaseTTSEngine):
         """在后台线程中加载模型（ChatTTS 的 load 是同步的）。"""
         import ChatTTS
         chat = ChatTTS.Chat()
-        chat.load(
-            source="huggingface" if self._model_dir is None else "local",
-            local_path=self._model_dir,
-            device=self._device,
-        )
+        # HuggingFace 直连可能超时，支持 HF_ENDPOINT 镜像
+        load_kwargs: dict = {
+            "source": "huggingface" if self._model_dir is None else "local",
+            "device": self._device,
+        }
+        if self._model_dir is not None:
+            load_kwargs["custom_path"] = self._model_dir
+        chat.load(**load_kwargs)
         return chat
 
     async def synthesize(
@@ -105,36 +108,50 @@ class ChatTTSEngine(BaseTTSEngine):
         )
 
     def _build_params(self, text: str, seed: int) -> dict:
-        """构建 ChatTTS 推理参数。"""
-        import torch
-        rand_spk = self._chat.sample_random_speaker() if self._chat else None
+        """构建 ChatTTS infer 参数（v0.2+ API，使用 InferCodeParams）。"""
+        import ChatTTS
         return {
-            "text": [text],
+            "text": text if isinstance(text, list) else [text],
             "stream": False,
             "lang": "zh",
             "skip_refine_text": False,
-            "refine_text_only": False,
-            "use_decoder": True,
             "do_text_normalization": True,
             "do_homophone_replacement": True,
-            "params_refine_text": {"prompt": "[oral_2][laugh_0][break_4]"},
-            "rand_spk": rand_spk,
-            "seed": seed,
+            "params_refine_text": ChatTTS.Chat.RefineTextParams(),
+            "params_infer_code": ChatTTS.Chat.InferCodeParams(
+                manual_seed=seed,
+                spk_smp=None,  # speaker sample — None 使用默认/随机
+            ),
         }
 
     def _synthesize_sync(self, params: dict, output_path: str) -> None:
-        """同步执行推理（在 run_in_executor 中调用）。"""
-        import torch
-        import torchaudio
+        """同步执行 ChatTTS 推理并保存为 WAV 文件。"""
+        import numpy as np
+        import struct
+        import wave
 
-        wavs = self._chat.infer(**params)
-        if wavs and len(wavs) > 0:
-            audio = wavs[0]
-            if not isinstance(audio, torch.Tensor):
-                audio = torch.from_numpy(audio) if hasattr(audio, "__array__") else audio
-            torchaudio.save(output_path, audio.unsqueeze(0) if audio.dim() == 1 else audio, 24000)
+        result = self._chat.infer(**params)
+        # v0.2+ 返回可能是 list[ndarray] 或 list[Tensor]
+        if isinstance(result, list) and len(result) > 0:
+            audio = result[0]
         else:
-            raise RuntimeError("ChatTTS 推理未产生音频输出")
+            raise RuntimeError(f"ChatTTS 未返回有效音频: {type(result)}")
+
+        # 统一转为 numpy float32
+        if hasattr(audio, "cpu"):  # torch.Tensor
+            audio = audio.cpu().numpy()
+        audio = np.asarray(audio, dtype=np.float32)
+        if audio.ndim == 2 and audio.shape[0] == 1:
+            audio = audio[0]
+
+        # 转为 16-bit PCM
+        audio_pcm = (audio * 32767).clip(-32768, 32767).astype(np.int16)
+
+        with wave.open(output_path, "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(24000)
+            wf.writeframes(audio_pcm.tobytes())
 
     def _resolve_seed(self, voice: str | None) -> int:
         """解析音色为随机种子。"""

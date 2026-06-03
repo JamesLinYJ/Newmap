@@ -1308,8 +1308,8 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         ToolDefinition("meteorological_threshold_area", meteorological_threshold_area, ToolMetadata("气象阈值区", "把满足阈值条件的格点转成 GeoJSON 面，用于降雨量、温度、风速等范围分析。", "meteorology", ["meteorology", "气象", "threshold", "geojson"]), MeteorologicalThresholdArgs),
         ToolDefinition("meteorological_contours", meteorological_contours, ToolMetadata("气象等值线", "把连续气象变量转成 GeoJSON 等值线。levels 为空时自动生成。", "meteorology", ["meteorology", "气象", "contour", "geojson"]), MeteorologicalContoursArgs),
         ToolDefinition("generate_meteorological_report", generate_meteorological_report, ToolMetadata("生成气象 DOCX 报告", "基于气象数据集 metadata、统计摘要和 interpretation_ref 指向的大模型综合解读生成正式 DOCX 报告。", "meteorology", ["meteorology", "气象", "docx", "report"]), GenerateMeteorologicalReportArgs),
-        ToolDefinition("synthesize_speech", _synthesize_speech_handler, ToolMetadata("文本转语音", "将文本合成为语音文件（ChatTTS），返回可播放的音频 URL。适合播报分析结果、预警信息等。", "output", ["tts", "voice", "speech", "audio", "播报"]), _SynthesizeSpeechArgs),
     ]
+    # synthesize_speech 由 build_default_registry 动态注入（解决前向引用）
 
 
 # ─── 媒体工具 ────────────────────────────────────────────────────────
@@ -1369,6 +1369,12 @@ async def _synthesize_speech_handler(
 
 def build_default_registry() -> ToolRegistry:
     registry = ToolRegistry(build_default_tool_definitions())
+    # 将 synthesize_speech 注入到 registry（避免前向引用问题）
+    registry.register_definition(
+        ToolDefinition("synthesize_speech", _synthesize_speech_handler,
+            ToolMetadata("文本转语音", "将文本合成为语音文件（ChatTTS），返回可播放的音频 URL。适合播报分析结果、预警信息等。", "output", ["tts", "voice", "speech", "audio", "播报"]),
+            _SynthesizeSpeechArgs)
+    )
     from .nowcast_tools import provider as nowcast_provider
     from .providers import register_provider_tools
 
