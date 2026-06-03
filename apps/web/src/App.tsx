@@ -70,8 +70,12 @@ import {
   updateRuntimeConfig,
   uploadLayer,
   uploadWeatherDataset,
+  uploadAnyFile,
+  listAllFiles,
+  deleteAnyFile,
   apiBaseUrl,
 } from './api'
+import type { FileEntry } from './api'
 import './App.css'
 import { pickPreferredArtifactId } from './artifactSelection'
 import { buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from './motion'
@@ -178,6 +182,8 @@ function App() {
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>()
   const [uploadedLayerName, setUploadedLayerName] = useState<string>()
   const [uploadReferences, setUploadReferences] = useState<UploadReference[]>([])
+  const [allFiles, setAllFiles] = useState<FileEntry[]>([])
+  const [isFileSubmitting, setIsFileSubmitting] = useState(false)
   const [memories, setMemories] = useState<Array<{ name: string; description: string; type: string; age: string }>>([])
   const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
   const [isToolSubmitting, setIsToolSubmitting] = useState(false)
@@ -1196,6 +1202,47 @@ function App() {
     [refreshLayers, setUiError],
   )
 
+  // 统一文件管理
+  const refreshAllFiles = useCallback(async (threadId?: string | null) => {
+    try {
+      const data = await listAllFiles(threadId || currentThreadId)
+      setAllFiles(data.files ?? [])
+    } catch (error) {
+      reportNonBlockingError('refreshAllFiles', error)
+    }
+  }, [currentThreadId])
+
+  const handleUploadAnyFile = useCallback(async (file: File) => {
+    setIsFileSubmitting(true)
+    try {
+      await uploadAnyFile(file, currentThreadId)
+      await refreshAllFiles(currentThreadId)
+    } catch (error) {
+      setUiError(formatUiError(error, `上传 ${file.name} 失败`))
+    } finally {
+      setIsFileSubmitting(false)
+    }
+  }, [currentThreadId, refreshAllFiles, setUiError])
+
+  const handleDeleteAnyFile = useCallback(async (fileId: string) => {
+    try {
+      setUiError(undefined)
+      await deleteAnyFile(fileId, currentThreadId)
+      // 也从 layers 状态中移除
+      setLayers(prev => prev.filter(l => l.layerKey !== fileId))
+      await refreshAllFiles(currentThreadId)
+    } catch (error) {
+      setUiError(formatUiError(error, '删除文件失败'))
+    }
+  }, [currentThreadId, refreshAllFiles, setUiError])
+
+  // 切换到 sources 面板时自动刷新文件列表
+  useEffect(() => {
+    if (panelMode === 'sources') {
+      refreshAllFiles(currentThreadId)
+    }
+  }, [panelMode, currentThreadId, refreshAllFiles])
+
   const handleResolveApproval = useCallback(
     async (approvalId: string, approved: boolean) => {
       if (!run?.id) {
@@ -1727,6 +1774,10 @@ function App() {
                         onLayerSetSearchQuery={layerManager.setSearchQuery}
                         onLayerZoomTo={handleZoomToLayer}
                         onLayerExport={handleExportLayer}
+                        allFiles={allFiles}
+                        onUploadFile={(file) => { void handleUploadAnyFile(file) }}
+                        onDeleteFile={(fileId) => { void handleDeleteAnyFile(fileId) }}
+                        isFileSubmitting={isFileSubmitting}
                       />
                     </m.div>
                   </m.div>

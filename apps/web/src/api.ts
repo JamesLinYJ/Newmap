@@ -144,6 +144,15 @@ export function createSession() {
   })
 }
 
+export function getDefaultSession() {
+  // 默认工作台会话
+  //
+  // 返回跨浏览器/设备的稳态服务器端会话。
+  // 前端不再用 localStorage 决定“历史属于哪个会话”，
+  // 而是统一从这个端点获取确定性默认会话。
+  return requestJson<SessionRecord>('/api/v1/sessions/default')
+}
+
 export function getSession(sessionId: string) {
   return requestJson<SessionRecord>(`/api/v1/sessions/${sessionId}`)
 }
@@ -453,4 +462,43 @@ export function openRunEventStream(
   }
   source.onerror = onError
   return source
+}
+
+// ---- 统一文件管理 API ----
+
+export interface FileEntry {
+  id: string; name: string; type: string; typeLabel: string
+  size: string; sizeBytes: number; status: string
+  uploadedAt: string; uploadedAtFmt: string; source: string
+  geometryType?: string; featureCount?: number; variables?: string[]
+}
+
+export interface FileListResponse {
+  files: FileEntry[]; total: number
+}
+
+export function listAllFiles(threadId?: string | null) {
+  const params = new URLSearchParams()
+  if (threadId) params.set('threadId', threadId)
+  const qs = params.toString()
+  return requestJson<FileListResponse>(`/api/v1/files${qs ? `?${qs}` : ''}`)
+}
+
+export async function uploadAnyFile(file: File, threadId?: string | null) {
+  const form = new FormData()
+  form.append('file', file)
+  if (threadId) form.append('threadId', threadId)
+  const resp = await fetch(`${API_BASE_URL}/api/v1/files/upload`, {
+    method: 'POST', body: form, signal: AbortSignal.timeout(600_000),
+  })
+  return handleResponse<{ id: string; name: string; type: string; typeLabel: string; size: string; status: string }>(resp)
+}
+
+export function deleteAnyFile(fileId: string, threadId?: string | null) {
+  const params = new URLSearchParams()
+  if (threadId) params.set('threadId', threadId)
+  return requestJson<{ deleted: boolean; id: string; source: string }>(
+    `/api/v1/files/${encodeURIComponent(fileId)}${params.toString() ? `?${params}` : ''}`,
+    { method: 'DELETE' },
+  )
 }

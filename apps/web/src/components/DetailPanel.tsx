@@ -104,6 +104,11 @@ interface DetailPanelProps {
   onLayerSetSearchQuery?: (q: string) => void
   onLayerZoomTo?: (id: string) => void
   onLayerExport?: (id: string) => void
+  // 统一文件管理
+  allFiles?: import('../../api').FileEntry[]
+  onUploadFile?: (file: File) => void
+  onDeleteFile?: (fileId: string) => void
+  isFileSubmitting?: boolean
 }
 
 export const DetailPanel = memo(function DetailPanel({
@@ -158,6 +163,11 @@ export const DetailPanel = memo(function DetailPanel({
   onLayerSetSearchQuery,
   onLayerZoomTo,
   onLayerExport,
+  // 统一文件管理
+  allFiles,
+  onUploadFile,
+  onDeleteFile,
+  isFileSubmitting,
 }: DetailPanelProps) {
   // 右侧详情面板
   //
@@ -826,21 +836,50 @@ export const DetailPanel = memo(function DetailPanel({
           </div>
 
           <div className="dc-panel-section">
-            <div className="dc-panel-section__title">气象数据集</div>
+            <div className="dc-panel-section__title">
+              已上传文件
+              {onUploadFile && (
+                <label className="dc-link-button dc-link-button--small">
+                  <CloudUpload size={14} aria-hidden="true" />
+                  上传
+                  <input
+                    type="file"
+                    hidden
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) onUploadFile(file)
+                      event.currentTarget.value = ''
+                    }}
+                  />
+                </label>
+              )}
+            </div>
             <div className="dc-panel-list">
-              {weatherDatasets.length ? (
-                weatherDatasets.map((dataset) => (
-                  <div key={dataset.datasetId} className="dc-panel-item dc-panel-item--static">
+              {allFiles && allFiles.length ? (
+                allFiles.map((f) => (
+                  <div key={`${f.source}:${f.id}`} className="dc-panel-item dc-panel-item--static">
                     <div>
-                      <strong>{dataset.filename}</strong>
-                      <span>{formatWeatherStatus(dataset.status)} · {formatWeatherVariables(dataset.metadata)}</span>
-                      <span>{formatWeatherBounds(dataset.metadata)} · {dataset.datasetId}</span>
+                      <strong>{f.name}</strong>
+                      <span>
+                        <span className="dc-pill-meta dc-pill-meta--inline">{f.typeLabel}</span>
+                        {' '}{f.size}{f.status === 'completed' ? '' : ` · ${f.status}`}
+                      </span>
+                      <span>{f.uploadedAtFmt}{f.variables?.length ? ` · ${f.variables.length} 变量` : ''}{f.featureCount ? ` · ${f.featureCount} 要素` : ''}</span>
                     </div>
-                    <span className="dc-pill-meta">{dataset.status}</span>
+                    {onDeleteFile && (
+                      <button
+                        type="button"
+                        className="dc-icon-button dc-icon-button--danger"
+                        title="删除文件"
+                        onClick={() => onDeleteFile(f.id)}
+                      >
+                        <Trash2 size={16} aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 ))
               ) : (
-                <p className="dc-empty-copy">当前会话还没有上传 NetCDF、GRIB、GeoTIFF、HDF5 或雷达 bz2 数据。</p>
+                <p className="dc-empty-copy">当前线程还没有上传任何文件。拖拽文件到对话框或点击上传按钮。</p>
               )}
             </div>
           </div>
