@@ -295,6 +295,60 @@ def _truncate_observation(text: str, max_chars: int = _MAX_TOOL_RESULT_CHARS) ->
     return f"{text[:first_half]}\n[... {omitted} 个字符已省略 ...]\n{text[-last_quarter:]}"
 
 
+def _build_tool_descriptions_text(tool_registry: Any) -> str:
+    """构建工具描述文本，注入系统 prompt 帮助模型了解可用工具。
+
+    从 tool_registry 拉取所有已注册工具，按分组整理为简洁的列表。
+    每个工具列出名称、分组和一句话描述。
+    """
+    try:
+        definitions = list(tool_registry.list_definitions())
+    except Exception:
+        return ""
+
+    if not definitions:
+        return ""
+
+    groups: dict[str, list[str]] = {}
+    for defn in definitions:
+        group = getattr(defn, "group", "other") or "other"
+        label = getattr(defn, "label", "") or getattr(defn, "name", "")
+        desc = getattr(defn, "description", "") or ""
+        groups.setdefault(group, []).append(
+            f"  - **{label}** ({getattr(defn, 'name', '')}): {desc}"
+        )
+
+    lines: list[str] = ["", "## 可用工具"]
+    for group_name in sorted(groups):
+        lines.append(f"\n### {group_name}")
+        lines.extend(groups[group_name])
+
+    return "\n".join(lines)
+
+
+def _validate_and_normalize_tool_result(result: Any, tool_name: str) -> str:
+    """校验并规范化工具执行结果的消息字符串。
+
+    确保返回值是字符串类型且非空；如果 result 不包含有效的 message 字段，
+    则生成默认消息，防止下游消费端遇到 None 或空字符串崩溃。
+
+    Args:
+        result: 工具执行返回的 ToolExecutionResult 或类似对象。
+        tool_name: 工具名称，用于默认消息中标识来源。
+
+    Returns:
+        规范化后的消息字符串（非空）。
+    """
+    message: str = ""
+    if hasattr(result, "message") and isinstance(getattr(result, "message"), str):
+        message = getattr(result, "message")
+    if not message and hasattr(result, "payload") and isinstance(getattr(result, "payload"), str):
+        message = getattr(result, "payload")
+    if not message:
+        message = f"工具 {tool_name} 执行完毕。"
+    return message
+
+
 @dataclass
 class RuntimeStats:
     """运行时统计对象。
@@ -354,10 +408,14 @@ class GeoAgentRuntime:
         # 每次 run 独立创建 store/checkpointer，避免并发 run 共享可变状态
         # 工具搜索注册表 — 用于延迟加载（工具数 > 20 时自动启用）
         self._tool_search_registry = ToolSearchRegistry()
-        # 初始化时注册所有工具定义，供后续批量计算延迟加载标记
-        for defn in tool_registry.list_definitions():
-            self._tool_search_registry.register_from_definition(defn)
-        self._tool_search_registry.compute_deferred_flags()
+        # 初始化时注册所有工具定义，供后续批量计算延迟加载标记。
+        # 轻量测试 registry（如 SimpleNamespace）没有 list_definitions，
+        # 跳过注册即可——测试不需要完整的 ToolSearch 能力。
+        list_defns = getattr(tool_registry, 'list_definitions', None)
+        if callable(list_defns):
+            for defn in list_defns():
+                self._tool_search_registry.register_from_definition(defn)
+            self._tool_search_registry.compute_deferred_flags()
 
     # ------------------------------------------------------------------
     # Session Transcript 延迟加载
@@ -669,6 +727,66 @@ class GeoAgentRuntime:
     def _get_runtime_config(self):
         return self.store.get_runtime_config()
 
+    def load_thread_context(self, thread_id: str | None) -> str:
+        """加载跨会话线程的上下文摘要，用于新 run 中注入历史背景。
+
+        从平台存储中拉取指定 thread 的所有历史 run，提取每位用户的最终
+        问题、交付物以及决策要点，组装成一个简洁的上下文摘要块注入到
+        supervisor 系统 prompt 中——使 Agent 在新一轮对话中能够自然延续
+        上一轮的上下文，无需用户重新交代背景。
+
+        Args:
+            thread_id: 线程 ID。为 None 时返回空字符串。
+
+        Returns:
+            格式化的线程上下文摘要字符串；可直接追加到系统 prompt 尾部。
+        """
+        if not thread_id:
+            return ""
+
+        try:
+            all_hints: list[str] = []
+            # 从平台存储拉取线程中所有 run 记录
+            thread_payload = self.store.get_thread(thread_id)
+            prior_runs = thread_payload.get("runs", []) if isinstance(thread_payload, dict) else []
+
+            # 过滤掉当前正在运行的 run，只展示已完成的历史
+            historical_runs = [
+                item for item in prior_runs
+                if isinstance(item, dict) and item.get("status") in ("completed", "failed", "cancelled")
+            ]
+            if not historical_runs:
+                return ""
+
+            # 取最近 3 个历史 run 便于概要
+            for run_item in historical_runs[-3:]:
+                run_id_val = run_item.get("id", "")
+                query = run_item.get("user_query", "") or ""
+                summary: str | None = None
+
+                # 从 run state 的 finalResponse 提取摘要
+                state = run_item.get("state")
+                if isinstance(state, dict):
+                    fr = state.get("finalResponse")
+                    if isinstance(fr, dict):
+                        summary = fr.get("summary", fr.get("content"))
+
+                hint = f"- [{run_id_val[:8]}…]: 「{query[:120]}」"
+                if summary:
+                    hint += f" → {summary[:200]}"
+                all_hints.append(hint)
+
+            if not all_hints:
+                return ""
+
+            return (
+                "\n## 本线程历史对话摘要\n"
+                + "\n 以下是你与用户在本线程中的近期对话记录，供你延续上下文参考：\n\n"
+                + "\n".join(all_hints)
+            )
+        except Exception:
+            return ""
+
     def _provider_display_name(self, provider: str) -> str:
         try:
             return self.model_registry.get(provider).display_name
@@ -893,17 +1011,11 @@ class GeoAgentRuntime:
         self._record_loop(run_id, thread_id, iteration=1, phase=LOOP_PHASES["observe"], title="读取当前会话信息", description=continuation_note or "已装入当前问题、最近结果和会话上下文。")
 
         context_manager = AgentContextManager(store=self.store, config=runtime_config.context)
-        # 尝试加载会话摘要（用于 /resume 恢复时提供历史背景）
-        session_summary = ""
-        try:
-            transcript = self._get_session_transcript()
-            if transcript is not None and thread_id:
-                session_summary = transcript.build_summary(thread_id)
-        except Exception:
-            pass
+        # 上下文包只从 context index + list_context_references/search_thread_context
+        # 组装；不再从 .geoagent/transcripts 读取 session_summary 自动注入。
+        # session_transcript.py 保留为遗留模块，仅用于 JSONL 事后序列化。
         context_packet = context_manager.build_live_packet(
             run_id=run_id, thread_id=thread_id, query=query,
-            session_summary=session_summary,
         )
         # 初始化工具结果预算追踪和自动压缩追踪状态
         tool_result_budget = ToolResultBudget(max_tokens=80000)
@@ -1248,6 +1360,7 @@ class GeoAgentRuntime:
                 else None
             ),
             project_root=Path.cwd(),
+            tool_descriptions=_build_tool_descriptions_text(self.tool_registry),
         )
 
         # 读取运行时状态中的 plan_mode 标记
@@ -1273,10 +1386,14 @@ class GeoAgentRuntime:
         # 注入项目上下文（CLAUDE.md / CONTEXT.md 自动发现）
         project_context_prompt: str = load_context_prompt(project_root=Path.cwd())
 
-        # 组装最终 instructions：项目上下文 + 基础 prompt + 运行时上下文包
+        # 组装最终 instructions：项目上下文 + 基础 prompt + 线程历史 + 运行时上下文包
         parts: list[str] = [supervisor_base]
         if project_context_prompt:
             parts.append(project_context_prompt)
+        # 线程上下文：将同一 thread 中之前 run 的摘要注入，帮助 Agent 延续多轮对话
+        thread_context = self.load_thread_context(thread_id)
+        if thread_context:
+            parts.append(thread_context)
         if context_packet and context_packet.prompt_context:
             parts.append(context_packet.prompt_context)
         instructions = "\n\n".join(parts)
@@ -2177,13 +2294,35 @@ class GeoAgentRuntime:
                 self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 正在执行 {tool_name}", payload=self._find_sub_agent(sub_agents, owner.agent_id).model_dump(mode="json"))
             self._append_event(run_id, thread_id, EventType.TOOL_STARTED, f"开始调用工具：{tool_name}", payload={"tool": tool_name, "args": kwargs, "stepId": call.step_id, "loopPhase": LOOP_PHASES["act"], "loopIteration": iteration})
 
-            # --- 执行工具 ---
-            try:
-                result = await self.tool_registry.execute(tool_name, kwargs, runtime)
-            except Exception as exc:
+            # --- 执行工具（含重试逻辑） ---
+            # 对于 transient 错误（超时、外部 API 故障），最多重试 2 次，
+            # 使用指数退避（2s → 4s），避免瞬时网络波动导致整个 run 失败。
+            _TOOL_MAX_RETRIES = 2
+            _TOOL_RETRY_DELAY_BASE = 2.0  # 秒
+            _RETRYABLE_CATEGORIES = frozenset({"timeout", "external_api_failure", "unknown"})
+
+            result = None
+            last_exc: Exception | None = None
+            for _retry_attempt in range(1 + _TOOL_MAX_RETRIES):
+                try:
+                    result = await self.tool_registry.execute(tool_name, kwargs, runtime)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    error_category = self._classify_tool_error(exc, tool_name, kwargs)
+                    if error_category not in _RETRYABLE_CATEGORIES or _retry_attempt >= _TOOL_MAX_RETRIES:
+                        break
+                    delay = _TOOL_RETRY_DELAY_BASE * (2 ** _retry_attempt)
+                    logger.warning(
+                        "工具 %s 执行失败 (%s)，%d/%d 次重试，等待 %.1fs",
+                        tool_name, error_category, _retry_attempt + 1, _TOOL_MAX_RETRIES, delay,
+                    )
+                    await asyncio.sleep(delay)
+
+            if result is None:
                 # === 错误路径：内存计算 + 1 次批次写入 ===
-                error_category = self._classify_tool_error(exc, tool_name, kwargs)
-                formatted_error = _format_agent_error(exc, tool=tool_name, step_id=tool_name)
+                error_category = self._classify_tool_error(last_exc, tool_name, kwargs)
+                formatted_error = _format_agent_error(last_exc, tool=tool_name, step_id=tool_name)
 
                 # --- POST_TOOL_USE_FAILURE Hook（工具执行失败后触发） ---
                 if hook_manager:
@@ -2192,7 +2331,7 @@ class GeoAgentRuntime:
                         tool_name=tool_name,
                         args=kwargs,
                         run_id=run_id,
-                        error=str(exc),
+                        error=str(last_exc),
                         error_category=error_category,
                     )
 
@@ -2249,14 +2388,19 @@ class GeoAgentRuntime:
                 self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, formatted_error, payload=fail_entry.model_dump(mode="json"))
                 if owner is not None:
                     self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 执行 {tool_name} 失败", payload=self._find_sub_agent(error_updates["sub_agents"], owner.agent_id).model_dump(mode="json"))
-                raise RuntimeError(formatted_error) from exc
+                raise RuntimeError(formatted_error) from last_exc
 
             # --- 执行后：内存计算所有状态变更 ---
             # 统计工具执行成功
             if self.stats is not None:
                 self.stats.tool_attempts += 1
                 self.stats.tool_successes += 1
-            tool_results[-1] = tool_results[-1].model_copy(update={"status": "completed", "message": result.message, "completed_at": now_utc()})
+
+            # 工具结果结构校验：确保返回值包含必要字段，
+            # 避免下游消费方（前端、transcript、分析报告）遇到缺失 key 崩溃。
+            _validated_message = _validate_and_normalize_tool_result(result, tool_name)
+
+            tool_results[-1] = tool_results[-1].model_copy(update={"status": "completed", "message": _validated_message, "completed_at": now_utc()})
             tool_results[-1] = self._attach_tool_result_metadata(tool_results[-1], result)
 
             artifacts = list(state.artifacts)
@@ -2560,15 +2704,15 @@ class GeoAgentRuntime:
     def _build_oai_model_settings(output_contract: str):
         """构建 SDK ModelSettings。
 
-        平台状态写回已被批次写入保护（_invoke 中 1 次 update_run_state
-        替代多次写入），安全启用并行工具调用以提升多工具场景的延迟。
-        json_object contract 通过 extra_body 显式设置 response_format。
+        所有 output_contract 统一禁用并行工具调用，确保 run state、
+        tool result 和 Chat Completions 历史不会并发错位。
+        json_object contract 额外通过 extra_body 显式设置 response_format。
         """
         if ModelSettings is None:
             return None
         if output_contract == "json_object":
             return GeoAgentRuntime._build_json_object_model_settings()
-        return ModelSettings(parallel_tool_calls=True)
+        return ModelSettings(parallel_tool_calls=False)
 
 
     def _resolve_oai_live_adapter(self, provider: str):
