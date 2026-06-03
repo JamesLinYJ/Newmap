@@ -18,54 +18,24 @@ logger = logging.getLogger(__name__)
 # ── ChatTTS 数字 normalizer 适配器 ────────────────────────────────────
 # ChatTTS 的 tokenizer 合法字符集为 [一-鿿A-Za-z，。、,\. ]
 # 不包括阿拉伯数字 0-9，导致数字被静默丢弃。
-# 通过官方 Normalizer.register() 扩展点在编码前将阿拉伯数字转为中文。
+# 使用 cn2an 库将数字转为中文——它正确处理所有边界情况（零、进位、万/亿）。
 
 
 class ChatTTSNormAdapter:
-    """ChatTTS Normalizer 适配器——将阿拉伯数字转为中文数字。
+    """ChatTTS 数字 normalizer——阿拉伯数字 → 中文数字。
 
-    这是 ChatTTS normalizer 的注册函数，签名为 (str) -> str，
-    由 Normalizer.register("zh", fn) 在模型加载时注入。
+    cn2an.an2cn() 处理所有边界：零、进位、万/亿、小数。
+    注册为 ChatTTS Normalizer 的 "zh" 语言处理器。
     """
-    _CN_DIGITS = "零一二三四五六七八九"
-    _CN_UNITS = ["", "十", "百", "千"]
-    _CN_BIG = ["", "万", "亿"]
-
-    @staticmethod
-    def _int_to_cn(n: int) -> str:
-        if n == 0:
-            return "零"
-        s = str(n)
-        parts: list[str] = []
-        nl = len(s)
-        need_zero = False
-        for i in range(nl):
-            d = int(s[nl - 1 - i])
-            if d == 0:
-                need_zero = True
-                continue
-            if need_zero and parts:
-                parts.append("零")
-            need_zero = False
-            unit = ChatTTSNormAdapter._CN_UNITS[i % 4]
-            if unit == "十" and d == 1 and i == 1 and nl == 2:
-                parts.append("十")
-            else:
-                parts.append(ChatTTSNormAdapter._CN_DIGITS[d] + unit)
-        return "".join(reversed(parts))
 
     @staticmethod
     def cn_number_normalize(text: str) -> str:
-        """将阿拉伯数字转为中文数字（ChatTTS normalizer 签名）。"""
+        """将阿拉伯数字转为中文数字（ChatTTS normalizer 签名: str→str）。"""
         import re
+        import cn2an
         return re.sub(
             r"\d+(?:\.\d+)?",
-            lambda m: ChatTTSNormAdapter._int_to_cn(
-                int(m.group()) if "." not in m.group() else 0
-            ) if "." not in m.group() else "".join(
-                ChatTTSNormAdapter._CN_DIGITS[int(d)]
-                for d in m.group().replace(".", "")
-            ),
+            lambda m: cn2an.an2cn(m.group()),
             text,
         )
 
