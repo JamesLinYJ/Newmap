@@ -1005,14 +1005,15 @@ function App() {
   }, [clearActiveRunState, focusQueryInput, session?.id])
 
   const uploadOneFile = useCallback(
-    async (file: File) => {
+    async (file: File, explicitThreadId?: string | null) => {
       // 单文件上传原子操作。
       //
       // 批量/文件夹上传在调用层编排；这里只维护一个文件的引用状态，
-      // 保证聊天面板能立即看到“正在引用什么数据”。
+      // 保证聊天面板能立即看到”正在引用什么数据”。
       if (!session) {
         throw new Error('当前会话还没有初始化，暂时不能上传文件。')
       }
+      const threadId = explicitThreadId ?? currentThreadId
       const kind = classifyUploadFile(file)
       if (!kind) {
         throw new Error(`不支持的文件类型：${file.name}`)
@@ -1031,7 +1032,7 @@ function App() {
 
       try {
         if (kind === 'weather') {
-          const { dataset, job } = await uploadWeatherDataset(session.id, file, currentThreadId)
+          const { dataset, job } = await uploadWeatherDataset(session.id, file, threadId)
           startTransition(() => {
             setUploadedLayerName(dataset.filename)
             setWeatherDatasets((current) => mergeWeatherDataset(current, dataset))
@@ -1048,7 +1049,7 @@ function App() {
           return { kind, name: dataset.filename }
         }
 
-        const descriptor = await uploadLayer(session.id, file, currentThreadId)
+        const descriptor = await uploadLayer(session.id, file, threadId)
         startTransition(() => {
           setUploadedLayerName(descriptor.name)
           setUploadReferences((current) => upsertUploadReference(current, {
@@ -1082,6 +1083,21 @@ function App() {
       if (!session) {
         return
       }
+      // 如果没有活跃线程，先自动创建一个（上传文件必须属于某个线程）
+      let resolvedThreadId = currentThreadId
+      if (!resolvedThreadId) {
+        try {
+          const thread = await createThread(session.id, '文件上传')
+          startTransition(() => {
+            setActiveThreadId(thread.id)
+            setSessionThreads((prev) => [thread, ...prev])
+          })
+          resolvedThreadId = thread.id
+        } catch {
+          setUiError('无法自动创建对话线程，请先发送一条消息再上传。')
+          return
+        }
+      }
       const uploadable = files.filter((file) => classifyUploadFile(file))
       const skippedCount = files.length - uploadable.length
       if (!uploadable.length) {
@@ -1099,7 +1115,7 @@ function App() {
       const failures: string[] = []
       for (const file of uploadable) {
         try {
-          const result = await uploadOneFile(file)
+          const result = await uploadOneFile(file, resolvedThreadId)
           layerUploaded ||= result.kind === 'layer'
           weatherUploaded ||= result.kind === 'weather'
         } catch (error) {
