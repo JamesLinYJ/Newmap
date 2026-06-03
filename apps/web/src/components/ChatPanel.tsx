@@ -399,6 +399,20 @@ export function ChatPanel(props: ChatPanelProps) {
 
     if (entry.kind === 'command_batch') {
       const commands = entry.commands ?? []
+      // synthesize_speech 工具结果 → 渲染为普通语音消息
+      if (commands.length === 1 && commands[0].toolName === 'synthesize_speech') {
+        return (
+          <div key={entry.id} className="cc-timeline-item cc-timeline-item--answer">
+            <span className="cc-timeline-dot" />
+            <div className="cc-timeline-body">
+              <VoiceBar
+                text={commands[0].body}
+                messageId={entry.id}
+              />
+            </div>
+          </div>
+        )
+      }
       return (
         <m.div key={entry.id} className="cc-timeline-item cc-timeline-item--tool" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
           <span className="cc-timeline-dot" />
@@ -409,24 +423,12 @@ export function ChatPanel(props: ChatPanelProps) {
               </div>
             )}
             <m.div className="cc-tool-stack" {...buildFadeUpMotion(reducedMotion, 0, 6)}>
-              {commands.map((command) => {
-                // synthesize_speech 工具调用 → 语音条直接内嵌
-                if (command.toolName === 'synthesize_speech' && command.body) {
-                  return (
-                    <VoiceBar
-                      key={command.id}
-                      text={command.body}
-                      messageId={command.id}
-                    />
-                  )
-                }
-                return (
-                  <ToolCommandCard
-                    key={command.id}
-                    command={command}
-                  />
-                )
-              })}
+              {commands.map((command) => (
+                <ToolCommandCard
+                  key={command.id}
+                  command={command}
+                />
+              ))}
             </m.div>
           </div>
         </m.div>
