@@ -2292,7 +2292,12 @@ class GeoAgentRuntime:
             self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, act_entry.description, payload=act_entry.model_dump(mode="json"))
             if owner is not None:
                 self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 正在执行 {tool_name}", payload=self._find_sub_agent(sub_agents, owner.agent_id).model_dump(mode="json"))
-            self._append_event(run_id, thread_id, EventType.TOOL_STARTED, f"开始调用工具：{tool_name}", payload={"tool": tool_name, "args": kwargs, "stepId": call.step_id, "loopPhase": LOOP_PHASES["act"], "loopIteration": iteration})
+            tool_event_meta = {
+                "tool": tool_name,
+                "toolLabel": definition.metadata.label,
+                "toolKind": definition.metadata.tool_kind,
+            }
+            self._append_event(run_id, thread_id, EventType.TOOL_STARTED, f"开始调用工具：{tool_name}", payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "loopPhase": LOOP_PHASES["act"], "loopIteration": iteration})
 
             # --- 执行工具（含重试逻辑） ---
             # 对于 transient 错误（超时、外部 API 故障），最多重试 2 次，
@@ -2377,6 +2382,8 @@ class GeoAgentRuntime:
                     formatted_error,
                     payload={
                         "tool": tool_name,
+                        "toolLabel": tool_event_meta["toolLabel"],
+                        "toolKind": tool_event_meta["toolKind"],
                         "args": kwargs,
                         "stepId": call.step_id,
                         "status": "failed",
@@ -2486,7 +2493,7 @@ class GeoAgentRuntime:
             if owner is not None:
                 updated_sub_agents = state_updates.get("sub_agents") or state.sub_agents
                 self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 已完成 {tool_name}", payload=self._find_sub_agent(updated_sub_agents, owner.agent_id).model_dump(mode="json"))
-            self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, result.message, payload={"tool": tool_name, "args": kwargs, "stepId": call.step_id, "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})
+            self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, result.message, payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})
             self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, result.message, payload=observe_entry.model_dump(mode="json"))
             observation = _format_tool_observation(tool_name=tool_name, result=result)
 
@@ -2835,7 +2842,7 @@ class GeoAgentRuntime:
                     "- 你不能执行发布、导出、删除等写操作。",
                     "- 完成探索后，调用 **exit_plan_mode** 提交执行计划给用户审批。",
                     "- 在计划中列出每一步需要的工具、参数和原因。",
-                    "- 进入探索前先调用 **todo_write** 写出探索待办（列明要查什么数据、跑什么分析）；每完成一项立刻更新状态。计划模式下 Todo 同样是强制性的——它能帮助你在只读探索中保持条理，也让用户看清你在查什么。",
+                    "- 进入探索前先调用 **todo_write** 写出探索待办；每完成一项立刻更新状态。",
                 ]
             )
 
@@ -2852,36 +2859,54 @@ class GeoAgentRuntime:
                 "- 直接调用工具，不需要在调用前解释或预告。工具结果会自动展示给用户。",
                 "- 简单问题直接回答。复杂问题逐步推进，每步用工具验证。",
                 "",
-                "## Todo 使用规范",
-                "使用 **todo_write** 创建和管理当前运行的结构化任务清单，帮助自己追踪进度、也让用户了解推进状态。",
                 "",
-                "### 何时使用",
-                "主动使用 todo_write 的场景：",
-                "1. 复杂多步任务（3 个以上独立操作）",
-                "2. 需要仔细规划的非琐碎任务",
-                "3. 用户明确要求展示计划",
-                "4. 接到新指令后立刻分解",
-                "5. 开始执行某项时标记为 running；完成后立刻标记为 completed",
+                "## 使用 Todo 清单",
+                "使用 **todo_write** 创建和管理本次编码会话的结构化任务清单。这能帮助你追踪进度、组织复杂任务，也让用户了解整体推进情况。",
                 "",
-                "### 何时不用",
-                "以下场景可跳过，直接做事：",
-                "1. 只有单个简单操作（如「这个图层有多少要素」）",
-                "2. 纯信息问答（如「PostGIS 是什么」）",
-                "3. 操作在 3 步以内且每一步都很明确",
+                "### 何时使用此工具",
+                "在以下场景主动使用：",
+                "1. 复杂的多步任务 — 需要 3 个以上独立步骤或操作",
+                "2. 非琐碎、复杂的任务 — 需要仔细规划或多轮操作",
+                "3. 用户明确要求展示待办清单",
+                "4. 用户提供了多个任务（编号或逗号分隔的列表）",
+                "5. 收到新指令后 — 立刻将用户需求分解为待办项",
+                "6. 开始做某项时 — 开始前先标记为 in_progress。理想情况下同时只应有一个任务处于 in_progress",
+                "7. 完成某项后 — 标记为 completed，并将新发现的后续任务加入清单",
                 "",
-                "### 任务管理规则",
-                "- 每次最多一个任务处于 running 状态",
-                "- 标记 completed 前确认该项确实已完全达成",
-                "- 遇到阻塞时保留 in_progress，新开一个 pending 描述阻塞原因",
-                "- 不再相关的任务直接从列表移除",
-                "- 每一项必须同时提供 **content**（祈使形式，如「分析澳门医院分布」）和 **activeForm**（进行时形式，如「正在分析澳门医院分布」）",
-                "- 拿不准时宁可多用，主动追踪总是比混乱好",
+                "### 何时**不**使用此工具",
+                "以下场景跳过，直接做事：",
+                "1. 只有单个、直接的任务",
+                "2. 任务琐碎，追踪它没有组织价值",
+                "3. 任务不超过 3 个琐碎步骤",
+                "4. 纯对话或信息询问",
                 "",
-                "### 状态流转",
-                "pending → in_progress（开始做时） → completed（做完时）",
-                "如果需要回退：completed → pending（发现还需要补充工作）",
+                "注意：如果只有一个琐碎任务，直接做就好，不需要建 todo 清单。",
                 "",
-                "除非一次回答即可完成，否则先调用 todo_write 写出 2-6 个待办项；每完成一步立刻调用 todo_write 更新状态。",
+                "### 任务状态与管理",
+                "1. **任务状态** — 使用以下状态追踪进度：",
+                "   - pending：尚未开始",
+                "   - in_progress：正在执行（限制每次最多一个）",
+                "   - completed：已成功完成",
+                "   **重要**：每项任务必须同时提供两种形式：",
+                "   - **content**：祈使形式，描述要做什么（如「运行测试」「构建项目」）",
+                "   - **activeForm**：进行时形式，执行时展示（如「正在运行测试」「正在构建项目」）",
+                "2. **任务管理**：",
+                "   - 实时更新状态",
+                "   - 完成后立刻标记（不要批量标记）",
+                "   - 每次最多一个 in_progress",
+                "   - 完成当前任务再开始新的",
+                "   - 不再相关的任务直接从列表中移除",
+                "3. **完成要求**：",
+                "   - 只有在完全达成时才标记 completed",
+                "   - 遇到错误、阻塞或无法完成时保持 in_progress",
+                "   - 阻塞时新开一个 pending 描述需要解决的问题",
+                "4. **任务拆分**：",
+                "   - 创建具体、可执行的条目",
+                "   - 把复杂任务拆成更小、可管理的步骤",
+                "   - 使用清晰、描述性的任务名称",
+                "   - 每项都必须提供 content 和 activeForm",
+                "",
+                "拿不准时，宁可多用。主动追踪任务进度能帮助你完整达成所有需求。",
                 "- 历史上下文不是默认事实源；不要表现得自动知道上一轮细节。只有用户明确说「刚才」「上一轮」「用已有结果」等延续指令时，才调用 list_context_references 或 search_thread_context 查真实对象。",
                 '- 遇到指代词（「这个地点」「刚才那个结果」），先用上下文工具找它对应的真实对象；找不到就向用户确认。',
                 "- 以下情况主动确认，别替用户做主：地点有多个候选、用户意图模糊、操作代价大（如发布、删除）、查询条件不明确。用 request_clarification 生成选项让用户选。",

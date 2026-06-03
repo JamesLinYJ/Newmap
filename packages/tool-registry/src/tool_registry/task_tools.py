@@ -93,8 +93,13 @@ async def todo_write_handler(
 ) -> ToolExecutionResult:
     """创建或更新待办列表。覆盖式写入（新列表替换旧列表）。
 
-    Agent 在执行多步分析前调用。每项包含 content（任务描述）、status（pending/in_progress/completed）、activeForm（进行时的中文表述）。
+    Agent 在执行多步分析前调用。每项包含：
+    - content: 祈使形式，描述要做什么（如"分析澳门医院分布"）
+    - status: pending | in_progress | completed
+    - activeForm: 进行时形式，描述正在做什么（如"正在分析澳门医院分布"）
     """
+    old_todos: list[dict[str, Any]] = list(_get_todo_list(runtime))
+
     raw = args.get("todos", [])
     if not isinstance(raw, list):
         raw = []
@@ -107,17 +112,55 @@ async def todo_write_handler(
         if normalized["title"]:
             items.append(normalized)
 
+    # 全部完成时清空列表（与参考实现一致：allDone → newTodos = []）
+    all_done = all(i["status"] == "completed" for i in items) if items else False
+    if all_done:
+        items.clear()
+
     _set_todo_list(runtime, items)
 
     done = sum(1 for i in items if i["status"] == "completed")
+    total = len(items)
+
+    # --- 验证提醒 ---
+    # 当主管 Agent 关闭了 3+ 项任务，且其中没有一项是验证/检查类步骤时，
+    # 在结果中追加提醒——让 Agent 考虑是否需要最终验证。
+    verification_nudge: str | None = None
+    if all_done and len(old_todos) >= 3:
+        has_verification = any(
+            "验证" in (str(i.get("title", ""))) or "检查" in (str(i.get("title", "")))
+            or "review" in str(i.get("title", "")).lower()
+            for i in old_todos
+        )
+        if not has_verification:
+            verification_nudge = (
+                "注意：你刚刚关闭了 3 个以上的任务，其中没有包含验证步骤。"
+                "在写最终总结前，建议再检查一遍结果是否正确。"
+            )
+
+    # 结果消息：前后对比，简洁明了
+    old_count = len(old_todos)
+    if total > 0:
+        message = f"待办列表已更新：{done}/{total} 完成"
+    elif old_count > 0:
+        message = "待办列表已清空。"
+    else:
+        message = "待办列表无变化。"
+
+    if verification_nudge:
+        message += f"\n\n{verification_nudge}"
+
     return ToolExecutionResult(
-        message=(
-            f"已更新待办列表：{done}/{len(items)} 完成"
-            if items else "待办列表已清空。"
-        ),
-        payload={"todos": items, "total": len(items), "completed": done},
+        message=message,
+        payload={
+            "oldTodos": old_todos,
+            "newTodos": items,
+            "total": total,
+            "completed": done,
+            "verificationNudgeNeeded": bool(verification_nudge),
+        },
         source="task_system",
-        feature_count=len(items),
+        feature_count=total,
     )
 
 
