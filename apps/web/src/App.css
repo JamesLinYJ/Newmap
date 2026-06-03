@@ -2241,6 +2241,20 @@
   .voice-bar__text {
     @apply mt-2 border-t border-slate-100 pt-2 text-[13px] leading-relaxed text-slate-600;
   }
+
+  /* 文件浏览器 — Windows 资源管理器风格 */
+  .file-browser__head {
+    @apply flex items-center gap-2 border-b border-slate-200 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400;
+  }
+  .file-browser__row {
+    @apply flex items-center gap-2 border-b border-slate-100 py-2.5 transition-colors hover:bg-slate-50;
+  }
+  .file-browser__row:last-child { @apply border-b-0; }
+  .file-browser__col { @apply flex items-center; }
+  .file-browser__col--name { @apply min-w-0 flex-1 gap-2 truncate text-[13px] font-medium text-slate-800; }
+  .file-browser__col--size { @apply w-20 flex-shrink-0 text-[12px] tabular-nums text-slate-500; }
+  .file-browser__col--date { @apply w-28 flex-shrink-0 text-[12px] tabular-nums text-slate-400; }
+  .file-browser__col--actions { @apply w-8 flex-shrink-0 justify-end; }
 }
 
 @keyframes voice-bar-pulse {

@@ -719,165 +719,81 @@ export const DetailPanel = memo(function DetailPanel({
       {panelMode === 'sources' ? (
         <section className="dc-card">
           <div className="dc-card__header">
-              <div>
-                <div className="dc-card__eyebrow">数据源</div>
-                <h3>当前数据概览</h3>
+            <div>
+              <div className="dc-card__eyebrow">文件管理</div>
+              <h3>所有文件</h3>
+            </div>
+            <div className="dc-card__icon">
+              <AppIcon name="database" size={18} />
+            </div>
+          </div>
+
+          {/* 工具栏 */}
+          <div className="dc-panel-section" style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 0 }}>
+            {onUploadFile && (
+              <label className="dc-link-button dc-link-button--primary">
+                <CloudUpload size={14} aria-hidden="true" />
+                上传文件
+                <input
+                  type="file"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) onUploadFile(file)
+                    event.currentTarget.value = ''
+                  }}
+                />
+              </label>
+            )}
+            <span className="text-[12px] text-slate-400">
+              {(allFiles?.length ?? 0) > 0
+                ? `${allFiles!.length} 个文件`
+                : '拖拽文件到对话框或点击上传'}
+            </span>
+          </div>
+
+          {/* 文件列表 — 资源管理器风格 */}
+          <div className="dc-panel-section">
+            {allFiles && allFiles.length > 0 ? (
+              <div className="file-browser">
+                {/* 表头 */}
+                <div className="file-browser__head">
+                  <span className="file-browser__col file-browser__col--name">名称</span>
+                  <span className="file-browser__col file-browser__col--size">大小</span>
+                  <span className="file-browser__col file-browser__col--date">上传时间</span>
+                  <span className="file-browser__col file-browser__col--actions" />
+                </div>
+                {/* 行 */}
+                {allFiles.map((f) => (
+                  <div key={f.id} className="file-browser__row">
+                    <span className="file-browser__col file-browser__col--name" title={f.name}>
+                      <FileIcon name={f.name} />
+                      {f.name}
+                    </span>
+                    <span className="file-browser__col file-browser__col--size">{f.size}</span>
+                    <span className="file-browser__col file-browser__col--date">
+                      {(f as any).uploadedAt
+                        ? new Date((f as any).uploadedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                        : '—'}
+                    </span>
+                    <span className="file-browser__col file-browser__col--actions">
+                      {onDeleteFile && (
+                        <button
+                          type="button"
+                          className="dc-icon-button dc-icon-button--danger"
+                          title="删除"
+                          onClick={() => onDeleteFile(f.id)}
+                        >
+                          <Trash2 size={16} aria-hidden="true" />
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <div className="dc-card__icon">
-                <AppIcon name="database" size={18} />
-              </div>
-            </div>
-
-          <div className="dc-keyvalue-list">
-            <div className="dc-keyvalue-row">
-              <span>上传数据</span>
-              <strong>{uploadedLayerName ?? '暂未上传'}</strong>
-            </div>
-            <div className="dc-keyvalue-row">
-              <span>后台 catalog</span>
-              <strong>{managedLayers.length} 个</strong>
-            </div>
-            <div className="dc-keyvalue-row">
-              <span>气象数据</span>
-              <strong>{weatherDatasets.length} 个</strong>
-            </div>
-            <div className="dc-keyvalue-row">
-              <span>当前底图</span>
-              <strong>{selectedBasemapName ?? '标准地图'}</strong>
-            </div>
-            <div className="dc-keyvalue-row">
-              <span>分析结果</span>
-              <strong>{artifacts.length} 个</strong>
-            </div>
-          </div>
-
-          <div className="dc-panel-section">
-            <div className="dc-panel-section__title">后台图层目录</div>
-            <label className="dc-link-button dc-link-button--primary dc-layer-import">
-              <CloudUpload size={14} aria-hidden="true" />
-              导入后台图层
-              <input
-                type="file"
-                accept=".geojson,.json,.gpkg,.zip,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
-                hidden
-                onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  if (file) {
-                    onImportManagedLayer(file)
-                  }
-                  event.currentTarget.value = ''
-                }}
-              />
-            </label>
-            <div className="dc-panel-list">
-              {managedLayers.length ? (
-                managedLayers.map((layer) => (
-                  <div key={layer.layerKey} className="dc-panel-item dc-panel-item--static">
-                    <div>
-                      <strong>{layer.name}</strong>
-                      <span>{layer.description || `${layer.geometryType} 图层`} · {layer.category} · {layer.status}</span>
-                      <span>{formatLayerBounds(layer.bounds)} · 更新 {formatLayerUpdated(layer.updatedAt)}</span>
-                    </div>
-                    <div className="dc-panel-item__actions">
-                      <span className="dc-pill-meta">{layer.layerKey}</span>
-                      <label className="dc-icon-button" title="替换数据" aria-label="替换数据">
-                        <RefreshCw size={16} aria-hidden="true" />
-                        <input
-                          type="file"
-                          accept=".geojson,.json,.gpkg,.zip"
-                          hidden
-                          onChange={(event) => {
-                            const file = event.target.files?.[0]
-                            if (file) {
-                              onReplaceManagedLayer(layer.layerKey, file)
-                            }
-                            event.currentTarget.value = ''
-                          }}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        className="dc-icon-button"
-                        title={layer.status === 'active' ? '停用图层' : '启用图层'}
-                        onClick={() => onToggleLayerStatus(layer.layerKey, layer.status === 'active' ? 'inactive' : 'active')}
-                      >
-                        {layer.status === 'active' ? <ToggleRight size={16} aria-hidden="true" /> : <ToggleLeft size={16} aria-hidden="true" />}
-                      </button>
-                      <button type="button" className="dc-icon-button dc-icon-button--danger" title="删除图层" onClick={() => onDeleteLayer(layer.layerKey)}>
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="dc-empty-copy">当前 catalog 为空。你可以先导入 GeoJSON / GPKG / ZIP Shapefile，或者直接让 Agent 使用外部地点与 POI 来源继续分析。</p>
-              )}
-            </div>
-          </div>
-
-          <div className="dc-panel-section">
-            <div className="dc-panel-section__title">会话上传</div>
-            <div className="dc-panel-list">
-              {sessionUploadLayers.length ? (
-                sessionUploadLayers.map((layer) => (
-                  <div key={layer.layerKey} className="dc-panel-item dc-panel-item--static">
-                    <div>
-                      <strong>{layer.name}</strong>
-                      <span>{layer.description || `${layer.geometryType} 图层`} · 当前会话</span>
-                      <span>{formatLayerBounds(layer.bounds)} · {(layer.propertySchema ?? []).length} 个字段</span>
-                    </div>
-                    <span className="dc-pill-meta">{layer.layerKey}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="dc-empty-copy">当前会话还没有临时上传图层。</p>
-              )}
-            </div>
-          </div>
-
-          <div className="dc-panel-section">
-            <div className="dc-panel-section__title">
-              已上传文件
-              {onUploadFile && (
-                <label className="dc-link-button dc-link-button--small">
-                  <CloudUpload size={14} aria-hidden="true" />
-                  上传
-                  <input
-                    type="file"
-                    hidden
-                    onChange={(event) => {
-                      const file = event.target.files?.[0]
-                      if (file) onUploadFile(file)
-                      event.currentTarget.value = ''
-                    }}
-                  />
-                </label>
-              )}
-            </div>
-            <div className="dc-panel-list">
-              {allFiles && allFiles.length ? (
-                allFiles.map((f) => (
-                  <div key={f.id} className="dc-panel-item dc-panel-item--static">
-                    <div>
-                      <strong>{f.name}</strong>
-                      <span>{f.size}</span>
-                    </div>
-                    {onDeleteFile && (
-                      <button
-                        type="button"
-                        className="dc-icon-button dc-icon-button--danger"
-                        title="删除文件"
-                        onClick={() => onDeleteFile(f.id)}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <p className="dc-empty-copy">当前线程还没有上传任何文件。拖拽文件到对话框或点击上传按钮。</p>
-              )}
-            </div>
+            ) : (
+              <p className="dc-empty-copy">暂无文件。拖拽文件到对话框，或点击上方「上传文件」按钮。</p>
+            )}
           </div>
         </section>
       ) : null}
@@ -1170,4 +1086,16 @@ function formatRunMeta(run: AnalysisRun) {
         minute: '2-digit',
       })
   return `${stamp} · ${run.state.artifacts.length} 个结果`
+}
+
+// 文件浏览器图标（根据扩展名）
+function FileIcon({ name }: { name: string }) {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  const emoji: Record<string, string> = {
+    geojson: '🗺', json: '📋', gpkg: '🗄', zip: '📦',
+    tif: '🖼', tiff: '🖼', png: '🖼', jpg: '🖼', jpeg: '🖼', svg: '🖼',
+    nc: '🌤', nc4: '🌤', grib: '🌤', grb: '🌤', grb2: '🌤', h5: '🌤', hdf5: '🌤', bz2: '🌤',
+    pdf: '📄', txt: '📝', md: '📝', doc: '📄', docx: '📄', xls: '📊', xlsx: '📊', csv: '📊',
+  }
+  return <span style={{ fontSize: 16, marginRight: 6 }}>{emoji[ext] || '📎'}</span>
 }
