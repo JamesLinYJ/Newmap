@@ -48,6 +48,7 @@ from .routers import (
     layers,
     tools,
     results,
+    media,
     config_routes,
     geo,
     weather,
@@ -160,6 +161,7 @@ app.include_router(analysis.router)
 app.include_router(layers.router)
 app.include_router(tools.router)
 app.include_router(results.router)
+app.include_router(media.router)
 app.include_router(config_routes.router)
 app.include_router(geo.router)
 app.include_router(weather.router)

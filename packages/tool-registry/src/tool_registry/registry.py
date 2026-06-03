@@ -1308,7 +1308,63 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         ToolDefinition("meteorological_threshold_area", meteorological_threshold_area, ToolMetadata("气象阈值区", "把满足阈值条件的格点转成 GeoJSON 面，用于降雨量、温度、风速等范围分析。", "meteorology", ["meteorology", "气象", "threshold", "geojson"]), MeteorologicalThresholdArgs),
         ToolDefinition("meteorological_contours", meteorological_contours, ToolMetadata("气象等值线", "把连续气象变量转成 GeoJSON 等值线。levels 为空时自动生成。", "meteorology", ["meteorology", "气象", "contour", "geojson"]), MeteorologicalContoursArgs),
         ToolDefinition("generate_meteorological_report", generate_meteorological_report, ToolMetadata("生成气象 DOCX 报告", "基于气象数据集 metadata、统计摘要和 interpretation_ref 指向的大模型综合解读生成正式 DOCX 报告。", "meteorology", ["meteorology", "气象", "docx", "report"]), GenerateMeteorologicalReportArgs),
+        ToolDefinition("synthesize_speech", _synthesize_speech_handler, ToolMetadata("文本转语音", "将文本合成为语音文件（ChatTTS），返回可播放的音频 URL。适合播报分析结果、预警信息等。", "output", ["tts", "voice", "speech", "audio", "播报"]), _SynthesizeSpeechArgs),
     ]
+
+
+# ─── 媒体工具 ────────────────────────────────────────────────────────
+
+class _SynthesizeSpeechArgs(ToolArgsModel):
+    text: str = ""
+    """要合成为语音的文本内容。"""
+
+
+async def _synthesize_speech_handler(
+    args: dict[str, Any], runtime: ToolRuntime,
+) -> ToolExecutionResult:
+    """调用 ChatTTS 引擎将文本转为语音文件。"""
+    text = str(args.get("text", "")).strip()
+    if not text:
+        return ToolExecutionResult(
+            message="语音合成需要提供文本内容。",
+            payload={}, source="media",
+        )
+
+    try:
+        import asyncio
+        from pathlib import Path
+        import hashlib
+        import shutil
+
+        from media_tts import ChatTTSEngine
+
+        # 按文本 hash 缓存
+        text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+        cache_dir = Path("runtime/tts_cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / f"{text_hash}.wav"
+
+        if not cache_path.exists():
+            engine = ChatTTSEngine()
+            result = await engine.synthesize(text)
+            shutil.copy(result.audio_path, cache_path)
+
+        audio_url = f"/api/v1/media/tts/{text_hash}.wav"
+        return ToolExecutionResult(
+            message=f"语音已生成：{audio_url}",
+            payload={"audio_url": audio_url, "text_hash": text_hash, "text": text[:200]},
+            source="media",
+        )
+    except ImportError:
+        return ToolExecutionResult(
+            message="ChatTTS 未安装，无法生成语音。请先 pip install ChatTTS。",
+            payload={}, source="media",
+        )
+    except Exception as exc:
+        return ToolExecutionResult(
+            message=f"语音合成失败：{exc}",
+            payload={"error": str(exc)}, source="media",
+        )
 
 
 def build_default_registry() -> ToolRegistry:

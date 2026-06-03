@@ -718,32 +718,40 @@
 
   /* ── 对话时间线 ────────────────────────────── */
   .cc-timeline {
-    @apply flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-5 py-5;
+    @apply flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-3 py-4;
+    --cc-rail-col: 20px;
+    --cc-rail-x: calc(var(--cc-rail-col) / 2);
+    --cc-dot-size: 8px;
+    --cc-dot-y: 8px;
     scroll-behavior: smooth;
     overflow-anchor: auto;
   }
 
   .cc-user-prompt {
-    @apply rounded-[18px] rounded-br-[6px] bg-[linear-gradient(135deg,#1c1c1e,#3a3a3c)] px-4 py-2.5 text-[15px] leading-snug text-white;
-    max-width: 76%;
-    margin-left: auto;
+    @apply w-full rounded-[7px] border border-black/[0.16] bg-white px-3 py-2 text-[15px] leading-6 text-[#24292f] shadow-[0_1px_2px_rgb(27_31_36/0.03)];
+    overflow-wrap: anywhere;
   }
 
   /* ── 时间线条目 ────────────────────────────── */
   .cc-timeline-item {
-    @apply relative grid grid-cols-[16px_minmax(0,1fr)] gap-3;
+    @apply relative grid gap-3;
+    grid-template-columns: var(--cc-rail-col) minmax(0, 1fr);
     contain: layout style;
   }
 
   .cc-timeline-item::before {
     content: "";
-    @apply absolute bottom-[-26px] top-[16px] w-px bg-black/[0.10];
-    left: 3px;
+    @apply absolute bottom-[-26px] top-0 w-px bg-black/[0.12];
+    left: var(--cc-rail-x);
+    transform: translateX(-0.5px);
   }
   .cc-timeline-item:last-child::before { @apply hidden; }
 
   .cc-timeline-dot {
-    @apply relative z-[1] mt-[7px] size-[9px] rounded-full bg-[#57606a];
+    @apply relative z-[1] rounded-full bg-[#3f3f46] justify-self-center;
+    width: var(--cc-dot-size);
+    height: var(--cc-dot-size);
+    margin-top: var(--cc-dot-y);
     transition: background-color 200ms ease, box-shadow 200ms ease;
   }
   .cc-timeline-item--tool .cc-timeline-dot,
@@ -761,10 +769,10 @@
 
   /* ── 思考折叠 ────────────────────────────── */
   .cc-thought-toggle {
-    @apply inline-flex cursor-pointer select-none items-center gap-1.5 rounded-[6px] border-0 bg-transparent px-0.5 py-0.5 text-[13px] font-medium text-[#6e7681] transition-all duration-150 hover:text-[#57606a];
+    @apply inline-flex cursor-pointer select-none items-center gap-1 rounded-[5px] border-0 bg-transparent px-0 py-0.5 text-[14px] font-normal text-[#6e7681] transition-all duration-150 hover:text-[#24292f];
   }
   .cc-chevron {
-    @apply text-[#8b949e] transition-transform duration-200;
+    @apply text-[#6e7681] transition-transform duration-200;
     flex-shrink: 0;
   }
   .cc-chevron--open { @apply rotate-90; }
@@ -776,16 +784,16 @@
 
   /* ── 消息正文 ────────────────────────────── */
   .cc-assistant-copy {
-    @apply mt-1.5 max-w-[720px] text-[15px] leading-[1.65] text-[#24292f];
+    @apply mt-1.5 max-w-none text-[15px] leading-[1.65] text-[#24292f];
   }
   .cc-assistant-copy--thought {
-    @apply text-[#6e7681] text-[13px] leading-[1.45];
+    @apply text-[13px] leading-[1.45] text-[#57606a];
   }
   .cc-assistant-copy .dc-markdown {
     @apply text-[15px] leading-[1.65] text-[#24292f];
   }
   .cc-assistant-copy--thought .dc-markdown {
-    @apply text-[13px] leading-[1.45] text-[#6e7681];
+    @apply text-[13px] leading-[1.45] text-[#57606a];
   }
 
   /* 流式输出光标 — 跟在最后一段文字末尾 */
@@ -840,22 +848,18 @@
   }
 
   .cc-tool-stack {
-    @apply flex max-w-[760px] flex-col gap-2;
+    @apply flex max-w-none flex-col gap-4;
   }
 
   .cc-tool-row {
-    @apply max-w-[760px] rounded-[7px] transition-colors duration-150;
+    @apply max-w-none rounded-[7px] transition-colors duration-150;
   }
 
   .cc-tool-row-head {
-    @apply grid w-full cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-[7px] border-0 bg-transparent px-0 py-1 text-left transition-colors duration-150 hover:text-[#24292f];
+    @apply mb-2 inline-flex w-full items-center gap-2 border-0 bg-transparent px-0 py-0 text-left text-[15px] leading-6;
   }
 
-  .cc-tool-row-icon {
-    @apply grid size-5 place-items-center rounded-[5px] bg-black/[0.04] text-[#57606a];
-  }
-
-  .cc-tool-row-icon--spin svg {
+  .cc-tool-row-spinner {
     @apply animate-spin;
   }
 
@@ -864,11 +868,11 @@
   }
 
   .cc-tool-row-title {
-    @apply truncate text-[15px] font-semibold leading-5 text-[#24292f];
+    @apply shrink-0 text-[15px] font-semibold leading-6 text-[#24292f];
   }
 
   .cc-tool-row-subtitle {
-    @apply truncate text-[13px] leading-5 text-[#6e7781];
+    @apply min-w-0 truncate text-[15px] font-normal leading-6 text-[#24292f];
   }
 
   .cc-tool-row-preview {
@@ -881,6 +885,30 @@
 
   .cc-tool-detail {
     @apply ml-12 mt-1 max-w-[700px] rounded-[7px] border border-black/[0.10] bg-white px-3 py-2 text-[14px] leading-relaxed text-[#24292f] shadow-[0_1px_2px_rgb(27_31_36/0.03)];
+  }
+
+  .cc-tool-io-card {
+    @apply max-w-none overflow-hidden rounded-[7px] border border-black/[0.16] bg-white text-[13px] shadow-[0_1px_2px_rgb(27_31_36/0.03)];
+  }
+
+  .cc-tool-io-section {
+    @apply grid grid-cols-[38px_minmax(0,1fr)] gap-2 px-3 py-2.5;
+  }
+
+  .cc-tool-io-section + .cc-tool-io-section {
+    @apply border-t border-black/[0.12];
+  }
+
+  .cc-tool-io-label {
+    @apply pt-0.5 font-mono text-[11px] uppercase tracking-normal text-[#8c959f];
+  }
+
+  .cc-tool-io-card pre {
+    @apply m-0 max-h-[168px] overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-[#3f3f46];
+  }
+
+  .cc-tool-io-section--output pre {
+    @apply text-[#3f3f46];
   }
 
   .cc-tool-detail > p {
@@ -2138,6 +2166,77 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ======================================================================
+ * VoiceBar — 语音条 (钉钉/微信风格)
+ * ====================================================================== */
+
+@layer components {
+  .voice-bar {
+    @apply mt-2 rounded-2xl border border-white/40 bg-white/60 px-3 py-2 backdrop-blur-sm;
+  }
+
+  .voice-bar__row {
+    @apply flex items-center gap-2;
+  }
+
+  .voice-bar__btn {
+    @apply flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600;
+    @apply transition-colors hover:bg-slate-200 active:scale-95;
+  }
+
+  .voice-bar__btn:disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
+
+  .voice-bar__spinner {
+    @apply animate-spin;
+  }
+
+  .voice-bar__wave {
+    @apply relative flex-1 cursor-pointer overflow-hidden rounded-lg px-1 py-2;
+  }
+
+  .voice-bar__wave-bars {
+    @apply flex items-center gap-0.5;
+  }
+
+  .voice-bar__bar {
+    @apply block w-1 flex-shrink-0 rounded-full bg-slate-300 transition-all;
+    height: 8px;
+    animation: voice-bar-pulse 0.8s ease-in-out infinite;
+  }
+
+  .voice-bar__bar--active {
+    @apply bg-indigo-400;
+  }
+
+  .voice-bar__progress {
+    @apply absolute inset-y-0 left-0 rounded-lg bg-indigo-200/40 transition-[width] duration-200;
+  }
+
+  .voice-bar__time {
+    @apply flex-shrink-0 text-[11px] tabular-nums text-slate-400;
+    width: 32px;
+  }
+
+  .voice-bar__expand {
+    @apply flex-shrink-0 rounded-md p-0.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600;
+  }
+
+  .voice-bar__icon {
+    @apply flex-shrink-0 text-slate-300;
+  }
+
+  .voice-bar__text {
+    @apply mt-2 border-t border-slate-100 pt-2 text-[13px] leading-relaxed text-slate-600;
+  }
+}
+
+@keyframes voice-bar-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 /* ======================================================================

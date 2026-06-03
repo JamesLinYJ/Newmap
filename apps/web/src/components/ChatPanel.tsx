@@ -15,13 +15,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { AnimatePresence, LayoutGroup, m, useReducedMotion, type Variants } from 'framer-motion'
-import { ArrowUp, ChevronDown, ClipboardList, FileText, FolderUp, LoaderCircle, Pencil, Plus, Search, Settings2, Square, Trash2, Zap, type LucideIcon } from 'lucide-react'
+import { ArrowUp, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Pencil, Plus, Settings2, Square, Trash2, Zap, type LucideIcon } from 'lucide-react'
 import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
 import { SAMPLES, type DataReferenceSummary } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants, buildScaleInMotion } from '../motion'
 import { deriveConversationEntries, type ConversationCommand, type ConversationEntry, type TranscriptEntry } from '../runTranscript'
 import { AppIcon } from './AppIcon'
 import { Markdown } from './Markdown'
+import { VoiceBar } from './VoiceBar'
 
 interface ChatPanelProps {
   artifactCount: number
@@ -356,39 +357,50 @@ export function ChatPanel(props: ChatPanelProps) {
     if (entry.kind === 'message' && entry.role === 'assistant') {
       const isThought = isThoughtEntry(entry)
       const thoughtExpanded = isThought && expandedIds.has(entry.id)
+      // 思考与回答走普通 DOM 渲染，不参与列表入场位移动画。
+      //
+      // 流式回答一到就直接占位显示，避免思考折叠完成后正文再“弹入”。
       return (
-        <m.div
+        <div
           key={entry.id}
           className={`cc-timeline-item ${isThought ? 'cc-timeline-item--thought' : 'cc-timeline-item--answer'}`}
-          layout
-          variants={entryVariants}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
         >
           <span className="cc-timeline-dot" />
           <div className="cc-timeline-body">
             {isThought ? (
-              <button className="cc-thought-toggle" type="button" aria-expanded={thoughtExpanded} onClick={() => toggleExpanded(entry.id)}>
-                <ChevronDown size={14} className={`cc-chevron ${thoughtExpanded ? 'cc-chevron--open' : ''}`} />
-                <span>{formatThoughtLabel(entry)}</span>
-                {entry.status === 'running' && <span className="cc-thinking-pulse" />}
-              </button>
-            ) : null}
-            <AnimatePresence initial={false}>
-              {(!isThought || thoughtExpanded) && (
-                <m.div className={`cc-assistant-copy ${isThought ? 'cc-assistant-copy--thought' : ''}`} {...(isThought ? buildFadeUpMotion(reducedMotion, 0, 6) : {})}>
-                  <Markdown streaming={entry.status === 'running'}>{entry.body}</Markdown>
-                </m.div>
-              )}
-            </AnimatePresence>
+              <>
+                <button className="cc-thought-toggle" type="button" aria-expanded={thoughtExpanded} onClick={() => toggleExpanded(entry.id)}>
+                  <span>{formatThoughtLabel(entry)}</span>
+                  <ChevronDown size={14} className={`cc-chevron ${thoughtExpanded ? 'cc-chevron--open' : ''}`} />
+                  {entry.status === 'running' && <span className="cc-thinking-pulse" />}
+                </button>
+                <AnimatePresence initial={false}>
+                  {thoughtExpanded && (
+                    <m.div className="cc-assistant-copy cc-assistant-copy--thought" {...buildFadeMotion(reducedMotion)}>
+                      <Markdown streaming={entry.status === 'running'}>{entry.body}</Markdown>
+                    </m.div>
+                  )}
+                </AnimatePresence>
+              </>
+            ) : (
+              <div className="cc-assistant-copy">
+                <Markdown streaming={entry.status === 'running'}>{entry.body}</Markdown>
+              </div>
+            )}
+            {/* 语音条：非思考类 assistant 消息底部展示 */}
+            {!isThought && entry.body && entry.body.length > 20 && (
+              <VoiceBar
+                text={entry.body.replace(/[#*_`~>\[\]|]/g, '').trim()}
+                messageId={entry.id}
+              />
+            )}
             {entry.artifactId && (
               <button className="cc-mini-button mt-2" onClick={() => onSelectArtifact(entry.artifactId!)}>
                 在地图中查看
               </button>
             )}
           </div>
-        </m.div>
+        </div>
       )
     }
 
@@ -408,8 +420,6 @@ export function ChatPanel(props: ChatPanelProps) {
                 <ToolCommandCard
                   key={command.id}
                   command={command}
-                  expanded={expandedIds.has(command.id)}
-                  onToggle={() => toggleExpanded(command.id)}
                 />
               ))}
             </m.div>
@@ -458,24 +468,25 @@ export function ChatPanel(props: ChatPanelProps) {
       )
     }
 
+    // 兼容旧版思考条目：没有 message kind 但被识别为思考内容。
     const isExpanded = expandedIds.has(entry.id)
     return (
-      <m.div key={entry.id} className={`cc-timeline-item cc-timeline-item--${entry.status === 'running' ? 'running' : 'thought'}`} layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
+      <div key={entry.id} className={`cc-timeline-item cc-timeline-item--${entry.status === 'running' ? 'running' : 'thought'}`}>
         <span className="cc-timeline-dot" />
         <div className="cc-timeline-body">
           <button className="cc-thought-toggle" type="button" aria-expanded={isExpanded} onClick={() => toggleExpanded(entry.id)}>
-            <ChevronDown size={14} className={`cc-chevron ${isExpanded ? 'cc-chevron--open' : ''}`} />
             <span>{formatThoughtLabel(entry)}</span>
+            <ChevronDown size={14} className={`cc-chevron ${isExpanded ? 'cc-chevron--open' : ''}`} />
           </button>
           <AnimatePresence initial={false}>
             {isExpanded && (
-              <m.div className="cc-assistant-copy" {...buildFadeUpMotion(reducedMotion, 0, 6)}>
+              <m.div className="cc-assistant-copy cc-assistant-copy--thought" {...buildFadeMotion(reducedMotion)}>
                 <Markdown streaming={entry.status === 'running'}>{entry.body}</Markdown>
               </m.div>
             )}
           </AnimatePresence>
         </div>
-      </m.div>
+      </div>
     )
   }
 
@@ -1249,60 +1260,41 @@ function buildActiveClarification(clarification: ClarificationState | null | und
 
 function ToolCommandCard({
   command,
-  expanded,
-  onToggle,
 }: {
   command: ConversationCommand
-  expanded: boolean
-  onToggle: () => void
 }) {
-  const isSearch = /Grep|Glob|ToolSearch|search/i.test(command.toolName ?? command.title)
-  const isRead = /Read|load_layer|inspect|list_/i.test(command.toolName ?? command.title)
   const isRunning = command.status === 'running'
   const resultText = formatCommandOutput(command)
-  const resultLong = resultText.length > 300
-  const ToolIcon = isSearch ? Search : isRead ? FileText : Settings2
+  const hasInput = Boolean(command.commandText)
+  const showOutput = isRunning || Boolean(resultText)
 
   return (
     <div className="cc-tool-row">
-      <button className="cc-tool-row-head" type="button" aria-expanded={expanded} onClick={onToggle}>
-        <ChevronDown size={13} className={`cc-chevron ${expanded ? 'cc-chevron--open' : ''}`} />
-        <span className={`cc-tool-row-icon ${isRunning ? 'cc-tool-row-icon--spin' : ''}`}>
-          {isRunning ? <LoaderCircle size={13} /> : <ToolIcon size={13} />}
-        </span>
-        <span className="cc-tool-row-copy">
-          <span className="cc-tool-row-title">{command.title}</span>
-          {!expanded && <span className="cc-tool-row-subtitle">{formatCommandPreview(command, resultText)}</span>}
-        </span>
-        <span className={`cc-command-status cc-command-status--${command.status}`}>{formatCommandStatus(command.status)}</span>
-      </button>
-      {!expanded && command.commandText && (
-        <div className="cc-tool-row-preview">
-          <code>{trimMiddle(command.commandText.replace(/^>\s*/u, ''), 92)}</code>
-        </div>
+      <div className="cc-tool-row-head">
+        <span className="cc-tool-row-title">{formatToolKindLabel(command)}</span>
+        <span className="cc-tool-row-subtitle">{formatToolActionLabel(command)}</span>
+        {isRunning && <LoaderCircle size={13} className="cc-tool-row-spinner" />}
+      </div>
+      {(hasInput || showOutput) && (
+        <m.div className="cc-tool-io-card" {...buildFadeUpMotion(false, 0, 4)}>
+          {hasInput && (
+            <div className="cc-tool-io-section">
+              <span className="cc-tool-io-label">输入</span>
+              <pre>{command.commandText?.replace(/^>\s*/u, '').trim()}</pre>
+            </div>
+          )}
+          {showOutput && (
+            <div className="cc-tool-io-section cc-tool-io-section--output">
+              <span className="cc-tool-io-label">输出</span>
+              {isRunning ? (
+                <pre>执行中，等待工具返回...</pre>
+              ) : (
+                <pre>{formatToolOutput(resultText)}</pre>
+              )}
+            </div>
+          )}
+        </m.div>
       )}
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <m.div className="cc-tool-detail" {...buildFadeUpMotion(false, 0, 4)}>
-            {command.commandText && (
-              <p className="cc-tool-args-block">
-                <span>{command.toolName}</span>
-                <code>{command.commandText.replace(/^>\s*/u, '')}</code>
-              </p>
-            )}
-            {isRunning ? (
-              <p className="cc-tool-detail-progress">执行中，等待工具返回…</p>
-            ) : resultLong ? (
-              <details>
-                <summary>{resultText.slice(0, 200)}…</summary>
-                <Markdown>{resultText}</Markdown>
-              </details>
-            ) : (
-              <Markdown>{resultText}</Markdown>
-            )}
-          </m.div>
-        )}
-      </AnimatePresence>
     </div>
   )
 }
@@ -1352,28 +1344,24 @@ function formatCommandStatus(status: string) {
   return '完成'
 }
 
+function formatToolKindLabel(command: ConversationCommand) {
+  return command.title.trim() || '工具调用'
+}
+
+function formatToolActionLabel(command: ConversationCommand) {
+  return formatCommandStatus(command.status)
+}
+
 function formatCommandOutput(command: ConversationCommand) {
   if (command.status === 'running') {
     return '工具正在后台运行，完成后会在这里显示结果。'
   }
-  const body = command.body.replace(/\s+/gu, ' ').trim()
+  const body = command.body.trim()
   return body || formatCommandStatus(command.status)
 }
 
-function formatCommandPreview(command: ConversationCommand, resultText: string) {
-  if (command.status === 'running') {
-    return '执行中，等待结果返回'
-  }
-  return trimMiddle(resultText, 96)
-}
-
-function trimMiddle(value: string, maxLength: number) {
-  const normalized = value.replace(/\s+/gu, ' ').trim()
-  if (normalized.length <= maxLength) {
-    return normalized
-  }
-  const keep = Math.max(12, Math.floor((maxLength - 1) / 2))
-  return `${normalized.slice(0, keep)}…${normalized.slice(-keep)}`
+function formatToolOutput(value: string) {
+  return value.trim() || '完成'
 }
 
 function buildTaskNotification(entry: ConversationEntry) {
