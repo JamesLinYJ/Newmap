@@ -77,6 +77,19 @@ async def list_weather_datasets(
     return store.list_weather_datasets(session_id=session_id, thread_id=thread_id)
 
 
+@router.delete("/api/v1/weather/datasets/{dataset_id}")
+async def delete_weather_dataset(
+    dataset_id: str,
+    store: PostgresPlatformStore = Depends(get_store),
+):
+    """删除气象数据集及其关联文件。"""
+    try:
+        store.delete_weather_dataset(dataset_id)
+        return {"deleted": True, "datasetId": dataset_id}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"删除气象数据集失败：{exc}")
+
+
 @router.get("/api/v1/weather/datasets/{dataset_id}")
 async def get_weather_dataset(dataset_id: str, thread_id: str | None = Query(None, alias="threadId"), store: PostgresPlatformStore = Depends(get_store)):
     if not thread_id:

@@ -556,7 +556,7 @@ function App() {
 
       if (itemId === 'sources') {
         setActiveNav('layers')
-        setPanelMode('layerManager')
+        setPanelMode('sources')
         return
       }
 

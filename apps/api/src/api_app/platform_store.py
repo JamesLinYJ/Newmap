@@ -150,11 +150,35 @@ class PostgresPlatformStore:
                 ("default", now_utc(), json.dumps(normalize_runtime_config(build_default_runtime_config()).model_dump(mode="json", by_alias=True), ensure_ascii=False)),
             )
 
+    # 默认工作台会话
+    #
+    # DEFAULT_SESSION_ID 是跨浏览器/设备的稳态锚点。所有无共享链接的用户
+    # 都复用同一个服务器端会话，保证从任意终端都能看到相同的对话历史。
+    # 首次访问时自动创建；后续访问返回已有记录。
+    DEFAULT_SESSION_ID = "__default__"
+
     def create_session(self) -> SessionRecord:
         timestamp = now_utc()
         session = SessionRecord(id=make_id("session"), created_at=timestamp, share_token=secrets.token_urlsafe(10))
         self.save_session(session)
         return session
+
+    def get_or_create_default_session(self) -> SessionRecord:
+        # 默认工作台会话的稳态入口。
+        #
+        # 用固定的 session_id 保证所有无共享链接的用户看到的是同一份会话历史；
+        # 首次访问时写入初始记录，后续访问直接返回已有数据。
+        try:
+            return self.get_session(self.DEFAULT_SESSION_ID)
+        except NotFoundError:
+            timestamp = now_utc()
+            session = SessionRecord(
+                id=self.DEFAULT_SESSION_ID,
+                created_at=timestamp,
+                share_token=secrets.token_urlsafe(10),
+            )
+            self.save_session(session)
+            return session
 
     def save_session(self, session: SessionRecord) -> None:
         payload = session.model_dump(mode="json", by_alias=True)
@@ -905,6 +929,23 @@ class PostgresPlatformStore:
         )
         self.save_weather_dataset(updated)
         return updated
+
+    def delete_weather_dataset(self, dataset_id: str) -> None:
+        """删除气象数据集记录及其关联文件。"""
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT * FROM platform_weather_datasets WHERE dataset_id = %s",
+                (dataset_id,),
+            ).fetchone()
+            if current is None:
+                return
+            # 转为 WeatherDatasetRecord 以便清理文件
+            dataset = WeatherDatasetRecord(**current)
+            self._delete_weather_dataset_files(dataset)
+            conn.execute(
+                "DELETE FROM platform_weather_datasets WHERE dataset_id = %s",
+                (dataset_id,),
+            )
 
     def ensure_weather_dataset_parsed(self, dataset_id: str, weather_service: Any, *, job_id: str | None = None, thread_id: str) -> WeatherDatasetRecord:
         # 气象数据集懒解析状态机。
