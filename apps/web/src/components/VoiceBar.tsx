@@ -1,4 +1,4 @@
-/** 语音条组件 — 钉钉/微信风格，内嵌在消息气泡中 */
+/** 语音条组件 — 初始仅显示按钮，生成后才展示完整播放条 */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle, Play, Pause, ChevronDown, ChevronUp, Volume2 } from 'lucide-react'
@@ -7,21 +7,18 @@ import { apiBaseUrl } from '../api'
 interface VoiceBarProps {
   text: string
   messageId: string
-  autoGenerate?: boolean
 }
 
 type VoiceState = 'idle' | 'loading' | 'ready' | 'playing' | 'paused'
 
-export function VoiceBar({ text, messageId, autoGenerate }: VoiceBarProps) {
-  const [state, setState] = useState<VoiceState>(autoGenerate ? 'loading' : 'idle')
+export function VoiceBar({ text, messageId }: VoiceBarProps) {
+  const [state, setState] = useState<VoiceState>('idle')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [showText, setShowText] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const progressRef = useRef<HTMLDivElement | null>(null)
 
-  // 懒加载或自动生成音频
   const generateAudio = useCallback(async () => {
     if (audioUrl) return
     setState('loading')
@@ -35,43 +32,41 @@ export function VoiceBar({ text, messageId, autoGenerate }: VoiceBarProps) {
       const data = await resp.json()
       setAudioUrl(`${apiBaseUrl}${data.audio_url}`)
       setDuration(data.duration_ms || 0)
-      setState('ready')
+      setState('playing')
     } catch {
       setState('idle')
     }
   }, [text, audioUrl])
 
-  // 自动生成
-  useEffect(() => {
-    if (autoGenerate) generateAudio()
-  }, [autoGenerate, generateAudio])
-
-  // 音频事件
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
     const onTime = () => setCurrentTime(audio.currentTime)
     const onEnd = () => { setState('ready'); setCurrentTime(0) }
     const onLoaded = () => setDuration(audio.duration)
+    const onPlay = () => setState('playing')
+    const onPause = () => setState('paused')
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('ended', onEnd)
     audio.addEventListener('loadedmetadata', onLoaded)
+    audio.addEventListener('play', onPlay)
+    audio.addEventListener('pause', onPause)
     return () => {
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('ended', onEnd)
       audio.removeEventListener('loadedmetadata', onLoaded)
+      audio.removeEventListener('play', onPlay)
+      audio.removeEventListener('pause', onPause)
     }
   }, [audioUrl])
 
   const togglePlay = () => {
     const audio = audioRef.current
-    if (!audio || !audioUrl) return
+    if (!audio) return
     if (state === 'playing') {
       audio.pause()
-      setState('paused')
     } else {
       audio.play()
-      setState('playing')
     }
   }
 
@@ -92,13 +87,27 @@ export function VoiceBar({ text, messageId, autoGenerate }: VoiceBarProps) {
 
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
 
+  // 未生成语音时只显示按钮
+  if (state === 'idle') {
+    return (
+      <button
+        className="voice-trigger"
+        onClick={generateAudio}
+        aria-label="生成语音播报"
+        title="生成语音播报"
+      >
+        <Volume2 size={14} />
+        <span className="voice-trigger__label">播报</span>
+      </button>
+    )
+  }
+
   return (
     <div className="voice-bar">
       <div className="voice-bar__row">
-        {/* 播放按钮 */}
         <button
           className="voice-bar__btn"
-          onClick={state === 'ready' || state === 'paused' || state === 'playing' ? togglePlay : generateAudio}
+          onClick={state === 'loading' ? undefined : togglePlay}
           disabled={state === 'loading'}
           aria-label={state === 'playing' ? '暂停' : '播放'}
         >
@@ -111,15 +120,13 @@ export function VoiceBar({ text, messageId, autoGenerate }: VoiceBarProps) {
           )}
         </button>
 
-        {/* 波形+进度条 */}
-        <div className="voice-bar__wave" ref={progressRef} onClick={handleProgressClick}>
+        <div className="voice-bar__wave" onClick={handleProgressClick}>
           <div className="voice-bar__wave-bars">
             {Array.from({ length: 16 }).map((_, i) => (
               <span
                 key={i}
                 className={`voice-bar__bar ${state === 'playing' && i < (currentTime / Math.max(duration, 1)) * 16 ? 'voice-bar__bar--active' : ''}`}
                 style={{
-                  animationDelay: state === 'playing' ? `${i * 0.07}s` : '0s',
                   height: state === 'playing' ? `${12 + Math.sin(i * 1.2) * 10}px` : `${8 + Math.sin(i * 1.2) * 6}px`,
                 }}
               />
@@ -128,10 +135,8 @@ export function VoiceBar({ text, messageId, autoGenerate }: VoiceBarProps) {
           <div className="voice-bar__progress" style={{ width: `${pct}%` }} />
         </div>
 
-        {/* 时长 */}
         <span className="voice-bar__time">{fmtTime(duration > 0 ? (state === 'playing' ? currentTime : duration) : 0)}</span>
 
-        {/* 展开文字 */}
         <button
           className="voice-bar__expand"
           onClick={() => setShowText(!showText)}
@@ -139,14 +144,9 @@ export function VoiceBar({ text, messageId, autoGenerate }: VoiceBarProps) {
         >
           {showText ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
-
-        <Volume2 size={14} className="voice-bar__icon" />
       </div>
 
-      {/* 文字区域 */}
-      {showText && (
-        <div className="voice-bar__text">{text}</div>
-      )}
+      {showText && <div className="voice-bar__text">{text}</div>}
 
       {audioUrl && <audio ref={audioRef} src={audioUrl} preload="auto" />}
     </div>
