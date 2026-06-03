@@ -387,13 +387,6 @@ export function ChatPanel(props: ChatPanelProps) {
                 <Markdown streaming={entry.status === 'running'}>{entry.body}</Markdown>
               </div>
             )}
-            {/* 语音条：非思考类 assistant 消息底部展示 */}
-            {!isThought && entry.body && entry.body.length > 20 && (
-              <VoiceBar
-                text={entry.body.replace(/[#*_`~>\[\]|]/g, '').trim()}
-                messageId={entry.id}
-              />
-            )}
             {entry.artifactId && (
               <button className="cc-mini-button mt-2" onClick={() => onSelectArtifact(entry.artifactId!)}>
                 在地图中查看
@@ -416,12 +409,24 @@ export function ChatPanel(props: ChatPanelProps) {
               </div>
             )}
             <m.div className="cc-tool-stack" {...buildFadeUpMotion(reducedMotion, 0, 6)}>
-              {commands.map((command) => (
-                <ToolCommandCard
-                  key={command.id}
-                  command={command}
-                />
-              ))}
+              {commands.map((command) => {
+                // synthesize_speech 工具调用 → 语音条直接内嵌
+                if (command.toolName === 'synthesize_speech' && command.body) {
+                  return (
+                    <VoiceBar
+                      key={command.id}
+                      text={command.body}
+                      messageId={command.id}
+                    />
+                  )
+                }
+                return (
+                  <ToolCommandCard
+                    key={command.id}
+                    command={command}
+                  />
+                )
+              })}
             </m.div>
           </div>
         </m.div>
