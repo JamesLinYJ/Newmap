@@ -15,6 +15,60 @@ from .base import BaseTTSEngine, TTSResult, VoiceOption
 
 logger = logging.getLogger(__name__)
 
+# ── ChatTTS 数字 normalizer 适配器 ────────────────────────────────────
+# ChatTTS 的 tokenizer 合法字符集为 [一-鿿A-Za-z，。、,\. ]
+# 不包括阿拉伯数字 0-9，导致数字被静默丢弃。
+# 通过官方 Normalizer.register() 扩展点在编码前将阿拉伯数字转为中文。
+
+
+class ChatTTSNormAdapter:
+    """ChatTTS Normalizer 适配器——将阿拉伯数字转为中文数字。
+
+    这是 ChatTTS normalizer 的注册函数，签名为 (str) -> str，
+    由 Normalizer.register("zh", fn) 在模型加载时注入。
+    """
+    _CN_DIGITS = "零一二三四五六七八九"
+    _CN_UNITS = ["", "十", "百", "千"]
+    _CN_BIG = ["", "万", "亿"]
+
+    @staticmethod
+    def _int_to_cn(n: int) -> str:
+        if n == 0:
+            return "零"
+        s = str(n)
+        parts: list[str] = []
+        nl = len(s)
+        need_zero = False
+        for i in range(nl):
+            d = int(s[nl - 1 - i])
+            if d == 0:
+                need_zero = True
+                continue
+            if need_zero and parts:
+                parts.append("零")
+            need_zero = False
+            unit = ChatTTSNormAdapter._CN_UNITS[i % 4]
+            if unit == "十" and d == 1 and i == 1 and nl == 2:
+                parts.append("十")
+            else:
+                parts.append(ChatTTSNormAdapter._CN_DIGITS[d] + unit)
+        return "".join(reversed(parts))
+
+    @staticmethod
+    def cn_number_normalize(text: str) -> str:
+        """将阿拉伯数字转为中文数字（ChatTTS normalizer 签名）。"""
+        import re
+        return re.sub(
+            r"\d+(?:\.\d+)?",
+            lambda m: ChatTTSNormAdapter._int_to_cn(
+                int(m.group()) if "." not in m.group() else 0
+            ) if "." not in m.group() else "".join(
+                ChatTTSNormAdapter._CN_DIGITS[int(d)]
+                for d in m.group().replace(".", "")
+            ),
+            text,
+        )
+
 
 class ChatTTSEngine(BaseTTSEngine):
     """ChatTTS 文本转语音引擎。
@@ -40,7 +94,7 @@ class ChatTTSEngine(BaseTTSEngine):
         self._default_speaker_seed = default_speaker_seed
         self._chat: object | None = None
         self._initialized = False
-        # ChatTTS 用随机种子模拟不同音色
+        # ChatTTS 用随机种子控制音色（seed 只影响随机采样，不能指定男女）
         self._voice_seeds: dict[str, int] = {
             "default": 2,
             "female_warm": 111,
@@ -51,7 +105,7 @@ class ChatTTSEngine(BaseTTSEngine):
         }
 
     async def initialize(self) -> None:
-        """加载 ChatTTS 模型（异步包装，避免阻塞事件循环）。"""
+        """加载 ChatTTS 模型（异步包装）。"""
         if self._initialized:
             return
         loop = asyncio.get_running_loop()
@@ -59,10 +113,14 @@ class ChatTTSEngine(BaseTTSEngine):
         self._initialized = True
 
     def _load_model(self):
-        """在后台线程中加载模型（ChatTTS 的 load 是同步的）。"""
+        """在后台线程中加载 ChatTTS 模型，注册中文数字 normalizer。
+
+        ChatTTS 的 tokenizer 不支持阿拉伯数字（0-9 不在其合法字符集内），
+        会直接丢弃。但模型本身能正确朗读中文数字（"二十八"）。
+        ChatTTS 的 Normalizer.register() 正是为此设计的扩展点。
+        """
         import ChatTTS
         chat = ChatTTS.Chat()
-        # HuggingFace 直连可能超时，支持 HF_ENDPOINT 镜像
         load_kwargs: dict = {
             "source": "huggingface" if self._model_dir is None else "local",
             "device": self._device,
@@ -70,6 +128,7 @@ class ChatTTSEngine(BaseTTSEngine):
         if self._model_dir is not None:
             load_kwargs["custom_path"] = self._model_dir
         chat.load(**load_kwargs)
+        chat.normalizer.register("zh", ChatTTSNormAdapter.cn_number_normalize)
         return chat
 
     async def synthesize(
@@ -108,21 +167,26 @@ class ChatTTSEngine(BaseTTSEngine):
         )
 
     def _build_params(self, text: str, seed: int) -> dict:
-        """构建 ChatTTS infer 参数（v0.2+ API，使用 InferCodeParams）。"""
+        """构建 ChatTTS infer 参数。
+
+        在传入 ChatTTS 之前将阿拉伯数字转为中文——
+        ChatTTS 的 tokenizer 不接受数字，但模型能朗读中文数字。
+        """
         import ChatTTS
+        normalized = ChatTTSNormAdapter.cn_number_normalize(text)
         return {
-            "text": text if isinstance(text, list) else [text],
+            "text": normalized if isinstance(normalized, list) else [normalized],
             "stream": False,
             "lang": "zh",
-            "skip_refine_text": False,
-            "do_text_normalization": True,
+            "skip_refine_text": True,   # refine GPT 也会丢数字，跳过
+            "do_text_normalization": True,  # 走 normalizer 管道（含我们的数字转中文）
             "do_homophone_replacement": True,
             "params_refine_text": ChatTTS.Chat.RefineTextParams(
                 prompt="[oral_1][laugh_0][break_6]",
             ),
             "params_infer_code": ChatTTS.Chat.InferCodeParams(
                 manual_seed=seed,
-                spk_smp=None,  # speaker sample — None 使用默认/随机
+                spk_smp=None,  # 随机音色（ChatTTS 不支持直接指定男女）
             ),
         }
 
