@@ -28,7 +28,8 @@ dependencies = [
   "rasterio>=1.4.0",
   "shapely>=2.0.0",
   "uvicorn[standard]>=0.35.0",
-  "xarray>=2025.1.0"
+  "xarray>=2025.1.0",
+  "ChatTTS>=0.1.0"
 ]
 
 [project.optional-dependencies]
@@ -39,6 +40,19 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [
+  "apps/api/src",
+  "apps/worker/src",
+  "packages/agent-core/src",
+  "packages/model-adapters/src",
+  "packages/tool-registry/src",
+  "packages/gis-postgis/src",
+  "packages/gis-weather/src",
+  "packages/gis-common/src",
+  "packages/shared-types/src",
+  "packages/media-tts/src",
+  "packages/media-avatar/src"
+]
 
 [tool.setuptools.packages.find]
 where = [
@@ -50,5 +64,7 @@ where = [
   "packages/gis-postgis/src",
   "packages/gis-weather/src",
   "packages/gis-common/src",
-  "packages/shared-types/src"
+  "packages/shared-types/src",
+  "packages/media-tts/src",
+  "packages/media-avatar/src"
 ]
