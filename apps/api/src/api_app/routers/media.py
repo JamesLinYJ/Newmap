@@ -54,13 +54,15 @@ async def synthesize_speech(req: TTSRequest):
     """文本转语音。结果按文本 hash 缓存到磁盘。"""
     text = req.text.strip()
     text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
-    cache_path = CACHE_DIR / f"{text_hash}.wav"
+    cache_wav = CACHE_DIR / f"{text_hash}.wav"
+    cache_txt = CACHE_DIR / f"{text_hash}.txt"
+    index_file = CACHE_DIR / "index.json"
 
     # 缓存命中
-    if cache_path.exists():
+    if cache_wav.exists():
         return TTSResponse(
             audio_url=f"/api/v1/media/tts/{text_hash}.wav",
-            duration_ms=0,  # 从文件读取太慢，前端用 audio.duration
+            duration_ms=0,
             text_hash=text_hash,
             cached=True,
         )
@@ -73,9 +75,25 @@ async def synthesize_speech(req: TTSRequest):
         logger.exception("TTS 合成失败: %s", exc)
         raise HTTPException(status_code=500, detail=f"语音合成失败：{exc}")
 
-    # 保存到缓存
+    # 保存音频 + 文本 + 索引
     import shutil
-    shutil.copy(result.audio_path, cache_path)
+    from datetime import datetime, timezone
+    import json as _json
+    shutil.copy(result.audio_path, cache_wav)
+    cache_txt.write_text(text, encoding="utf-8")
+
+    index: dict = {}
+    if index_file.exists():
+        try:
+            index = _json.loads(index_file.read_text(encoding="utf-8"))
+        except (_json.JSONDecodeError, OSError):
+            index = {}
+    index[text_hash] = {
+        "text": text[:200],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "size_bytes": cache_wav.stat().st_size,
+    }
+    index_file.write_text(_json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return TTSResponse(
         audio_url=f"/api/v1/media/tts/{text_hash}.wav",

@@ -33,7 +33,7 @@ class ChatTTSEngine(BaseTTSEngine):
         self,
         model_dir: str | None = None,
         device: str = "cpu",
-        default_speaker_seed: int = 2,
+        default_speaker_seed: int = 333,
     ):
         self._model_dir = model_dir
         self._device = device
@@ -117,7 +117,9 @@ class ChatTTSEngine(BaseTTSEngine):
             "skip_refine_text": False,
             "do_text_normalization": True,
             "do_homophone_replacement": True,
-            "params_refine_text": ChatTTS.Chat.RefineTextParams(),
+            "params_refine_text": ChatTTS.Chat.RefineTextParams(
+                prompt="[oral_1][laugh_0][break_6]",
+            ),
             "params_infer_code": ChatTTS.Chat.InferCodeParams(
                 manual_seed=seed,
                 spk_smp=None,  # speaker sample — None 使用默认/随机

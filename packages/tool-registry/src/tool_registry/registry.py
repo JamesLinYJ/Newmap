@@ -1331,23 +1331,41 @@ async def _synthesize_speech_handler(
         )
 
     try:
-        import asyncio
         from pathlib import Path
         import hashlib
+        import json as _json
         import shutil
+        from datetime import datetime, timezone
 
         from media_tts import ChatTTSEngine
 
-        # 按文本 hash 缓存
+        # 缓存结构: runtime/tts_cache/{hash}.wav + {hash}.txt + index.json
         text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         cache_dir = Path("runtime/tts_cache")
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_dir / f"{text_hash}.wav"
+        cache_wav = cache_dir / f"{text_hash}.wav"
+        cache_txt = cache_dir / f"{text_hash}.txt"
+        index_file = cache_dir / "index.json"
 
-        if not cache_path.exists():
+        if not cache_wav.exists():
             engine = ChatTTSEngine()
             result = await engine.synthesize(text)
-            shutil.copy(result.audio_path, cache_path)
+            shutil.copy(result.audio_path, cache_wav)
+            cache_txt.write_text(text, encoding="utf-8")
+
+            # 更新索引
+            index: dict = {}
+            if index_file.exists():
+                try:
+                    index = _json.loads(index_file.read_text(encoding="utf-8"))
+                except (_json.JSONDecodeError, OSError):
+                    index = {}
+            index[text_hash] = {
+                "text": text[:200],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "size_bytes": cache_wav.stat().st_size,
+            }
+            index_file.write_text(_json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
 
         audio_url = f"/api/v1/media/tts/{text_hash}.wav"
         return ToolExecutionResult(
