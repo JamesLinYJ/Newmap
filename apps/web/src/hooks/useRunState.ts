@@ -19,7 +19,8 @@ import type {
   RunEvent,
   UserIntent,
 } from '@geo-agent-platform/shared-types'
-import { getRun, getRunMessages, openRunMessageStream } from '../api'
+import { getRun, getRunItems, getRunMessages, openRunMessageStream } from '../api'
+import type { ConversationItem } from '@geo-agent-platform/shared-types'
 import { applyAgentMessageFrame } from '../messageLedger'
 
 // 运行状态所有权
@@ -41,12 +42,13 @@ interface RunState {
   seenFrameIds: Set<string>
   placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null
   featureCount?: number
+  items: ConversationItem[]
 }
 
 const MAX_EVENTS = 1000
 
 function initialState(): RunState {
-  return { events: [], messages: [], artifacts: [], isSubmitting: false, seenEventIds: new Set(), seenFrameIds: new Set() }
+  return { events: [], messages: [], items: [], artifacts: [], isSubmitting: false, seenEventIds: new Set(), seenFrameIds: new Set() }
 }
 
 function formatHydrationError(error: unknown) {
@@ -78,6 +80,7 @@ type RunAction =
   | { type: 'SET_INTENT'; intent: UserIntent }
   | { type: 'SET_PLAN'; plan: ExecutionPlan }
   | { type: 'APPEND_ARTIFACT'; artifact: ArtifactRef }
+  | { type: 'SET_ITEMS'; items: ConversationItem[] }
   | { type: 'SET_PLACE_RESOLUTION'; placeResolution: RunState['placeResolution'] }
 
 function runReducer(state: RunState, action: RunAction): RunState {
@@ -106,6 +109,9 @@ function runReducer(state: RunState, action: RunAction): RunState {
         ...state,
         messages: action.messages,
         seenFrameIds: new Set(),
+      }
+    case 'SET_ITEMS':
+      return { ...state, items: action.items }
       }
     case 'CLEAR_RUN':
       return {
@@ -167,6 +173,10 @@ export function useRunState() {
   const hydrateRun = useCallback(async (runId: string) => {
     const latestRun = await getRun(runId)
     const messages = latestRun.status === 'running' ? [] : await getRunMessages(runId)
+    let items: ConversationItem[] = []
+    if (latestRun.status !== 'running') {
+      try { items = await getRunItems(runId) } catch { /* items 端点可能不可用 */ }
+    }
     startTransition(() => {
       dispatch({
         type: 'SET_RUN',
@@ -177,6 +187,7 @@ export function useRunState() {
         artifacts: latestRun.state.artifacts,
       })
       dispatch({ type: 'SET_MESSAGES', messages })
+      dispatch({ type: 'SET_ITEMS', items })
     })
     return latestRun
   }, [])

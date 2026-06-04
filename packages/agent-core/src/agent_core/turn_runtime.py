@@ -231,7 +231,38 @@ class MessageLedgerSink:
         try:
             self.store.append_response_item(item)
         except AttributeError:
-            pass  # store 还不支持 response_item，静默跳过
+            pass
+
+    # ---- ItemSink（Codex 风格 item/started → item/delta → item/completed） ----
+
+    def start_item(self, item_type: str, *, item_id: str, role: str | None = None,
+                   name: str | None = None, call_id: str | None = None,
+                   arguments: str | None = None) -> None:
+        """item/started — 通知前端一个新 item 开始了。"""
+        self.emit_frame(
+            "item/started",
+            item={"id": item_id, "type": item_type, "status": "in_progress",
+                  "role": role, "name": name, "call_id": call_id, "arguments": arguments},
+        )
+
+    def delta_item(self, item_id: str, text: str) -> None:
+        """item/delta — 流式追加文本。"""
+        self.emit_frame(
+            "item/delta",
+            item_id=item_id, delta={"text": text},
+        )
+
+    def complete_item(self, item_id: str, *, item_type: str = "message",
+                      role: str | None = None, content: str | None = None,
+                      output: str | None = None, is_error: bool = False,
+                      call_id: str | None = None, name: str | None = None) -> None:
+        """item/completed — 标记 item 完成。"""
+        self.emit_frame(
+            "item/completed",
+            item={"id": item_id, "type": item_type, "status": "completed",
+                  "role": role, "content": content, "output": output,
+                  "is_error": is_error, "call_id": call_id, "name": name},
+        )
 
 
 class TurnRunner:

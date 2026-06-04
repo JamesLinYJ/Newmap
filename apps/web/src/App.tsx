@@ -236,6 +236,7 @@ function App() {
   } = useRunState()
   const deferredEvents = useDeferredValue(events)
   const deferredMessages = useDeferredValue(messages)
+  const deferredItems = useDeferredValue(items)
   const reducedMotion = useReducedMotion() ?? false
 
   const selectedArtifact = useMemo(
@@ -1697,6 +1698,7 @@ function App() {
                         clarification={agentState?.clarification}
                         sessionThreads={sessionThreads}
                         messages={deferredMessages}
+                        items={deferredItems}
                         runtimeConfig={runtimeConfig}
                         availableTools={availableTools}
                         onQueryChange={setQuery}

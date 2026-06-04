@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { AnimatePresence, LayoutGroup, m, useReducedMotion, type Variants } from 'framer-motion'
 import { ArrowUp, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Pencil, Plus, Settings2, Square, Trash2, Zap, type LucideIcon } from 'lucide-react'
-import type { AgentMessage, AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
+import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ConversationItem, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
 import { SAMPLES, type DataReferenceSummary } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants, buildScaleInMotion } from '../motion'
 import type { ConversationItem } from '@geo-agent-platform/shared-types'
@@ -226,7 +226,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const selectedComposerMode = COMPOSER_MODES.find((mode) => mode.id === composerMode) ?? COMPOSER_MODES[1]
   const SelectedModeIcon = selectedComposerMode.icon
   const conversation = useMemo(
-    () => items?.length
+    () => items && items.length > 0
       ? deriveEntriesFromItems(items, runStatus, availableTools)
       : deriveConversationEntriesFromMessages(messages, runStatus, availableTools),
     [availableTools, runStatus, messages, items],
