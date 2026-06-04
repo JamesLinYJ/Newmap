@@ -127,54 +127,71 @@ export function deriveConversationEntriesFromMessages(
   tools: ReadonlyArray<ToolDescriptor> = [],
 ): ConversationEntry[] {
   const toolLabels = new Map(tools.map((tool) => [tool.name, tool.label]))
+
+  // Flatten all content blocks into a single timeline, ordered by
+  // (message timestamp, message index, block index within message).
+  // This correctly interleaves tool_use/tool_result messages that are
+  // stored as separate messages alongside the main assistant message.
+  interface FlatBlock { message: AgentMessage; block: AgentContentBlock; msgIdx: number; blkIdx: number }
+  const flat: FlatBlock[] = []
+  messages.forEach((message, msgIdx) => {
+    message.content.forEach((block, blkIdx) => {
+      flat.push({ message, block, msgIdx, blkIdx })
+    })
+  })
+  flat.sort((a, b) => {
+    const ta = new Date(a.message.timestamp || 0).getTime()
+    const tb = new Date(b.message.timestamp || 0).getTime()
+    if (ta !== tb) return ta - tb
+    if (a.msgIdx !== b.msgIdx) return a.msgIdx - b.msgIdx
+    return a.blkIdx - b.blkIdx
+  })
+
   const entries: ConversationEntry[] = []
   const toolUses = new Map<string, { message: AgentMessage; block: AgentContentBlock }>()
 
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block.type === 'tool_use' && block.id) {
-        toolUses.set(block.id, { message, block })
-        // 在自然位置立即创建 running 状态的工具条目，不等到 tool_result 才追加
-        entries.push(buildToolEntry(block.id, message, block, undefined, toolLabels))
-        continue
-      }
-      if (block.type === 'thinking') {
-        entries.push({
-          id: block.blockId,
-          kind: 'message',
-          role: 'assistant',
-          timestamp: message.timestamp,
-          title: '思考',
-          body: block.thinking ?? '',
-          status: message.status === 'streaming' && !block.metadata?.done ? 'running' : 'completed',
-          badge: 'thinking',
-        })
-        continue
-      }
-      if (block.type === 'text') {
-        const body = block.text?.trim()
-        if (!body) continue
-        entries.push({
-          id: block.blockId,
-          kind: 'message',
-          role: message.role === 'user' ? 'user' : 'assistant',
-          timestamp: message.timestamp,
-          title: message.role === 'user' ? '用户' : '回答',
-          body,
-          status: normalizeStatus(message.status, runStatus),
-        })
-        continue
-      }
-      if (block.type === 'tool_result' && block.toolUseId) {
-        const use = toolUses.get(block.toolUseId)
-        const entryId = `tool:${block.toolUseId}`
-        const existingIdx = entries.findIndex(e => e.id === entryId)
-        const entry = buildToolEntry(block.toolUseId, use?.message ?? message, use?.block, block, toolLabels)
-        if (existingIdx >= 0) {
-          entries[existingIdx] = entry
-        } else {
-          entries.push(entry)
-        }
+  for (const { message, block } of flat) {
+    if (block.type === 'tool_use' && block.id) {
+      toolUses.set(block.id, { message, block })
+      entries.push(buildToolEntry(block.id, message, block, undefined, toolLabels))
+      continue
+    }
+    if (block.type === 'thinking') {
+      entries.push({
+        id: block.blockId,
+        kind: 'message',
+        role: 'assistant',
+        timestamp: message.timestamp,
+        title: '思考',
+        body: block.thinking ?? '',
+        status: message.status === 'streaming' && !block.metadata?.done ? 'running' : 'completed',
+        badge: 'thinking',
+      })
+      continue
+    }
+    if (block.type === 'text') {
+      const body = block.text?.trim()
+      if (!body) continue
+      entries.push({
+        id: block.blockId,
+        kind: 'message',
+        role: message.role === 'user' ? 'user' : 'assistant',
+        timestamp: message.timestamp,
+        title: message.role === 'user' ? '用户' : '回答',
+        body,
+        status: normalizeStatus(message.status, runStatus),
+      })
+      continue
+    }
+    if (block.type === 'tool_result' && block.toolUseId) {
+      const use = toolUses.get(block.toolUseId)
+      const entryId = `tool:${block.toolUseId}`
+      const existingIdx = entries.findIndex(e => e.id === entryId)
+      const entry = buildToolEntry(block.toolUseId, use?.message ?? message, use?.block, block, toolLabels)
+      if (existingIdx >= 0) {
+        entries[existingIdx] = entry
+      } else {
+        entries.push(entry)
       }
     }
   }
