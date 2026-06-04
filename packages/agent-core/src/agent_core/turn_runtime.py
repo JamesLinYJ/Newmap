@@ -239,31 +239,20 @@ class MessageLedgerSink:
     def start_item(self, item_type: str, *, item_id: str, role: str | None = None,
                    name: str | None = None, call_id: str | None = None,
                    arguments: str | None = None) -> None:
-        """item/started — 通知前端一个新 item 开始了。"""
-        self.emit_frame(
-            "item/started",
-            item={"id": item_id, "type": item_type, "status": "in_progress",
-                  "role": role, "name": name, "call_id": call_id, "arguments": arguments},
-        )
+        """item/started — 写入 running 状态的 ConversationItem。"""
+        self.append_item(item_type, call_id=call_id, name=name, arguments=arguments)
 
     def delta_item(self, item_id: str, text: str) -> None:
-        """item/delta — 流式追加文本。"""
-        self.emit_frame(
-            "item/delta",
-            item_id=item_id, delta={"text": text},
-        )
+        """item/delta — 追加文本（in-memory only，不单独写 JSONL）。"""
+        pass
 
     def complete_item(self, item_id: str, *, item_type: str = "message",
                       role: str | None = None, content: str | None = None,
                       output: str | None = None, is_error: bool = False,
                       call_id: str | None = None, name: str | None = None) -> None:
-        """item/completed — 标记 item 完成。"""
-        self.emit_frame(
-            "item/completed",
-            item={"id": item_id, "type": item_type, "status": "completed",
-                  "role": role, "content": content, "output": output,
-                  "is_error": is_error, "call_id": call_id, "name": name},
-        )
+        """item/completed — 更新 item 为 completed 并写入 output/content。"""
+        self.append_item(item_type, call_id=call_id, name=name,
+                         output=output or content, is_error=is_error)
 
 
 class TurnRunner:
@@ -325,12 +314,14 @@ class TurnRunner:
                 ),
                 block_index=0,
             )
+            self.message_sink.start_item("reasoning", item_id=thinking_block_id)
             thinking_started = True
 
         def stop_thinking_block() -> None:
             nonlocal thinking_stopped
             if thinking_started and not thinking_stopped:
                 self.message_sink.stop_block(message_id, thinking_block_id)
+                self.message_sink.complete_item(thinking_block_id, item_type="reasoning")
                 thinking_stopped = True
 
         def start_text_block() -> None:
@@ -348,6 +339,7 @@ class TurnRunner:
                 ),
                 block_index=1 if thinking_started else 0,
             )
+            self.message_sink.start_item("message", item_id=text_block_id, role="assistant")
             text_started = True
 
         async for event in streaming.stream_events():
@@ -359,6 +351,7 @@ class TurnRunner:
                     if "Reasoning" in data_type:
                         start_thinking_block()
                         self.message_sink.delta_block(message_id, thinking_block_id, {"thinking": delta})
+                        self.message_sink.delta_item(thinking_block_id, delta)
                     elif "Text" in data_type:
                         final_summary += delta
                         if not buffer_json:
@@ -367,6 +360,7 @@ class TurnRunner:
                             else:
                                 start_text_block()
                                 self.message_sink.delta_block(message_id, text_block_id, {"text": delta})
+                                self.message_sink.delta_item(text_block_id, delta)
                 await asyncio.sleep(0)
 
         stop_thinking_block()
@@ -379,6 +373,7 @@ class TurnRunner:
                 self.message_sink.delta_block(message_id, text_block_id, {"text": clean})
             self.message_sink.stop_block(message_id, text_block_id)
             self.message_sink.stop_message(message_id)
+            self.message_sink.complete_item(text_block_id, item_type="message", role="assistant", content=clean)
             self._track_usage(streaming)
             return clean
 
