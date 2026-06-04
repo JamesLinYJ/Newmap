@@ -355,11 +355,13 @@ class AgentSessionLogStore:
             items = self._items.setdefault(item.run_id, [])
             items.append(item)
             path = self._path_for_run(item.run_id)
+            item_data = item.model_dump(mode="json", by_alias=True)
+            item_data["type"] = item_data.pop("itemType", item_data.get("type", "message"))
             self._append_event_msg(
                 path,
                 {
-                    "type": "response_item",
-                    "item": item.model_dump(mode="json", by_alias=True),
+                    "kind": "response_item",
+                    **item_data,
                 },
                 timestamp=item.timestamp,
             )
@@ -368,17 +370,17 @@ class AgentSessionLogStore:
         """返回按时间戳排序的平铺 item 列表。"""
         return list(self._items.get(run_id, []))
 
-    def _replay_response_item(self, data: dict[str, Any]) -> None:
+    def _replay_response_item(self, payload: dict[str, Any]) -> None:
         """JSONL 重放：恢复一个 response_item。"""
-        item_data = data.get("item", data)
+        item_data = dict(payload)
+        # 兼容写入格式：payload 的顶级字段是 item 的字段
+        if "item" in item_data:
+            item_data = item_data["item"]
+        # 兼容旧格式：type → itemType
+        if "type" in item_data and "itemType" not in item_data:
+            item_data["itemType"] = item_data.pop("type")
         item = ConversationItem.model_validate(item_data)
         items = self._items.setdefault(item.run_id, [])
-        # 如果 item 已经存在（通过 item_type + call_id 或 body 去重），更新而非追加
-        if item.call_id and item.item_type == "function_call_output":
-            for i, existing in enumerate(items):
-                if existing.call_id == item.call_id and existing.item_type == "function_call":
-                    # function_call_output 更新对应的 function_call
-                    pass
         items.append(item)
 
     def upsert_context_entry(self, entry: ContextEntryRecord) -> ContextEntryRecord:
