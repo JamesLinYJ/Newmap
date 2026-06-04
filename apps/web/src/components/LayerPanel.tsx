@@ -15,7 +15,7 @@ import {
   Pencil, Search, Trash2, X,
 } from 'lucide-react'
 import type { LayerTreeNode } from '../hooks/useLayerManager'
-import type { LayerDescriptor } from '../api'
+import type { LayerDescriptor } from '@geo-agent-platform/shared-types'
 import './LayerPanel.css'
 
 const LAYER_COLORS = [
@@ -496,7 +496,7 @@ export const LayerPanel = memo(function LayerPanel(props: LayerPanelProps) {
                       属性字段 ({layerDetail.propertySchema!.length})
                     </span>
                     <div className="lp-prop-fields">
-                      {layerDetail.propertySchema!.slice(0, 12).map(f => (
+                      {layerDetail.propertySchema!.slice(0, 12).map((f: { name: string; dataType: string; populatedCount: number }) => (
                         <div key={f.name} className="lp-prop-field">
                           <span className="lp-prop-field__name">{f.name}</span>
                           <span className="lp-prop-field__type">{f.dataType}</span>
@@ -512,7 +512,7 @@ export const LayerPanel = memo(function LayerPanel(props: LayerPanelProps) {
                   <div className="lp-prop-row lp-prop-row--block">
                     <span>标签</span>
                     <div className="lp-tag-list">
-                      {layerDetail.tags!.slice(0, 8).map(t => (
+                      {layerDetail.tags!.slice(0, 8).map((t: string) => (
                         <span key={t} className="lp-tag">{t}</span>
                       ))}
                     </div>
