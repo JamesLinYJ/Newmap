@@ -491,17 +491,16 @@ export function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    {isPanelExpanded && (
-      <m.div
-        className="cc-expand-backdrop"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
-        onClick={() => setIsPanelExpanded(false)}
-      />
-    )}
     <div className={`cc-wrap${isPanelExpanded ? ' cc-wrap--expanded' : ''}`}>
+      {isPanelExpanded && (
+        <m.div
+          className="cc-expand-backdrop"
+          initial={false}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
+          onClick={() => setIsPanelExpanded(false)}
+        />
+      )}
       <LayoutGroup id={currentRunId ?? currentThreadId ?? 'home'}>
         <m.section className="cc-panel" layout {...buildFadeUpMotion(reducedMotion, 0, 10)}>
           <header className="cc-panel-header">
