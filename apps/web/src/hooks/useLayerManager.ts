@@ -24,6 +24,7 @@ export interface LayerTreeNode {
   children: LayerTreeNode[]
   order: number
   opacity: number
+  color?: string
   featureCount?: number
   geometryType?: string
 }
@@ -67,6 +68,7 @@ interface UseLayerManagerOutput {
   toggleVisibility: (id: string) => void
   toggleAllVisibility: () => void
   setOpacity: (id: string, opacity: number) => void
+  setColor: (id: string, color: string) => void
   renameLayer: (id: string, name: string) => void
   moveUp: (id: string) => void
   moveDown: (id: string) => void
@@ -269,10 +271,30 @@ export function useLayerManager(input: UseLayerManagerInput): UseLayerManagerOut
 
   const setSearchQuery = useCallback((q: string) => patchState({ searchQuery: q }), [patchState])
 
+  const setColor = useCallback((id: string, color: string) => {
+    patchState(prev => ({
+      ...prev,
+      layerColor: { ...(prev as any).layerColor, [id]: color },
+    }))
+  }, [patchState])
+
+  // Inject stored colors into tree nodes
+  const treeWithColors = useMemo(() => {
+    const colors = (state as any).layerColor as Record<string, string> | undefined
+    if (!colors) return tree
+    const applyColor = (nodes: LayerTreeNode[]): LayerTreeNode[] =>
+      nodes.map(n => ({
+        ...n,
+        color: colors[n.id] || n.color,
+        children: applyColor(n.children),
+      }))
+    return applyColor(tree)
+  }, [tree, state])
+
   return {
-    tree, selectedId: state.selectedId, searchQuery: state.searchQuery,
+    tree: treeWithColors, selectedId: state.selectedId, searchQuery: state.searchQuery,
     totalCount, visibleCount, selectedNode,
-    selectLayer, toggleVisibility, toggleAllVisibility, setOpacity,
+    selectLayer, toggleVisibility, toggleAllVisibility, setOpacity, setColor,
     renameLayer, moveUp, moveDown, removeLayer, createGroup, toggleGroup, setSearchQuery,
   }
 }

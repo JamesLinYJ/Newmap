@@ -1815,6 +1815,7 @@ function App() {
                         onLayerToggleVisibility={layerManager.toggleVisibility}
                         onLayerToggleAllVisibility={layerManager.toggleAllVisibility}
                         onLayerSetOpacity={layerManager.setOpacity}
+                        onLayerSetColor={layerManager.setColor}
                         onLayerRename={layerManager.renameLayer}
                         onLayerMoveUp={layerManager.moveUp}
                         onLayerMoveDown={layerManager.moveDown}

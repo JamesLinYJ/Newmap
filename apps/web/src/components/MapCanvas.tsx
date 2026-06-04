@@ -23,6 +23,18 @@ import { DEFAULT_BASEMAP } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildPressMotion } from '../motion'
 import { AppIcon } from './AppIcon'
 
+const LAYER_PALETTE = [
+  '#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#6366f1',
+]
+
+function pickLayerColor(metadata: Record<string, unknown> | undefined, index: number): string {
+  if (metadata && typeof (metadata as any).color === 'string') {
+    return (metadata as any).color as string
+  }
+  return LAYER_PALETTE[index % LAYER_PALETTE.length]
+}
+
 type GeoJsonPayload = GeoJSON.FeatureCollection
 type MapManualDragState = {
   pointerId: number
@@ -561,7 +573,7 @@ export function MapCanvas({
       {layers.length && showLayerLegend ? (
         <m.div className="dc-map-stage__legend" aria-label="地图图层摘要" layout {...buildFadeUpMotion(reducedMotion, 0.14, 10)}>
           {layers.map(({ artifact, visible, featureCount, data }, idx) => {
-            const color = artifact.artifactId === selectedArtifactId ? '#00687a' : ['#00a3bf', '#d48136', '#5b8def', '#4c956c'][idx % 4]
+            const color = artifact.artifactId === selectedArtifactId ? '#0f172a' : pickLayerColor(artifact.metadata as Record<string, unknown> | undefined, idx)
             const routeInfo = data ? extractRouteLegendInfo(data) : null
             return (
               <m.button
@@ -729,7 +741,7 @@ function syncArtifactLayers(
       map,
       layer,
       sourceId,
-      color: artifact.artifactId === selectedArtifactId ? '#00687a' : ['#00a3bf', '#d48136', '#5b8def', '#4c956c'][index % 4],
+      color: artifact.artifactId === selectedArtifactId ? '#0f172a' : pickLayerColor(artifact.metadata as Record<string, unknown> | undefined, index),
       selected: artifact.artifactId === selectedArtifactId,
       visible,
       opacity,

@@ -102,6 +102,7 @@ interface DetailPanelProps {
   onLayerCreateGroup?: (name: string, memberIds: string[]) => void
   onLayerToggleGroup?: (id: string) => void
   onLayerSetSearchQuery?: (q: string) => void
+  onLayerSetColor?: (id: string, color: string) => void
   onLayerZoomTo?: (id: string) => void
   onLayerExport?: (id: string) => void
   // 统一文件管理
@@ -161,6 +162,7 @@ export const DetailPanel = memo(function DetailPanel({
   onLayerCreateGroup,
   onLayerToggleGroup,
   onLayerSetSearchQuery,
+  onLayerSetColor,
   onLayerZoomTo,
   onLayerExport,
   // 统一文件管理
@@ -816,7 +818,9 @@ export const DetailPanel = memo(function DetailPanel({
           onRemoveLayer={onLayerRemove ?? (() => {})}
           onCreateGroup={onLayerCreateGroup ?? (() => {})}
           onToggleGroup={onLayerToggleGroup ?? (() => {})}
+          layers={layers}
           onSetSearchQuery={onLayerSetSearchQuery ?? (() => {})}
+          onSetColor={onLayerSetColor ?? (() => {})}
           onZoomToLayer={onLayerZoomTo ?? (() => {})}
           onExportLayer={onLayerExport ?? (() => {})}
         />

@@ -15,7 +15,14 @@ import {
   Pencil, Search, Trash2, X,
 } from 'lucide-react'
 import type { LayerTreeNode } from '../hooks/useLayerManager'
+import type { LayerDescriptor } from '../api'
 import './LayerPanel.css'
+
+const LAYER_COLORS = [
+  '#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#6366f1',
+  '#0f172a', '#78716c',
+]
 
 interface LayerPanelProps {
   tree: LayerTreeNode[]
@@ -24,10 +31,12 @@ interface LayerPanelProps {
   totalCount: number
   visibleCount: number
   selectedNode: LayerTreeNode | undefined
+  layers?: LayerDescriptor[]
   onSelectLayer: (id: string | null) => void
   onToggleVisibility: (id: string) => void
   onToggleAllVisibility: () => void
   onSetOpacity: (id: string, opacity: number) => void
+  onSetColor?: (id: string, color: string) => void
   onRenameLayer: (id: string, name: string) => void
   onMoveUp: (id: string) => void
   onMoveDown: (id: string) => void
@@ -78,11 +87,13 @@ function collectOrderedIds(nodes: LayerTreeNode[]): string[] {
 export const LayerPanel = memo(function LayerPanel(props: LayerPanelProps) {
   const {
     tree, selectedId, searchQuery, totalCount, visibleCount, selectedNode,
-    onSelectLayer, onToggleVisibility, onToggleAllVisibility, onSetOpacity,
-    onRenameLayer, onMoveUp, onMoveDown, onRemoveLayer,
+    layers, onSelectLayer, onToggleVisibility, onToggleAllVisibility, onSetOpacity,
+    onSetColor, onRenameLayer, onMoveUp, onMoveDown, onRemoveLayer,
     onCreateGroup, onToggleGroup, onSetSearchQuery,
     onZoomToLayer, onExportLayer,
   } = props
+
+  const layerDetail = layers?.find(l => l.layerKey === selectedNode?.id)
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -375,21 +386,50 @@ export const LayerPanel = memo(function LayerPanel(props: LayerPanelProps) {
         <div className="lp-properties">
           <div className="lp-props-header">图层属性</div>
           <div className="lp-props-body">
+            {/* 名称 */}
             <div className="lp-prop-row">
               <span>名称</span>
-              <span>{selectedNode.name}</span>
+              <span title={selectedNode.name}>{selectedNode.name}</span>
             </div>
+            {/* 配色 */}
+            {selectedNode.kind !== 'group' && (
+              <div className="lp-prop-row">
+                <span>配色</span>
+                <div className="lp-color-picker">
+                  <input
+                    type="color"
+                    className="lp-color-input"
+                    value={selectedNode.color || LAYER_COLORS[0]}
+                    onChange={(e) => onSetColor?.(selectedNode.id, e.target.value)}
+                    aria-label="自定义颜色"
+                  />
+                  {LAYER_COLORS.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`lp-color-swatch${selectedNode.color === c ? ' lp-color-swatch--active' : ''}`}
+                      style={{ background: c }}
+                      onClick={() => onSetColor?.(selectedNode.id, c)}
+                      aria-label={`颜色 ${c}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* 几何类型 */}
             <div className="lp-prop-row">
-              <span>类型</span>
+              <span>几何类型</span>
               <span>{kindLabel(selectedNode.kind)}{selectedNode.geometryType ? ` · ${selectedNode.geometryType}` : ''}</span>
             </div>
+            {/* 要素数量 */}
             {selectedNode.featureCount != null && (
               <div className="lp-prop-row">
                 <span>要素数量</span>
-                <span>{selectedNode.featureCount}</span>
+                <span>{selectedNode.featureCount.toLocaleString()}</span>
               </div>
             )}
-            {(selectedNode.kind !== 'group') && (
+            {/* 不透明度 */}
+            {selectedNode.kind !== 'group' && (
               <div className="lp-prop-row">
                 <span>不透明度</span>
                 <input
@@ -400,6 +440,101 @@ export const LayerPanel = memo(function LayerPanel(props: LayerPanelProps) {
                 />
                 <span>{Math.round(selectedNode.opacity * 100)}%</span>
               </div>
+            )}
+            {/* 详细元数据 — 来自 LayerDescriptor */}
+            {layerDetail && (
+              <>
+                <div className="lp-prop-divider" />
+                {layerDetail.geometryType && (
+                  <div className="lp-prop-row">
+                    <span>几何类型</span>
+                    <span>{layerDetail.geometryType}</span>
+                  </div>
+                )}
+                {(layerDetail.srid ?? 0) > 0 && (
+                  <div className="lp-prop-row">
+                    <span>SRID</span>
+                    <span>{layerDetail.srid}</span>
+                  </div>
+                )}
+                {layerDetail.status && (
+                  <div className="lp-prop-row">
+                    <span>状态</span>
+                    <span className={`lp-pill lp-pill--${layerDetail.status}`}>{layerDetail.status}</span>
+                  </div>
+                )}
+                {layerDetail.category && (
+                  <div className="lp-prop-row">
+                    <span>分类</span>
+                    <span>{layerDetail.category}</span>
+                  </div>
+                )}
+                {layerDetail.sourceType && (
+                  <div className="lp-prop-row">
+                    <span>数据来源</span>
+                    <span>{layerDetail.sourceType}</span>
+                  </div>
+                )}
+                {layerDetail.bounds && layerDetail.bounds.length === 4 && (
+                  <div className="lp-prop-row">
+                    <span>边界范围</span>
+                    <span className="lp-prop-mono">
+                      {layerDetail.bounds[0].toFixed(4)}°, {layerDetail.bounds[1].toFixed(4)}°<br />
+                      {layerDetail.bounds[2].toFixed(4)}°, {layerDetail.bounds[3].toFixed(4)}°
+                    </span>
+                  </div>
+                )}
+                {layerDetail.description && (
+                  <div className="lp-prop-row lp-prop-row--block">
+                    <span>描述</span>
+                    <span>{layerDetail.description}</span>
+                  </div>
+                )}
+                {(layerDetail.propertySchema ?? []).length > 0 && (
+                  <div className="lp-prop-section">
+                    <span className="lp-prop-section__title">
+                      属性字段 ({layerDetail.propertySchema!.length})
+                    </span>
+                    <div className="lp-prop-fields">
+                      {layerDetail.propertySchema!.slice(0, 12).map(f => (
+                        <div key={f.name} className="lp-prop-field">
+                          <span className="lp-prop-field__name">{f.name}</span>
+                          <span className="lp-prop-field__type">{f.dataType}</span>
+                          {f.populatedCount > 0 && (
+                            <span className="lp-prop-field__count">{f.populatedCount}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(layerDetail.tags ?? []).length > 0 && (
+                  <div className="lp-prop-row lp-prop-row--block">
+                    <span>标签</span>
+                    <div className="lp-tag-list">
+                      {layerDetail.tags!.slice(0, 8).map(t => (
+                        <span key={t} className="lp-tag">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(layerDetail.analysisCapabilities ?? []).length > 0 && (
+                  <div className="lp-prop-row lp-prop-row--block">
+                    <span>分析能力</span>
+                    <div className="lp-tag-list">
+                      {layerDetail.analysisCapabilities!.slice(0, 6).map(c => (
+                        <span key={c} className="lp-tag lp-tag--cap">{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {layerDetail.updatedAt && (
+                  <div className="lp-prop-row">
+                    <span>更新时间</span>
+                    <span>{new Date(layerDetail.updatedAt).toLocaleString('zh-CN')}</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
