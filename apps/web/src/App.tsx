@@ -164,7 +164,7 @@ async function aggregateThreadMessages(runs: { id: string; status: string }[]): 
   // 按时间戳排序，去重
   const seen = new Set<string>()
   return all
-    .sort((a: any, b: any) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+    .sort((a: any, b: any) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime())
     .filter((m: any) => {
       const key = m.id ?? JSON.stringify(m)
       if (seen.has(key)) return false

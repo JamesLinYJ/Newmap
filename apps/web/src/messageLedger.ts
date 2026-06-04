@@ -134,6 +134,8 @@ export function deriveConversationEntriesFromMessages(
     for (const block of message.content) {
       if (block.type === 'tool_use' && block.id) {
         toolUses.set(block.id, { message, block })
+        // 在自然位置立即创建 running 状态的工具条目，不等到 tool_result 才追加
+        entries.push(buildToolEntry(block.id, message, block, undefined, toolLabels))
         continue
       }
       if (block.type === 'thinking') {
@@ -165,14 +167,16 @@ export function deriveConversationEntriesFromMessages(
       }
       if (block.type === 'tool_result' && block.toolUseId) {
         const use = toolUses.get(block.toolUseId)
-        entries.push(buildToolEntry(block.toolUseId, use?.message ?? message, use?.block, block, toolLabels))
+        const entryId = `tool:${block.toolUseId}`
+        const existingIdx = entries.findIndex(e => e.id === entryId)
+        const entry = buildToolEntry(block.toolUseId, use?.message ?? message, use?.block, block, toolLabels)
+        if (existingIdx >= 0) {
+          entries[existingIdx] = entry
+        } else {
+          entries.push(entry)
+        }
       }
     }
-  }
-
-  for (const [toolUseId, use] of toolUses.entries()) {
-    if (entries.some((entry) => entry.kind === 'command_batch' && entry.id === `tool:${toolUseId}`)) continue
-    entries.push(buildToolEntry(toolUseId, use.message, use.block, undefined, toolLabels))
   }
 
   return entries
