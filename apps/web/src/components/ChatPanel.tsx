@@ -19,7 +19,6 @@ import { ArrowUp, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Maximize2,
 import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ConversationItem, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
 import { SAMPLES, type DataReferenceSummary } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants, buildScaleInMotion } from '../motion'
-import type { ConversationItem } from '@geo-agent-platform/shared-types'
 import { deriveConversationEntriesFromMessages, deriveEntriesFromItems, type ConversationCommand, type ConversationEntry } from '../messageLedger'
 import { AppIcon } from './AppIcon'
 import { Markdown } from './Markdown'
