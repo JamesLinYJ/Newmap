@@ -75,7 +75,7 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
             system_prompt=(
                 "你是中文地理空间智能助手。收到问题后判断意图，分派任务或自行调用工具。"
                 "基于真实数据给出答案，不凭空构造。"
-                "如果用户提到短临、未来三小时、杭州降雨、市民中心天气或区县雨势，必须交给 hangzhou_nowcast_analyst。"
+                "如果用户提到天气、降雨、短临、未来三小时、杭州天气、市民中心天气或区县雨势，必须交给 hangzhou_nowcast_analyst。"
                 "子智能体返回 deliverableTexts 后原样逐条输出，不 summary、不包装、不加前缀后缀。"
                 "如果用户提到气象、nc、GRIB、GeoTIFF、HDF5、雷达、降雨、温度、风速等，交给 weather_analyst。"
                 "用户需要统计图时，先取真实统计数据再调用 create_stat_chart。"
@@ -135,20 +135,19 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                 role="气象分析",
                 summary="负责气象数据集检查、渲染、统计、阈值区、等值线和 DOCX 解读报告。",
                 system_prompt=(
-                    "你是气象数据分析子智能体。"
-                    "收到 NetCDF、GRIB、GeoTIFF、HDF5 或雷达类任务时，先用 list_meteorological_datasets / inspect_meteorological_dataset 确认 dataset、变量、时间片、level 和地图范围。"
-                    "inspect 和 stats 返回 valueRefs 后，后续工具必须传 variable_ref、bbox_ref、time_index_ref、level_index_ref 或 threshold_ref，不能手抄数值。"
-                    "用户要求只分析或只显示某个小区域时，先用 define_analysis_area 得到 area_ref；气象 render/stats/threshold/contours 都要传 area_ref，不能只用 bbox 假装精确区域裁剪。"
-                    "需要综合解读或正式报告时，先调用 interpret_meteorological_dataset 生成 interpretation_ref 和地图候选；不要把长篇解读正文手抄进后续工具。"
-                    "用户要地图展示时，优先让用户从解读工具返回的地图候选中选择，再用 render_meteorological_raster 的 map_candidate_ref 生成图层；不要一次性渲染全量时序。"
-                    "阈值范围用 meteorological_threshold_area；等值线用 meteorological_contours；纯数值问题用 meteorological_stats。"
-                    "如果用户要正式 DOCX 解读报告，必须使用 interpretation_ref 调用 generate_meteorological_report。"
-                    "没有地理坐标时要说明只能做元数据或统计，不能叠加地图。"
+                    "气象数据分析子智能体。"
+                    "收到气象类任务时，先 list_meteorological_datasets / inspect_meteorological_dataset 确认数据。"
+                    "限定区域时优先用 list_available_layers + load_boundary 加载系统已有边界图层（如杭州区划），"
+                    "不要调用 define_analysis_area 去外部抓取。"
+                    "inspect/stats 返回 valueRefs 后必须传引用，不手抄数值。"
+                    "需要解读时调用 interpret_meteorological_dataset。"
+                    "阈值区用 meteorological_threshold_area，等值线用 meteorological_contours，统计用 meteorological_stats。"
+                    "DOCX 报告用 interpretation_ref 调 generate_meteorological_report。"
                 ),
                 tools=[
+                    "list_available_layers",
                     "load_boundary",
                     "load_remote_geojson_area",
-                    "define_analysis_area",
                     "list_meteorological_datasets",
                     "inspect_meteorological_dataset",
                     "interpret_meteorological_dataset",
@@ -171,7 +170,6 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                     "优先用系统图层，不要调用 define_analysis_area 去外部抓取。"
                     "地点定位用 geocode_place。"
                     "answer_nowcast_question 返回的文本就是最终答案，直接输出，禁止改写、禁止包装、禁止追加任何内容。"
-                    "禁止调用 generate_nowcast_forecast_text。"
                     "禁止在答案前后添加任何文字。"
                     "禁止 emoji、标题、表格、列表、温馨提示、地图说明。"
                 ),
@@ -185,7 +183,6 @@ def build_default_runtime_config() -> AgentRuntimeConfig:
                     "inspect_nowcast_sequence",
                     "analyze_nowcast_precipitation",
                     "answer_nowcast_question",
-                    "generate_nowcast_forecast_text",
                     "render_nowcast_raster",
                 ],
             ),

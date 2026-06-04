@@ -30,7 +30,6 @@ from .readers import GridQuery, WeatherReaderFacade, coord_edges, finite_values
 
 NOWCAST_ANSWER_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "additionalProperties": False,
     "required": ["answer", "basis", "confidence", "warnings"],
     "properties": {
         "answer": {"type": "string"},

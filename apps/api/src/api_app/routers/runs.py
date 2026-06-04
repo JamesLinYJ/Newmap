@@ -28,6 +28,7 @@ from ..run_core import _build_tool_runtime
 router = APIRouter(tags=["runs"])
 
 TERMINAL_SSE_EVENT_TYPES = {"run.completed", "run.failed", "approval.required", "clarification.required"}
+TERMINAL_MESSAGE_RESULT_TYPES = {"success", "failed", "waiting_approval", "waiting_clarification", "cancelled"}
 
 
 def _is_terminal_sse_event(event) -> bool:
@@ -38,9 +39,37 @@ def _is_terminal_sse_event(event) -> bool:
     return event.type.value in TERMINAL_SSE_EVENT_TYPES
 
 
+def _is_terminal_message_frame(frame) -> bool:
+    if frame.op != "result":
+        return False
+    result_type = str((frame.result or {}).get("type") or "")
+    return result_type in TERMINAL_MESSAGE_RESULT_TYPES
+
+
+def _format_message_sse(frame) -> str:
+    import json
+
+    data = json.dumps(frame.model_dump(mode="json", by_alias=True), ensure_ascii=False)
+    return f"id: {frame.frame_id}\ndata: {data}\n\n"
+
+
 @router.get("/api/v2/runs/{run_id}")
 async def get_thread_run(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return store.get_run(run_id)
+
+
+@router.get("/api/v2/runs/{run_id}/messages")
+async def get_thread_run_messages(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
+    # Claude Code 风格聊天事实源。
+    #
+    # 返回 replay 后的稳定消息列表；前端不再从 RunEvent 推导 transcript。
+    store.get_run(run_id)
+    return store.list_messages(run_id)
+
+
+@router.get("/api/v2/runs/{run_id}/messages/stream")
+async def stream_thread_run_messages(run_id: str, request: Request, store: PostgresPlatformStore = Depends(get_store)):
+    return await _stream_analysis_messages(run_id, store)
 
 
 @router.get("/api/v2/runs/{run_id}/events")
@@ -131,5 +160,38 @@ async def _stream_analysis_events(run_id: str, store: PostgresPlatformStore):
                     break
         finally:
             store.unsubscribe(run_id, queue)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+async def _stream_analysis_messages(run_id: str, store: PostgresPlatformStore):
+    async def event_stream():
+        seen_ids = set()
+        history = store.list_message_frames(run_id)
+        terminal_seen = False
+        for frame in history:
+            seen_ids.add(frame.frame_id)
+            yield _format_message_sse(frame)
+            if _is_terminal_message_frame(frame):
+                terminal_seen = True
+
+        if terminal_seen or store.get_run(run_id).status != "running":
+            return
+
+        queue = store.subscribe_messages(run_id)
+        try:
+            while True:
+                try:
+                    frame = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if frame.frame_id not in seen_ids:
+                    seen_ids.add(frame.frame_id)
+                    yield _format_message_sse(frame)
+                if _is_terminal_message_frame(frame):
+                    break
+        finally:
+            store.unsubscribe_messages(run_id, queue)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

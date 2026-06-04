@@ -34,6 +34,7 @@ try:
         RunConfig,
         Runner,
         RunState,
+        ToolExecutionConfig,
         output_guardrail,
     )
     from openai import AsyncOpenAI
@@ -41,7 +42,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised by deployment smoke checks.
     Agent = FunctionTool = GuardrailFunctionOutput = ModelSettings = OpenAIChatCompletionsModel = OutputGuardrailTripwireTriggered = RawResponsesStreamEvent = None  # type: ignore[assignment]
     AgentsException = Exception  # type: ignore[assignment]
-    RunConfig = Runner = RunState = output_guardrail = None  # type: ignore[assignment]
+    RunConfig = Runner = RunState = ToolExecutionConfig = output_guardrail = None  # type: ignore[assignment]
     AsyncOpenAI = None  # type: ignore[assignment]
     ResponseCompletedEvent = ResponseFunctionToolCall = ResponseOutputMessage = None  # type: ignore[assignment]
 
@@ -61,13 +62,13 @@ from shared_types.schemas import (
     LoopTraceEntry,
     PlaceResolution,
     PlaceSearchCandidate,
-    RunEvent,
     SubAgentState,
+    TodoItem,
     ToolCall,
     ToolValueRef,
     UserIntent,
 )
-from tool_registry import ToolRegistry, ToolRuntime, ToolExecutionResult
+from tool_registry import ToolRegistry, ToolRuntime
 from tool_registry.value_refs import make_value_ref_id, remember_value_ref, serialize_value_refs_for_model
 
 from .context_manager import (
@@ -82,11 +83,10 @@ from .parser import build_execution_plan, parse_user_intent, verify_execution_pl
 from .permissions import PermissionRule, evaluate_permission_chain, _match_tool_pattern
 from .project_context import load_context_prompt
 from .prompt_builder import SystemPromptParts, fetch_system_prompt_parts
-from .session_transcript import EVENT_ASSISTANT, EVENT_TOOL_RESULT, EVENT_USER_INPUT, SessionTranscript
 from .skills import SkillManager, SkillFrontmatter
 from .supervisor_config import LOOP_PHASES, build_default_runtime_config, merge_custom_agent_configs
 from .token_budget import BudgetTracker, BudgetStatus
-from .tool_search import ToolSearchRegistry
+from .turn_runtime import MessageLedgerSink, RunEventSink, SdkToolAdapter, TurnFinalizer, TurnRunner
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
@@ -349,29 +349,6 @@ def _build_tool_descriptions_text(tool_registry: Any) -> str:
     return "\n".join(lines)
 
 
-def _validate_and_normalize_tool_result(result: Any, tool_name: str) -> str:
-    """校验并规范化工具执行结果的消息字符串。
-
-    确保返回值是字符串类型且非空；如果 result 不包含有效的 message 字段，
-    则生成默认消息，防止下游消费端遇到 None 或空字符串崩溃。
-
-    Args:
-        result: 工具执行返回的 ToolExecutionResult 或类似对象。
-        tool_name: 工具名称，用于默认消息中标识来源。
-
-    Returns:
-        规范化后的消息字符串（非空）。
-    """
-    message: str = ""
-    if hasattr(result, "message") and isinstance(getattr(result, "message"), str):
-        message = getattr(result, "message")
-    if not message and hasattr(result, "payload") and isinstance(getattr(result, "payload"), str):
-        message = getattr(result, "payload")
-    if not message:
-        message = f"工具 {tool_name} 执行完毕。"
-    return message
-
-
 @dataclass
 class RuntimeStats:
     """运行时统计对象。
@@ -426,107 +403,7 @@ class GeoAgentRuntime:
         self.budget_tracker: BudgetTracker | None = None
         # 运行时统计，在 run() 开始时初始化
         self.stats: RuntimeStats | None = None
-        # Session Transcript — 懒加载，首次使用 SessionTranscript 时初始化
-        self._session_transcript: SessionTranscript | None = None
-        # 每次 run 独立创建 store/checkpointer，避免并发 run 共享可变状态
-        # 工具搜索注册表 — 用于延迟加载（工具数 > 20 时自动启用）
-        self._tool_search_registry = ToolSearchRegistry()
-        # 初始化时注册所有工具定义，供后续批量计算延迟加载标记。
-        # 轻量测试 registry（如 SimpleNamespace）没有 list_definitions，
-        # 跳过注册即可——测试不需要完整的 ToolSearch 能力。
-        list_defns = getattr(tool_registry, 'list_definitions', None)
-        if callable(list_defns):
-            for defn in list_defns():
-                self._tool_search_registry.register_from_definition(defn)
-            self._tool_search_registry.compute_deferred_flags()
-
-    # ------------------------------------------------------------------
-    # Session Transcript 延迟加载
-    # ------------------------------------------------------------------
-
-    def _get_session_transcript(self) -> SessionTranscript | None:
-        """懒加载 SessionTranscript 实例。
-
-        只有在有有效的 store 和 project_root 时才创建。
-        """
-        if self._session_transcript is not None:
-            return self._session_transcript
-        try:
-            project_root = getattr(self.store, 'project_root', None) or Path.cwd()
-            self._session_transcript = SessionTranscript(project_root=project_root)
-        except Exception as exc:
-            logger.debug("SessionTranscript 初始化失败（非关键）: %s", exc)
-            self._session_transcript = None
-        return self._session_transcript
-
-    def _serialize_run_to_transcript(
-        self,
-        run_id: str,
-        thread_id: str | None,
-        query: str,
-    ) -> None:
-        """将运行状态序列化为 JSONL 会话日志。
-
-        在 run 完成后调用，将用户输入、助手回复和工具结果写入 JSONL。
-
-        Args:
-            run_id: 运行 ID。
-            thread_id: 线程 ID。
-            query: 用户查询文本。
-        """
-        transcript = self._get_session_transcript()
-        if transcript is None:
-            return
-
-        try:
-            state = self.store.get_run(run_id).state
-        except Exception as exc:
-            logger.debug("读取 run 状态失败（跳过 JSONL 序列化）: %s", exc)
-            return
-
-        ts = now_utc()
-
-        # 写入 user_input 事件
-        transcript.append_event({
-            "ts": ts,
-            "type": EVENT_USER_INPUT,
-            "run_id": run_id,
-            "thread_id": thread_id,
-            "content": query,
-        })
-
-        # 从 tool_results 和 final_response 重建 assistant + tool_result 事件
-        tool_results = getattr(state, 'tool_results', None) or []
-        for tr in tool_results:
-            tool_name = getattr(tr, 'tool', None) or (isinstance(tr, dict) and tr.get('tool', ''))
-            message = getattr(tr, 'message', None) or (isinstance(tr, dict) and tr.get('message', ''))
-            status = getattr(tr, 'status', None) or (isinstance(tr, dict) and tr.get('status', ''))
-            if tool_name:
-                transcript.append_event({
-                    "ts": ts,
-                    "type": EVENT_TOOL_RESULT,
-                    "run_id": run_id,
-                    "thread_id": thread_id,
-                    "tool": tool_name,
-                    "result": message,
-                    "error": "" if status == "completed" else str(message),
-                })
-
-        # 写入 assistant 事件（final_response）
-        final_response = getattr(state, 'final_response', None)
-        summary = ""
-        if final_response is not None:
-            summary = getattr(final_response, 'summary', None) or (
-                isinstance(final_response, dict) and final_response.get('summary', '')
-            ) or ""
-        if summary:
-            transcript.append_event({
-                "ts": ts,
-                "type": EVENT_ASSISTANT,
-                "run_id": run_id,
-                "thread_id": thread_id,
-                "content": summary,
-            })
+        # 每次 run 独立创建 runtime/checkpointer，避免并发 run 共享可变状态。
 
     async def run(
         self,
@@ -604,6 +481,11 @@ class GeoAgentRuntime:
                 limitations=["任务被系统终止。"],
                 next_actions=["重新发起分析"],
             ))
+            MessageLedgerSink(store=self.store, run_id=run_id, thread_id=thread_id).append_result(
+                "cancelled",
+                message="分析已取消。",
+                payload={"status": "cancelled"},
+            )
             self._record_runtime_stats(run_id)
             self.store.complete_run(run_id, self.store.get_run(run_id).state)
             raise
@@ -632,16 +514,11 @@ class GeoAgentRuntime:
             )
             self.store.update_run_state(run_id, errors=[formatted_error], final_response=final_response)
             self._record_runtime_stats(run_id)
-            final_state = self.store.get_run(run_id).state
-            self.store.complete_run(run_id, final_state)
-            self._serialize_run_to_transcript(run_id=run_id, thread_id=thread_id, query=query)
-            self._append_event(
-                run_id,
-                thread_id,
-                EventType.RUN_FAILED,
-                "分析流程执行失败。",
-                payload={"errors": [formatted_error], "finalResponse": final_response.model_dump(mode="json")},
-            )
+            TurnFinalizer(
+                store=self.store,
+                event_sink=RunEventSink(store=self.store, run_id=run_id, thread_id=thread_id),
+                message_sink=MessageLedgerSink(store=self.store, run_id=run_id, thread_id=thread_id),
+            ).fail(final_response, errors=[formatted_error])
 
     async def resolve_approval(
         self,
@@ -735,82 +612,15 @@ class GeoAgentRuntime:
         return self.model_registry.supports_live_supervisor(provider)
 
     def _append_event(self, run_id: str, thread_id: str | None, event_type: EventType, message: str, *, payload: dict[str, Any] | None = None) -> None:
-        # 统一封装事件对象，保证所有运行路径生成的字段风格一致。
-        self.store.append_event(
-            run_id,
-            RunEvent(
-                event_id=make_id("evt"),
-                run_id=run_id,
-                thread_id=thread_id,
-                type=event_type,
-                message=message,
-                timestamp=now_utc(),
-                payload=payload or {},
-            ),
+        # 事件对象统一由 RunEventSink 生成；AgentSessionLogStore 是唯一事实源。
+        RunEventSink(store=self.store, run_id=run_id, thread_id=thread_id).emit(
+            event_type,
+            message,
+            payload=payload,
         )
 
     def _get_runtime_config(self):
         return self.store.get_runtime_config()
-
-    def load_thread_context(self, thread_id: str | None) -> str:
-        """加载跨会话线程的上下文摘要，用于新 run 中注入历史背景。
-
-        从平台存储中拉取指定 thread 的所有历史 run，提取每位用户的最终
-        问题、交付物以及决策要点，组装成一个简洁的上下文摘要块注入到
-        supervisor 系统 prompt 中——使 Agent 在新一轮对话中能够自然延续
-        上一轮的上下文，无需用户重新交代背景。
-
-        Args:
-            thread_id: 线程 ID。为 None 时返回空字符串。
-
-        Returns:
-            格式化的线程上下文摘要字符串；可直接追加到系统 prompt 尾部。
-        """
-        if not thread_id:
-            return ""
-
-        try:
-            all_hints: list[str] = []
-            # 从平台存储拉取线程中所有 run 记录
-            thread_payload = self.store.get_thread(thread_id)
-            prior_runs = thread_payload.get("runs", []) if isinstance(thread_payload, dict) else []
-
-            # 过滤掉当前正在运行的 run，只展示已完成的历史
-            historical_runs = [
-                item for item in prior_runs
-                if isinstance(item, dict) and item.get("status") in ("completed", "failed", "cancelled")
-            ]
-            if not historical_runs:
-                return ""
-
-            # 取最近 3 个历史 run 便于概要
-            for run_item in historical_runs[-3:]:
-                run_id_val = run_item.get("id", "")
-                query = run_item.get("user_query", "") or ""
-                summary: str | None = None
-
-                # 从 run state 的 finalResponse 提取摘要
-                state = run_item.get("state")
-                if isinstance(state, dict):
-                    fr = state.get("finalResponse")
-                    if isinstance(fr, dict):
-                        summary = fr.get("summary", fr.get("content"))
-
-                hint = f"- [{run_id_val[:8]}…]: 「{query[:120]}」"
-                if summary:
-                    hint += f" → {summary[:200]}"
-                all_hints.append(hint)
-
-            if not all_hints:
-                return ""
-
-            return (
-                "\n## 本线程历史对话摘要\n"
-                + "\n 以下是你与用户在本线程中的近期对话记录，供你延续上下文参考：\n\n"
-                + "\n".join(all_hints)
-            )
-        except Exception:
-            return ""
 
     def _provider_display_name(self, provider: str) -> str:
         try:
@@ -1165,60 +975,8 @@ class GeoAgentRuntime:
     @classmethod
     def _build_clarification_final_response(cls, state: AgentStateModel) -> AgentFinalResponse:
         question = state.clarification.question if state.clarification else "请确认下一步。"
-        delivered = cls._extract_delivered_nowcast_texts(state)
-        if delivered:
-            summary = "已完成的短临结果：\n" + "\n".join(f"- {item}" for item in delivered)
-            summary = f"{summary}\n\n还需要你确认：{question}"
-        else:
-            summary = question
         options = [option.label for option in state.clarification.options] if state.clarification else []
-        return AgentFinalResponse(summary=summary, limitations=[], next_actions=options or ["补充说明"])
-
-    @staticmethod
-    def _extract_delivered_nowcast_texts(state: AgentStateModel) -> list[str]:
-        # 子智能体文本汇总。
-        #
-        # nowcast 文本工具会把真实回答写入 forecast_text valueRef；最终等待澄清时
-        # 仍要把这些已完成事实交给用户，不能只剩一个澄清问题。
-        delivered: list[str] = []
-        seen: set[str] = set()
-        for ref in state.tool_value_refs:
-            if ref.kind != "forecast_text" or not isinstance(ref.value, str):
-                continue
-            normalized = " ".join(str(ref.value).strip().split())
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            delivered.append(normalized)
-        for call in state.tool_results:
-            if call.status != "completed" or call.tool not in {"answer_nowcast_question", "generate_nowcast_forecast_text"}:
-                continue
-            candidates: list[str] = []
-            for ref in call.value_refs:
-                if ref.kind == "forecast_text" and isinstance(ref.value, str):
-                    candidates.append(ref.value)
-            if not candidates and call.tool == "answer_nowcast_question":
-                candidates.append(call.message)
-            for text in candidates:
-                normalized = " ".join(str(text).strip().split())
-                if not normalized or normalized in seen:
-                    continue
-                seen.add(normalized)
-                delivered.append(normalized)
-        return delivered[:3]
-
-    @classmethod
-    def _final_response_includes_delivered_nowcast(cls, final_response: AgentFinalResponse, state: AgentStateModel) -> bool:
-        # 短临最终交付边界。
-        #
-        # 子智能体会把真实问答/预报写入 forecast_text valueRef，并通过
-        # tool_result observation 回灌给模型。最终回答必须由模型自己汇总这些
-        # 文本；运行时只校验，不替模型拼接。
-        delivered = cls._extract_delivered_nowcast_texts(state)
-        if not delivered:
-            return True
-        summary = final_response.summary.strip()
-        return all(text[:24] in summary for text in delivered)
+        return AgentFinalResponse(summary=question, limitations=[], next_actions=options or ["补充说明"])
 
     @staticmethod
     def _complete_todos_for_success(state: AgentStateModel) -> list[Any] | None:
@@ -1236,7 +994,10 @@ class GeoAgentRuntime:
             return None
         if state.clarification and state.clarification.selected_option_id is None:
             return None
-        return [item.model_copy(update={"status": "completed"}) for item in state.todos]
+        return [
+            item.model_copy(update={"status": "completed"}) if not isinstance(item, dict) else TodoItem.model_validate({**item, "status": "completed"})
+            for item in state.todos
+        ]
 
     async def _run_with_oai_agents(
         self,
@@ -1300,9 +1061,10 @@ class GeoAgentRuntime:
         self._record_loop(run_id, thread_id, iteration=1, phase=LOOP_PHASES["observe"], title="读取当前会话信息", description=continuation_note or "已装入当前问题、最近结果和会话上下文。")
 
         context_manager = AgentContextManager(store=self.store, config=runtime_config.context)
-        # 上下文包只从 context index + list_context_references/search_thread_context
-        # 组装；不再从 .geoagent/transcripts 读取 session_summary 自动注入。
-        # session_transcript.py 保留为遗留模块，仅用于 JSONL 事后序列化。
+        # 上下文包只公开 context index 的存在与可查询引用。
+        #
+        # 具体历史事实必须由 Agent 显式调用 list_context_references /
+        # search_thread_context 进入本轮，避免 supervisor prompt 暗中获得旧 run 事实。
         context_packet = context_manager.build_live_packet(
             run_id=run_id, thread_id=thread_id, query=model_query,
         )
@@ -1447,16 +1209,24 @@ class GeoAgentRuntime:
                     supervisor,
                     validation_error=validation_error,
                 )
-                _streaming = Runner.run_streamed(
+                _turn_runner = TurnRunner(
+                    event_sink=RunEventSink(store=self.store, run_id=run_id, thread_id=thread_id),
+                    message_sink=MessageLedgerSink(store=self.store, run_id=run_id, thread_id=thread_id),
+                    raw_event_cls=RawResponsesStreamEvent,
+                    budget_tracker=self.budget_tracker,
+                    stats=self.stats,
+                    final_summary_extractor=self._extract_sdk_final_summary,
+                    json_summary_extractor=lambda text: _extract_summary_from_json(text) or "",
+                )
+                _streaming = _turn_runner.run_streamed(
+                    Runner,
                     active_supervisor, repair_input,
                     max_turns=runtime_config.max_turns,
                     run_config=run_config,
                 )
                 _sdk_caps = self.model_registry.agents_sdk_capabilities(provider, model_name)
-                _final_summary = await self._consume_oai_stream(
+                _final_summary = await _turn_runner.drain_stream(
                     _streaming,
-                    run_id=run_id,
-                    thread_id=thread_id,
                     output_contract=_sdk_caps.final_output_contract,
                 )
                 return _streaming, _final_summary
@@ -1486,6 +1256,12 @@ class GeoAgentRuntime:
                 )
                 raise RuntimeError(f"Agent 结果边界校验失败且已达修正上限：{guardrail_error}") from exc
             except Exception as exc:
+                import traceback
+                logger.error(
+                    "SDK run 异常: type=%s message=%r traceback=%s",
+                    type(exc).__name__, str(exc),
+                    traceback.format_exc(),
+                )
                 # ---- 响应式压缩：检测 context_length_exceeded ----
                 error_str = str(exc).lower()
                 if any(
@@ -1584,9 +1360,6 @@ class GeoAgentRuntime:
         self.store.update_run_state(run_id, **completion_updates)
         # 运行完成时记录统计
         self._record_runtime_stats(run_id)
-        final_state = self.store.get_run(run_id).state
-        completed_run = self.store.complete_run(run_id, final_state)
-        self._serialize_run_to_transcript(run_id=run_id, thread_id=thread_id, query=query)
 
         # --- STOP + SESSION_END Hooks（正常结束） ---
         _hooks = self._get_hook_manager()
@@ -1602,21 +1375,11 @@ class GeoAgentRuntime:
                 thread_id=thread_id,
             )
 
-        event_type = EventType.CLARIFICATION_REQUIRED if completed_run.status == "clarification_needed" else EventType.RUN_COMPLETED
-        # run.completed 既是 SSE 终止态，也是 JSONL assistant response 的事实源。
-        # 前端 transcript 会基于 payload 去重；这里保留 summary，避免历史记录中
-        # 出现空 assistant 消息。
-        self._append_event(
-            run_id,
-            thread_id,
-            event_type,
-            final_response.summary,
-            payload={
-                "finalResponse": final_response.model_dump(mode="json"),
-                "clarification": completed_run.state.clarification.model_dump(mode="json") if completed_run.state.clarification else None,
-                "status": completed_run.status,
-            },
-        )
+        TurnFinalizer(
+            store=self.store,
+            event_sink=RunEventSink(store=self.store, run_id=run_id, thread_id=thread_id),
+            message_sink=MessageLedgerSink(store=self.store, run_id=run_id, thread_id=thread_id),
+        ).complete(final_response)
 
     async def _build_oai_supervisor(
         self,
@@ -1690,14 +1453,13 @@ class GeoAgentRuntime:
         # 注入项目上下文（CLAUDE.md / CONTEXT.md 自动发现）
         project_context_prompt: str = load_context_prompt(project_root=Path.cwd())
 
-        # 组装最终 instructions：项目上下文 + 基础 prompt + 线程历史 + 运行时上下文包
+        # 组装最终 instructions：项目上下文 + 基础 prompt + 运行时上下文索引。
+        #
+        # 不在 supervisor prompt 注入具体历史事实；需要旧 turn 事实时，Agent
+        # 必须显式调用 context 工具，前端和日志才能审计事实进入路径。
         parts: list[str] = [supervisor_base]
         if project_context_prompt:
             parts.append(project_context_prompt)
-        # 线程上下文：将同一 thread 中之前 run 的摘要注入，帮助 Agent 延续多轮对话
-        thread_context = self.load_thread_context(thread_id)
-        if thread_context:
-            parts.append(thread_context)
         if context_packet and context_packet.prompt_context:
             parts.append(context_packet.prompt_context)
         instructions = "\n\n".join(parts)
@@ -1706,62 +1468,14 @@ class GeoAgentRuntime:
         # 读取 user_context 并 prepend 到第一条用户消息前。
         self._last_prompt_parts = prompt_parts
 
-        # ---- 工具加载：并发模型 + 延迟加载 ----
-        # 参考实现将工具分为两类：
-        #   1. 并发安全（读操作/搜索）：可在同一轮并行执行，限制 10 个并发
-        #   2. 串行（写操作/破坏性）：必须逐一执行，防止竞态
-        # 此外，对于超过一定数量（如 20+）的工具集，使用延迟加载——
-        # 核心工具始终加载，其余工具按需通过 ToolSearchTool 发现。
-        all_definitions = list(self.tool_registry.list_definitions())
+        # Chat Completions 主路径只暴露真实 ToolRegistry 工具。
+        #
+        # SDK 的 Responses-only deferred loading 不能用伪搜索工具模拟；
+        # 如果未来切到 Responses 模型，再在 SdkToolAdapter 层显式启用原生能力。
         all_tools = [
             self._build_oai_tool(defn.name, runtime, run_id, thread_id)
-            for defn in all_definitions
+            for defn in self.tool_registry.list_definitions()
         ]
-
-        # 并发安全标记：读取/搜索类工具标记为 safe，写/删类标记为 serial
-        _CONCURRENCY_SAFE_TAGS = frozenset({
-            "read", "search", "query", "lookup", "inspect", "list",
-            "geocode", "analyze", "statistics", "chart",
-        })
-        for tool in all_tools:
-            definition = next((d for d in all_definitions if d.name == tool.name), None)
-            if definition is not None:
-                tags = getattr(definition, "tags", []) or []
-                tool._concurrency_safe = bool(
-                    _CONCURRENCY_SAFE_TAGS & {t.lower() for t in tags}
-                )
-
-        # 延迟加载：如果工具数超过阈值，将非核心工具设为 deferred
-        # ToolSearchRegistry 由外部在初始化时注册，此处仅标记
-        _DEFERRED_TOOL_THRESHOLD = 20
-        if len(all_tools) > _DEFERRED_TOOL_THRESHOLD:
-            _ALWAYS_LOAD_TAGS = frozenset({
-                "layer", "geocode", "basemap", "weather", "analysis",
-                "ask_user", "exit_plan_mode", "todo",
-            })
-            for tool in all_tools:
-                definition = next((d for d in all_definitions if d.name == tool.name), None)
-                if definition is not None:
-                    tags = getattr(definition, "tags", []) or []
-                    # 未匹配到核心标签的工具标记为可延迟
-                    if not (_ALWAYS_LOAD_TAGS & {t.lower() for t in tags}):
-                        tool._should_defer = True
-
-            # ---- ToolSearchTool: 当工具数超过阈值时暴露搜索工具供 Agent 发现 ----
-            # 延迟加载的工具不会直接被 Agent 看到；Agent 通过调用 tool_search
-            # 按关键词搜索，结果返回匹配的工具名称和描述。
-            # 然后 Agent 使用正常的 tool_use 调用这些工具（SDK 会处理新工具的加载）。
-            _tool_search_fn = self._tool_search_registry.build_search_function()
-            from agents import function_tool
-            _tool_search_decorated = function_tool(
-                _tool_search_fn,
-                name_override="tool_search",
-                description_override=(
-                    "搜索可用工具。当你不确定有哪些工具可用时调用。"
-                    "传入关键词（如 '气象'、'缓冲区'、'图层'），返回匹配的工具列表。"
-                ),
-            )
-            all_tools.append(_tool_search_decorated)
 
         # --- SUBAGENT_START Hook（子智能体开始创建前触发） ---
         _subagent_hook_manager = self._get_hook_manager()
@@ -1878,10 +1592,7 @@ class GeoAgentRuntime:
             if parsed is None and streamed_text and streamed_text != output:
                 parsed = self._decode_final_response_json(streamed_text)
             if parsed is None:
-                if not (
-                    (allow_plain_text and self._can_use_plain_sdk_text_as_final_response(raw_text, state))
-                    or self._can_project_nowcast_plain_text_final_response(raw_text, state)
-                ):
+                if not (allow_plain_text and self._can_use_plain_sdk_text_as_final_response(raw_text, state)):
                     return None
                 final_response = AgentFinalResponse(summary=raw_text, limitations=state.warnings, next_actions=[])
             else:
@@ -1892,8 +1603,6 @@ class GeoAgentRuntime:
         else:
             return None
         if _is_mechanical_final_summary(final_response.summary):
-            return None
-        if not self._final_response_includes_delivered_nowcast(final_response, state):
             return None
         return AgentFinalResponse(
             summary=self._correct_artifact_count_claims(final_response.summary.strip(), state),
@@ -1942,24 +1651,6 @@ class GeoAgentRuntime:
             or state.approvals
             or state.place_resolution
             or state.tool_results
-        )
-
-    @classmethod
-    def _can_project_nowcast_plain_text_final_response(cls, text: str, state: AgentStateModel) -> bool:
-        # 短临文本交付投影。
-        #
-        # Agents SDK 有时已经给出完整自然语言总结，但没有按 output_type
-        # 投影成 AgentFinalResponse。只有当前 run 已有 forecast_text 工具事实，
-        # 且自然语言总结逐项包含这些事实时，才把文本投影为 finalResponse。
-        # 这不是补造结果；缺少短临工具事实或缺少任一事实文本仍返回 None。
-        if not text or _is_mechanical_final_summary(text):
-            return False
-        delivered = cls._extract_delivered_nowcast_texts(state)
-        if not delivered:
-            return False
-        return cls._final_response_includes_delivered_nowcast(
-            AgentFinalResponse(summary=text, limitations=[], next_actions=[]),
-            state,
         )
 
     @staticmethod
@@ -2020,12 +1711,17 @@ class GeoAgentRuntime:
             group_id=thread_id or run_id,
             trace_metadata={"runId": run_id, "threadId": thread_id},
             tool_error_formatter=self._format_sdk_tool_error,
+            tool_not_found_behavior="raise_error",
+            tool_execution=ToolExecutionConfig(max_function_tool_concurrency=1) if ToolExecutionConfig is not None else None,
         )
 
     @staticmethod
     def _format_sdk_tool_error(args: Any) -> str | None:
         if getattr(args, "kind", None) == "approval_rejected":
             return "该操作需要审批，用户已拒绝，工具没有执行。"
+        if getattr(args, "kind", None) == "tool_not_found":
+            tool_name = getattr(args, "tool_name", None) or "unknown"
+            return f"工具 {tool_name} 不存在或未启用，调用已失败。"
         return None
 
     def _persist_sdk_approval_interruptions(
@@ -2051,8 +1747,6 @@ class GeoAgentRuntime:
             if self.stats is not None:
                 self.stats.approval_requests += 1
             raw_item = self._dump_sdk_item(getattr(interruption, "raw_item", None))
-            if self.stats is not None:
-                self.stats.approval_requests += 1
             approval = ApprovalRequest(
                 approval_id=make_id("approval"),
                 action=tool_name,
@@ -2094,6 +1788,14 @@ class GeoAgentRuntime:
             thread_id,
             EventType.APPROVAL_REQUIRED,
             final_response.summary,
+            payload={
+                "approvals": [item.model_dump(mode="json") for item in approvals],
+                "finalResponse": final_response.model_dump(mode="json"),
+            },
+        )
+        MessageLedgerSink(store=self.store, run_id=run_id, thread_id=thread_id).append_result(
+            "waiting_approval",
+            message=final_response.summary,
             payload={
                 "approvals": [item.model_dump(mode="json") for item in approvals],
                 "finalResponse": final_response.model_dump(mode="json"),
@@ -2177,21 +1879,27 @@ class GeoAgentRuntime:
             sdk_state.reject(approval_item, rejection_message="用户拒绝执行这个敏感操作。")
             # 审批拒绝 → 增加该工具的拒绝计数
             self._denial_track_rejection(run.id, target.action)
-            if self.stats is not None:
-                self.stats.approval_denied += 1
 
         final_summary = ""
         try:
-            streaming = Runner.run_streamed(
+            turn_runner = TurnRunner(
+                event_sink=RunEventSink(store=self.store, run_id=run.id, thread_id=run.thread_id),
+                message_sink=MessageLedgerSink(store=self.store, run_id=run.id, thread_id=run.thread_id),
+                raw_event_cls=RawResponsesStreamEvent,
+                budget_tracker=self.budget_tracker,
+                stats=self.stats,
+                final_summary_extractor=self._extract_sdk_final_summary,
+                json_summary_extractor=lambda text: _extract_summary_from_json(text) or "",
+            )
+            streaming = turn_runner.run_streamed(
+                Runner,
                 supervisor,
                 sdk_state,
                 max_turns=self._get_runtime_config().max_turns,
                 run_config=self._build_oai_run_config(run_id=run.id, thread_id=run.thread_id),
             )
-            final_summary = await self._consume_oai_stream(
+            final_summary = await turn_runner.drain_stream(
                 streaming,
-                run_id=run.id,
-                thread_id=run.thread_id,
                 output_contract=self.model_registry.agents_sdk_capabilities(
                     run.model_provider or self.model_registry.default_provider, run.model_name
                 ).final_output_contract,
@@ -2227,6 +1935,11 @@ class GeoAgentRuntime:
                 "",
                 payload={"finalResponse": final_response.model_dump(mode="json"), "approval": resolved.model_dump(mode="json")},
             )
+            MessageLedgerSink(store=self.store, run_id=run.id, thread_id=run.thread_id).append_result(
+                "success",
+                message=final_response.summary,
+                payload={"finalResponse": final_response.model_dump(mode="json"), "approval": resolved.model_dump(mode="json")},
+            )
             return self.store.get_run(run.id)
         except Exception as exc:
             formatted_error = _format_agent_error(exc, tool=target.action, step_id=target.approval_id)
@@ -2245,86 +1958,25 @@ class GeoAgentRuntime:
                 "",
                 payload={"errors": [formatted_error], "finalResponse": final_response.model_dump(mode="json"), "summaryHint": final_summary},
             )
+            MessageLedgerSink(store=self.store, run_id=run.id, thread_id=run.thread_id).append_result(
+                "failed",
+                message=final_response.summary,
+                payload={"errors": [formatted_error], "finalResponse": final_response.model_dump(mode="json"), "summaryHint": final_summary},
+            )
             return self.store.get_run(run.id)
 
     async def _consume_oai_stream(self, streaming: Any, *, run_id: str, thread_id: str | None, output_contract: str) -> str:
-        """消费 OAI SDK 流式事件。按思考→工具→回答三段式处理。
-
-        思考完整缓存，文本用稳定 ID 增量更新，前端同一位置替换不追加。
-        """
-        final_summary = ""
-        iter_thinking = ""
-        thinking_started_at: str | None = None
-        _buffer = output_contract in ("json_object", "sdk_structured")
-        _thinking_id = f"think:{run_id}"
-        _message_id = f"msg:{run_id}"
-
-        async for event in streaming.stream_events():
-            if RawResponsesStreamEvent is not None and isinstance(event, RawResponsesStreamEvent):
-                data = event.data
-                delta = getattr(data, "delta", None) or ""
-                if delta and isinstance(delta, str):
-                    data_type = type(data).__name__
-                    if "Reasoning" in data_type:
-                        if thinking_started_at is None:
-                            thinking_started_at = now_utc()
-                        iter_thinking += delta
-                    elif "Text" in data_type:
-                        if iter_thinking:
-                            self._append_event(
-                                run_id, thread_id, EventType.THINKING_DELTA,
-                                iter_thinking,
-                                payload={"_done": True, "_startedAt": thinking_started_at or now_utc(), "_id": _thinking_id},
-                            )
-                            iter_thinking = ""
-                            thinking_started_at = None
-                        final_summary += delta
-                        if not _buffer:
-                            stripped = final_summary.strip()
-                            if stripped.startswith("{"):
-                                _buffer = True
-                            else:
-                                self._append_event(
-                                    run_id, thread_id, EventType.MESSAGE_DELTA,
-                                    stripped,
-                                    payload={"_id": _message_id},
-                                )
-                await asyncio.sleep(0)
-
-        if iter_thinking:
-            self._append_event(
-                run_id, thread_id, EventType.THINKING_DELTA,
-                iter_thinking,
-                payload={"_done": True, "_startedAt": thinking_started_at or now_utc(), "_id": _thinking_id},
-            )
-
-        streamed = final_summary.strip()
-        clean = _extract_summary_from_json(streamed)
-        if clean:
-            self._append_event(run_id, thread_id, EventType.MESSAGE_DELTA, clean, payload={"_done": True, "_id": _message_id})
-            return clean
-        if not _buffer:
-            final_output = self._extract_sdk_final_summary(streaming.final_output)
-            return streamed or final_output
-        if streamed:
-            self._append_event(run_id, thread_id, EventType.MESSAGE_DELTA, streamed, payload={"_done": True, "_id": _message_id})
-        final_output = self._extract_sdk_final_summary(streaming.final_output)
-
-        if self.budget_tracker is not None:
-            try:
-                response = getattr(streaming, 'raw_response', None) or getattr(streaming, 'response', None)
-                usage = getattr(response, 'usage', None) if response is not None else None
-                if usage is not None:
-                    if hasattr(usage, 'model_dump'):
-                        usage = usage.model_dump()
-                    elif hasattr(usage, '_asdict'):
-                        usage = usage._asdict()
-                    self.budget_tracker.track_response(usage)
-                    if self.stats is not None:
-                        self.stats.tokens_used = self.budget_tracker.budget.used_tokens
-            except Exception:
-                pass
-        return streamed or final_output
+        """消费 OAI SDK 流式事件，并投影为 canonical message ledger。"""
+        runner = TurnRunner(
+            event_sink=RunEventSink(store=self.store, run_id=run_id, thread_id=thread_id),
+            message_sink=MessageLedgerSink(store=self.store, run_id=run_id, thread_id=thread_id),
+            raw_event_cls=RawResponsesStreamEvent,
+            budget_tracker=self.budget_tracker,
+            stats=self.stats,
+            final_summary_extractor=self._extract_sdk_final_summary,
+            json_summary_extractor=lambda text: _extract_summary_from_json(text) or "",
+        )
+        return await runner.drain_stream(streaming, output_contract=output_contract)
 
     # ToolExecutionResult → ToolCall 共享字段。
     # 新增共享字段时只需加到这个 frozenset，不必改 _attach_tool_result_metadata 逻辑。
@@ -2478,10 +2130,11 @@ class GeoAgentRuntime:
         return None
 
     def _build_oai_tool(self, tool_name: str, runtime: ToolRuntime, run_id: str, thread_id: str | None):
-        """构建 OAI SDK function_tool，内部复用现有的工具执行与状态同步逻辑。"""
+        """构建 OAI SDK FunctionTool，内部复用现有的工具执行与状态同步逻辑。"""
         definition = self.tool_registry.get_definition(tool_name)
         tool_description = definition.metadata.description or definition.metadata.label
         runtime_config = self._get_runtime_config()
+        message_sink = MessageLedgerSink(store=self.store, run_id=run_id, thread_id=thread_id)
 
         # 静态权限规则列表（转换为本地 PermissionRule 对象），供闭包共享
         _raw_rules = getattr(runtime_config.supervisor, "permission_rules", None) or []
@@ -2628,6 +2281,7 @@ class GeoAgentRuntime:
             )
             tool_results = list(state.tool_results)
             tool_results.append(call)
+            message_sink.append_tool_use(tool_use_id=call.step_id, tool_name=tool_name, args=kwargs)
 
             # === 执行前批次写入（1 次替代原来的 4 次 update_run_state） ===
             updated_run = self.store.update_run_state(
@@ -2651,7 +2305,7 @@ class GeoAgentRuntime:
                 "toolLabel": definition.metadata.label,
                 "toolKind": definition.metadata.tool_kind,
             }
-            self._append_event(run_id, thread_id, EventType.TOOL_STARTED, f"开始调用工具：{tool_name}", payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "loopPhase": LOOP_PHASES["act"], "loopIteration": iteration})
+            self._append_event(run_id, thread_id, EventType.TOOL_STARTED, f"开始调用工具：{tool_name}", payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "status": "running", "loopPhase": LOOP_PHASES["act"], "loopIteration": iteration})
 
             # --- 执行工具（含重试逻辑） ---
             # 对于 transient 错误（超时、外部 API 故障），最多重试 2 次，
@@ -2697,10 +2351,7 @@ class GeoAgentRuntime:
                 if self.stats is not None:
                     self.stats.tool_attempts += 1
                     self.stats.tool_failures += 1
-                if isinstance(tool_results[-1], dict):
-                    tool_results[-1] = {**tool_results[-1], "status": "failed", "message": formatted_error, "completed_at": now_utc()}
-                else:
-                    tool_results[-1] = tool_results[-1].model_copy(update={"status": "failed", "message": formatted_error, "completed_at": now_utc()})
+                tool_results[-1] = tool_results[-1].model_copy(update={"status": "failed", "message": formatted_error, "completed_at": now_utc()})
 
                 fail_trace = list(state.loop_trace)
                 fail_entry = LoopTraceEntry(
@@ -2732,6 +2383,13 @@ class GeoAgentRuntime:
                         latest_message=formatted_error,
                     )
                 self.store.update_run_state(run_id, **error_updates)
+                message_sink.append_tool_result(
+                    tool_use_id=call.step_id,
+                    tool_name=tool_name,
+                    content=formatted_error,
+                    is_error=True,
+                    metadata={"errorCategory": error_category},
+                )
                 self._append_event(
                     run_id,
                     thread_id,
@@ -2754,20 +2412,98 @@ class GeoAgentRuntime:
                     self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 执行 {tool_name} 失败", payload=self._find_sub_agent(error_updates["sub_agents"], owner.agent_id).model_dump(mode="json"))
                 raise RuntimeError(formatted_error) from last_exc
 
+            # 工具结果结构校验是工具执行边界的一部分。
+            #
+            # 缺失 message 或 payload 不是“成功但没有说明”，而是 malformed
+            # tool result；必须写成失败工具调用并把错误交还 SDK。
+            try:
+                _validated_message = SdkToolAdapter.validate_result_message(result, tool_name)
+            except Exception as exc:
+                formatted_error = _format_agent_error(exc, tool=tool_name, step_id=tool_name)
+                if hook_manager:
+                    hook_manager.execute(
+                        "post_tool_use_failure",
+                        tool_name=tool_name,
+                        args=kwargs,
+                        run_id=run_id,
+                        error=str(exc),
+                        error_category="data_format_error",
+                    )
+                if self.stats is not None:
+                    self.stats.tool_attempts += 1
+                    self.stats.tool_failures += 1
+                tool_results[-1] = tool_results[-1].model_copy(
+                    update={
+                        "status": "failed",
+                        "message": formatted_error,
+                        "completed_at": now_utc(),
+                    }
+                )
+                fail_trace = list(state.loop_trace)
+                fail_entry = LoopTraceEntry(
+                    iteration=iteration,
+                    phase=LOOP_PHASES["failed"],
+                    title=f"{tool_name} 返回结果非法",
+                    description=formatted_error,
+                    status="failed",
+                    timestamp=now_utc(),
+                    agent_id=owner.agent_id if owner is not None else None,
+                    tool_name=tool_name,
+                    step_id=tool_name,
+                )
+                fail_trace.append(fail_entry)
+                fail_trace = fail_trace[-loop_limit:]
+                malformed_updates: dict[str, Any] = {
+                    "tool_results": tool_results,
+                    "errors": [*state.errors, formatted_error],
+                    "failed_tool": tool_name,
+                    "loop_iteration": iteration,
+                    "loop_phase": LOOP_PHASES["failed"],
+                    "loop_trace": fail_trace,
+                }
+                if owner is not None:
+                    malformed_updates["sub_agents"] = self._mark_sub_agent(
+                        list(state.sub_agents), owner.agent_id,
+                        status="failed", current_step_id=tool_name,
+                        latest_message=formatted_error,
+                    )
+                self.store.update_run_state(run_id, **malformed_updates)
+                message_sink.append_tool_result(
+                    tool_use_id=call.step_id,
+                    tool_name=tool_name,
+                    content=formatted_error,
+                    is_error=True,
+                    metadata={"errorCategory": "data_format_error"},
+                )
+                self._append_event(
+                    run_id,
+                    thread_id,
+                    EventType.TOOL_COMPLETED,
+                    formatted_error,
+                    payload={
+                        "tool": tool_name,
+                        "toolLabel": tool_event_meta["toolLabel"],
+                        "toolKind": tool_event_meta["toolKind"],
+                        "args": kwargs,
+                        "stepId": call.step_id,
+                        "status": "failed",
+                        "errorCategory": "data_format_error",
+                        "loopPhase": LOOP_PHASES["failed"],
+                        "loopIteration": iteration,
+                    },
+                )
+                self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, formatted_error, payload=fail_entry.model_dump(mode="json"))
+                if owner is not None:
+                    self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 执行 {tool_name} 失败", payload=self._find_sub_agent(malformed_updates["sub_agents"], owner.agent_id).model_dump(mode="json"))
+                raise RuntimeError(formatted_error) from exc
+
             # --- 执行后：内存计算所有状态变更 ---
             # 统计工具执行成功
             if self.stats is not None:
                 self.stats.tool_attempts += 1
                 self.stats.tool_successes += 1
 
-            # 工具结果结构校验：确保返回值包含必要字段，
-            # 避免下游消费方（前端、transcript、分析报告）遇到缺失 key 崩溃。
-            _validated_message = _validate_and_normalize_tool_result(result, tool_name)
-
-            if isinstance(tool_results[-1], dict):
-                tool_results[-1] = {**tool_results[-1], "status": "completed", "message": _validated_message, "completed_at": now_utc()}
-            else:
-                tool_results[-1] = tool_results[-1].model_copy(update={"status": "completed", "message": _validated_message, "completed_at": now_utc()})
+            tool_results[-1] = tool_results[-1].model_copy(update={"status": "completed", "message": _validated_message, "completed_at": now_utc()})
             tool_results[-1] = self._attach_tool_result_metadata(tool_results[-1], result)
 
             artifacts = list(state.artifacts)
@@ -2788,7 +2524,7 @@ class GeoAgentRuntime:
                 iteration=iteration,
                 phase=LOOP_PHASES["observe_result"],
                 title=f"吸收 {tool_name} 结果",
-                description=result.message,
+                description=_validated_message,
                 status="completed",
                 timestamp=now_utc(),
                 agent_id=owner.agent_id if owner is not None else None,
@@ -2822,7 +2558,7 @@ class GeoAgentRuntime:
                 state_updates["sub_agents"] = self._mark_sub_agent(
                     list(state.sub_agents), owner.agent_id,
                     status="completed", current_step_id=None,
-                    latest_message=result.message,
+                    latest_message=_validated_message,
                 )
 
             # 工具特定状态（write_to_store=False → 返回 dict 供合并）
@@ -2844,7 +2580,7 @@ class GeoAgentRuntime:
                     tool_name=tool_name,
                     args=kwargs,
                     run_id=run_id,
-                    result_message=result.message,
+                    result_message=_validated_message,
                 )
 
             # --- 发射执行后事件 ---
@@ -2853,46 +2589,45 @@ class GeoAgentRuntime:
             if owner is not None:
                 updated_sub_agents = state_updates.get("sub_agents") or state.sub_agents
                 self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 已完成 {tool_name}", payload=self._find_sub_agent(updated_sub_agents, owner.agent_id).model_dump(mode="json"))
-            self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, result.message, payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})
-            self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, result.message, payload=observe_entry.model_dump(mode="json"))
+            message_sink.append_tool_result(
+                tool_use_id=call.step_id,
+                tool_name=tool_name,
+                content=_validated_message,
+                structured_content=result.payload,
+                artifact_id=result.artifact.artifact_id if result.artifact is not None else None,
+                value_refs=getattr(result, "value_refs", []) or [],
+                metadata={"resultId": result.result_id, "source": result.source},
+            )
+            self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, _validated_message, payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "status": "completed", "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})
+            self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, _validated_message, payload=observe_entry.model_dump(mode="json"))
             if tool_name == "request_clarification":
-                raise _ClarificationRequested(result.message)
-            observation = _format_tool_observation(tool_name=tool_name, result=result)
+                raise _ClarificationRequested(_validated_message)
+            full_observation = _format_tool_observation(tool_name=tool_name, result=result)
 
             # 工具结果累积预算消费 — 在截断之前记录原始大小，
             # 确保累积计数器反映真实的工具输出量。
             if self.budget_tracker is not None:
-                self.budget_tracker.budget.consume(len(observation) // 2, 0)
+                self.budget_tracker.budget.consume(len(full_observation) // 2, 0)
 
             # 使用 per-tool 配置的最大结果大小（fallback 到全局默认值）
             _max_chars = definition.metadata.max_result_size_chars or _MAX_TOOL_RESULT_CHARS
-            observation = _truncate_observation(observation, _max_chars)
-
-            # 工具结果持久化：当 observation 超过持久化阈值时，
-            # 将完整结果写入 runtime artifact store，Agent 只收到截断版本 + artifact_id 引用。
-            if len(observation) > _PERSIST_THRESHOLD_CHARS:
-                persist_artifact_id = make_id("tool_persist")
-                persist_artifact = ArtifactRef(
-                    artifact_id=persist_artifact_id,
-                    run_id=run_id,
-                    uri=f"runtime://tool_persist/{persist_artifact_id}",
-                    name=f"{tool_name}_result_{make_id('res')}",
-                    artifact_type="tool_result_persist",
-                    metadata={"tool": tool_name, "size_chars": len(observation)},
-                )
-                raw_result_str = json.dumps(result.payload, ensure_ascii=False, default=str) if result.payload else observation
-                try:
-                    if hasattr(runtime.store, "artifact_export_store") and runtime.store.artifact_export_store is not None:
-                        runtime.store.artifact_export_store.put(persist_artifact_id, raw_result_str)
-                        updated_artifacts = list(state_updates.get("artifacts", state.artifacts))
-                        updated_artifacts.append(persist_artifact)
-                        self.store.update_run_state(run_id, artifacts=updated_artifacts)
-                except Exception as exc:
-                    logger.warning("工具结果持久化失败：%s —— %s", tool_name, exc)
-                observation = _truncate_observation(observation) + f"\n\n[完整结果已持久化: artifact_id={persist_artifact_id}]"
-            else:
-                observation = _truncate_observation(observation)
-            return observation
+            delivery = SdkToolAdapter.prepare_observation(
+                tool_name=tool_name,
+                result=result,
+                run_id=run_id,
+                format_observation=lambda **_: full_observation,
+                truncate=_truncate_observation,
+                max_chars=_max_chars,
+                persist_threshold=_PERSIST_THRESHOLD_CHARS,
+                artifact_export_store=getattr(runtime.store, "artifact_export_store", None),
+                logger_obj=logger,
+            )
+            if delivery.persisted_artifact is not None:
+                updated_artifacts = list(state_updates.get("artifacts", state.artifacts))
+                if not any(item.artifact_id == delivery.persisted_artifact.artifact_id for item in updated_artifacts):
+                    updated_artifacts.append(delivery.persisted_artifact)
+                self.store.update_run_state(run_id, artifacts=updated_artifacts)
+            return delivery.text
 
         # 用 Pydantic model 的 JSON Schema 作为工具参数定义。
         #
@@ -2912,7 +2647,7 @@ class GeoAgentRuntime:
             description=tool_description,
             params_json_schema=params_schema,
             on_invoke_tool=_tool_handler,
-            strict_json_schema=False,
+            strict_json_schema=True,
             needs_approval=_needs_approval_checker,
             timeout_seconds=self._SDK_TOOL_TIMEOUT_SECONDS,
             timeout_behavior="raise_exception",
@@ -3453,8 +3188,6 @@ class GeoAgentRuntime:
                 return
             raise RuntimeError("实时智能体没有产出地点解析结果。")
 
-        self._ensure_nowcast_request_coverage(state)
-
         if state.artifacts or state.approvals:
             return
 
@@ -3462,67 +3195,6 @@ class GeoAgentRuntime:
         if normalized and not normalized.endswith("分析已完成。"):
             raise RuntimeError("实时智能体没有产出可交付结果，只返回了过程说明文本。")
         raise RuntimeError("实时智能体没有产出可交付结果。")
-
-    @staticmethod
-    def _ensure_nowcast_request_coverage(state: AgentStateModel) -> None:
-        # 短临任务覆盖边界。
-        #
-        # 用户同时要“接下来天气”和“市民中心天气”时，不能只做全市区域分析
-        # 后用地图 artifact 通过交付边界。地点问题必须先解析坐标，并把
-        # coordinate_ref 传入 analyze_nowcast_precipitation。
-        query = state.user_query or ""
-        nowcast_tools = {
-            item.tool
-            for item in state.tool_results
-            if item.tool in {
-                "create_nowcast_sequence",
-                "analyze_nowcast_precipitation",
-                "answer_nowcast_question",
-                "generate_nowcast_forecast_text",
-                "render_nowcast_raster",
-            }
-        }
-        if not nowcast_tools:
-            return
-        answer_questions = [
-            str(item.args.get("question") or "")
-            for item in state.tool_results
-            if item.tool == "answer_nowcast_question" and item.status == "completed"
-        ]
-        if ("预报文字" in query or "生成预报" in query) and not any(
-            item.tool == "generate_nowcast_forecast_text" and item.status == "completed"
-            for item in state.tool_results
-        ):
-            raise RuntimeError("短临任务要求生成预报文字，但尚未调用 generate_nowcast_forecast_text。")
-        if "接下来" in query and not any("接下来" in question for question in answer_questions):
-            raise RuntimeError("短临任务要求回答“接下来天气怎么样”，但 answer_nowcast_question 未覆盖该问题。")
-        if "市民中心" not in query:
-            return
-        has_place_geocode = any(
-            item.tool == "geocode_place"
-            and item.status == "completed"
-            and "市民中心" in str(item.args.get("query") or "")
-            for item in state.tool_results
-        )
-        has_point_analysis = any(
-            item.tool == "analyze_nowcast_precipitation"
-            and item.status == "completed"
-            and (
-                bool(str(item.args.get("coordinate_ref") or "").strip())
-                or (item.args.get("latitude") is not None and item.args.get("longitude") is not None)
-            )
-            for item in state.tool_results
-        )
-        has_place_answer = any("市民中心" in question for question in answer_questions)
-        missing: list[str] = []
-        if not has_place_geocode:
-            missing.append("geocode_place 解析市民中心")
-        if not has_point_analysis:
-            missing.append("analyze_nowcast_precipitation 使用市民中心 coordinate_ref")
-        if not has_place_answer:
-            missing.append("answer_nowcast_question 覆盖市民中心天气")
-        if missing:
-            raise RuntimeError("短临任务未完整回答市民中心天气问题，缺少：" + "、".join(missing) + "。")
 
     def _is_text_delivery_allowed(self, intent: UserIntent, state: AgentStateModel, final_summary: str) -> bool:
         # 文本交付边界。

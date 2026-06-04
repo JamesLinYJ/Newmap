@@ -23,6 +23,8 @@ from typing import Any, Iterator
 from shared_types.exceptions import NotFoundError
 
 from shared_types.schemas import (
+    AgentMessage,
+    AgentMessageFrame,
     AgentRuntimeConfig,
     AgentStateModel,
     AgentThreadRecord,
@@ -64,6 +66,7 @@ class PostgresPlatformStore:
             artifact_store.runtime_root / "sessions",
         )
         self._subscribers: dict[str, list[asyncio.Queue[RunEvent]]] = {}
+        self._message_subscribers: dict[str, list[asyncio.Queue[AgentMessageFrame]]] = {}
 
     def ensure_schema(self) -> None:
         # schema 初始化。
@@ -418,6 +421,20 @@ class PostgresPlatformStore:
     def list_events(self, run_id: str, *, limit: int | None = None) -> list[RunEvent]:
         return self.session_log_store.list_events(run_id, limit=limit)
 
+    def append_message_frame(self, run_id: str, frame: AgentMessageFrame) -> None:
+        # 消息帧既写 JSONL，也广播给聊天 SSE。
+        #
+        # 这条路径是前端消息展示的事实源；RunEvent 不再参与聊天推导。
+        self.session_log_store.append_message_frame(run_id, frame)
+        for queue in self._message_subscribers.get(run_id, []):
+            queue.put_nowait(frame)
+
+    def list_message_frames(self, run_id: str, *, limit: int | None = None) -> list[AgentMessageFrame]:
+        return self.session_log_store.list_message_frames(run_id, limit=limit)
+
+    def list_messages(self, run_id: str) -> list[AgentMessage]:
+        return self.session_log_store.list_messages(run_id)
+
     def list_runs_for_thread(self, thread_id: str, *, limit: int | None = None) -> list[AnalysisRunRecord]:
         return self.session_log_store.list_runs_for_thread(thread_id, limit=limit)
 
@@ -531,6 +548,18 @@ class PostgresPlatformStore:
             subscribers.remove(queue)
         if not subscribers:
             self._subscribers.pop(run_id, None)
+
+    def subscribe_messages(self, run_id: str) -> asyncio.Queue[AgentMessageFrame]:
+        queue: asyncio.Queue[AgentMessageFrame] = asyncio.Queue()
+        self._message_subscribers.setdefault(run_id, []).append(queue)
+        return queue
+
+    def unsubscribe_messages(self, run_id: str, queue: asyncio.Queue[AgentMessageFrame]) -> None:
+        subscribers = self._message_subscribers.get(run_id, [])
+        if queue in subscribers:
+            subscribers.remove(queue)
+        if not subscribers:
+            self._message_subscribers.pop(run_id, None)
 
     def get_runtime_config(self) -> AgentRuntimeConfig:
         # runtime config 以数据库为唯一事实源。

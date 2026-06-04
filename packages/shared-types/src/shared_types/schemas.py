@@ -29,12 +29,41 @@ def to_camel(value: str) -> str:
     return parts[0] + "".join(word.capitalize() for word in parts[1:])
 
 
+def omit_additional_properties(schema: dict[str, Any]) -> dict[str, Any]:
+    """Remove ``additionalProperties`` from JSON schema, recursively.
+
+    Pydantic v2.11+ emits ``"additionalProperties": false`` in
+    ``model_json_schema()`` output for all object-typed nodes.  The
+    OpenAI API (as well as the SDK strict mode) reject that key, so we
+    strip it before any schema leaves the shared-types package.
+    """
+    result: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "additionalProperties":
+            continue
+        if isinstance(value, dict):
+            result[key] = omit_additional_properties(value)
+        elif isinstance(value, list):
+            result[key] = [
+                omit_additional_properties(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            result[key] = value
+    return result
+
+
 class CamelModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
         populate_by_name=True,
         serialize_by_alias=True,
     )
+
+    @classmethod
+    def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:
+        schema = super().model_json_schema(**kwargs)
+        return omit_additional_properties(schema)
 
 
 class EventType(str, Enum):
@@ -545,6 +574,63 @@ class RunEvent(CamelModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentContentBlock(CamelModel):
+    # Agent 消息块
+    #
+    # Claude Code 风格消息 ledger 的最小可渲染单元；工具调用和工具结果
+    # 在这里用 tool_use_id 结构化配对，前端不再从事件顺序猜测关系。
+    block_id: str
+    type: str
+    text: str | None = None
+    thinking: str | None = None
+    id: str | None = None
+    tool_use_id: str | None = None
+    name: str | None = None
+    input: dict[str, Any] = Field(default_factory=dict)
+    content: str | None = None
+    is_error: bool = False
+    structured_content: Any | None = None
+    artifact_id: str | None = None
+    value_refs: list[ToolValueRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentMessage(CamelModel):
+    # Agent 消息 ledger 条目
+    #
+    # 前端聊天时间线只消费这个结构；RunEvent 只保留为调试和运行态诊断事件。
+    message_id: str
+    run_id: str
+    thread_id: str | None = None
+    type: str
+    role: str | None = None
+    timestamp: datetime
+    status: str = "completed"
+    content: list[AgentContentBlock] = Field(default_factory=list)
+    parent_tool_use_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentMessageFrame(CamelModel):
+    # Agent 消息帧
+    #
+    # JSONL/SSE 的 append-only 单位。刷新时按帧 replay 得到 AgentMessage[]；
+    # 实时流按同一帧原地更新 block，避免 thinking/text 跳位。
+    frame_id: str
+    run_id: str
+    thread_id: str | None = None
+    timestamp: datetime
+    op: str
+    message_id: str | None = None
+    block_id: str | None = None
+    block_index: int | None = None
+    message: AgentMessage | None = None
+    block: AgentContentBlock | None = None
+    delta: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentStateModel(CamelModel):
     session_id: str
     thread_id: str | None = None
@@ -584,6 +670,7 @@ class AgentStateModel(CamelModel):
     """拒绝追踪计数，键为工具名，值为连续被拒次数。"""
     runtime_stats: dict[str, int] = Field(default_factory=dict)
     """运行时统计：tool_success_count / tool_failure_count / approval_count / hook_block_count"""
+
 
 
 class SessionRecord(CamelModel):

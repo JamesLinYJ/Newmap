@@ -29,7 +29,11 @@ dependencies = [
   "shapely>=2.0.0",
   "uvicorn[standard]>=0.35.0",
   "xarray>=2025.1.0",
-  "ChatTTS>=0.1.0"
+  "ChatTTS>=0.1.0",
+  "cn2an>=0.5.0",
+  "jieba>=0.42.0",
+  "tenacity>=9.0.0",
+  "wcmatch>=10.0"
 ]
 
 [project.optional-dependencies]

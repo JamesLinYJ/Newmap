@@ -20,7 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from shared_types.schemas import ArtifactRef, ToolValueRef
+from shared_types.schemas import ArtifactRef, ToolValueRef, omit_additional_properties
 
 
 # ToolExecutionResult
@@ -101,3 +101,8 @@ class ToolRuntime:
 
 class ToolArgsModel(BaseModel):
     model_config = {"populate_by_name": True}
+
+    @classmethod
+    def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:
+        schema = super().model_json_schema(**kwargs)
+        return omit_additional_properties(schema)

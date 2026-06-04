@@ -11,8 +11,8 @@
     "build:web": "npm run build --workspace apps/web",
     "lint:web": "npm run lint --workspace apps/web",
     "test:web": "npm run test --workspace apps/web",
-    "dev:api": "python3 -m api_app.dev_server",
-    "test:api": "pytest",
+    "dev:api": ".venv/bin/python3 -m api_app.dev_server",
+    "test:api": ".venv/bin/pytest",
     "test": "npm run test:api && npm run test:web"
   },
   "dependencies": {

@@ -10,6 +10,8 @@
 
 import { useCallback, useEffect, useReducer, startTransition } from 'react'
 import type {
+  AgentMessage,
+  AgentMessageFrame,
   AgentState,
   AnalysisRun,
   ArtifactRef,
@@ -17,12 +19,13 @@ import type {
   RunEvent,
   UserIntent,
 } from '@geo-agent-platform/shared-types'
-import { getRun, getRunEvents, openRunEventStream } from '../api'
+import { getRun, getRunMessages, openRunMessageStream } from '../api'
+import { applyAgentMessageFrame } from '../messageLedger'
 
 // 运行状态所有权
 //
 // 这个 hook 只持有服务端 run 的 UI 投影：完成态通过 hydrate 获取事实快照，
-// 运行态通过 SSE 追加事件；切换 run 时必须清理旧事件，避免历史事件串台。
+// 聊天态通过 AgentMessageFrame 追加；切换 run 时必须清理旧消息，避免历史串台。
 
 interface RunState {
   run?: AnalysisRun
@@ -30,10 +33,12 @@ interface RunState {
   intent?: UserIntent
   executionPlan?: ExecutionPlan
   events: RunEvent[]
+  messages: AgentMessage[]
   artifacts: ArtifactRef[]
   isSubmitting: boolean
   uiError?: string
   seenEventIds: Set<string>
+  seenFrameIds: Set<string>
   placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null
   featureCount?: number
 }
@@ -41,7 +46,7 @@ interface RunState {
 const MAX_EVENTS = 1000
 
 function initialState(): RunState {
-  return { events: [], artifacts: [], isSubmitting: false, seenEventIds: new Set() }
+  return { events: [], messages: [], artifacts: [], isSubmitting: false, seenEventIds: new Set(), seenFrameIds: new Set() }
 }
 
 function formatHydrationError(error: unknown) {
@@ -64,8 +69,10 @@ function formatHydrationError(error: unknown) {
 
 type RunAction =
   | { type: 'SET_RUN'; run: AnalysisRun; agentState: AgentState; intent?: UserIntent; plan?: ExecutionPlan; artifacts: ArtifactRef[] }
+  | { type: 'SET_MESSAGES'; messages: AgentMessage[] }
   | { type: 'CLEAR_RUN' }
   | { type: 'APPEND_EVENT'; event: RunEvent }
+  | { type: 'APPEND_FRAME'; frame: AgentMessageFrame }
   | { type: 'SET_SUBMITTING'; value: boolean }
   | { type: 'SET_ERROR'; error?: string }
   | { type: 'SET_INTENT'; intent: UserIntent }
@@ -90,8 +97,16 @@ function runReducer(state: RunState, action: RunAction): RunState {
         uiError: isDifferentRun ? undefined : state.uiError,
         events: state.events,
         seenEventIds: state.seenEventIds,
+        messages: (isDifferentRun && state.run?.threadId !== action.run.threadId) ? [] : state.messages,
+        seenFrameIds: isDifferentRun ? new Set() : state.seenFrameIds,
       }
     }
+    case 'SET_MESSAGES':
+      return {
+        ...state,
+        messages: action.messages,
+        seenFrameIds: new Set(),
+      }
     case 'CLEAR_RUN':
       return {
         ...initialState(),
@@ -105,6 +120,14 @@ function runReducer(state: RunState, action: RunAction): RunState {
       const events = [...retainedEvents, action.event]
       const seenEventIds = new Set(events.map((event) => event.eventId))
       return { ...state, events, seenEventIds }
+    }
+    case 'APPEND_FRAME': {
+      if (state.seenFrameIds.has(action.frame.frameId)) return state
+      return {
+        ...state,
+        messages: applyAgentMessageFrame(state.messages, action.frame),
+        seenFrameIds: new Set([...state.seenFrameIds, action.frame.frameId]),
+      }
     }
     case 'SET_SUBMITTING':
       return { ...state, isSubmitting: action.value }
@@ -143,6 +166,7 @@ export function useRunState() {
 
   const hydrateRun = useCallback(async (runId: string) => {
     const latestRun = await getRun(runId)
+    const messages = latestRun.status === 'running' ? [] : await getRunMessages(runId)
     startTransition(() => {
       dispatch({
         type: 'SET_RUN',
@@ -152,15 +176,8 @@ export function useRunState() {
         plan: latestRun.state.executionPlan,
         artifacts: latestRun.state.artifacts,
       })
+      dispatch({ type: 'SET_MESSAGES', messages })
     })
-    // 异步加载历史事件，逐个注入恢复完整 transcript
-    getRunEvents(runId).then(events => {
-      startTransition(() => {
-        for (const event of events) {
-          dispatch({ type: 'APPEND_EVENT', event })
-        }
-      })
-    }).catch(() => {})
     return latestRun
   }, [])
 
@@ -188,6 +205,7 @@ export function useRunState() {
   const finishRun = useCallback(async (runId: string) => {
     try {
       const latestRun = await getRun(runId)
+      const messages = await getRunMessages(runId)
       startTransition(() => {
         dispatch({
           type: 'SET_RUN',
@@ -197,6 +215,7 @@ export function useRunState() {
           plan: latestRun.state.executionPlan,
           artifacts: latestRun.state.artifacts,
         })
+        dispatch({ type: 'SET_MESSAGES', messages })
       })
     } catch (error) {
       dispatch({ type: 'SET_ERROR', error: formatHydrationError(error) })
@@ -231,82 +250,57 @@ export function useRunState() {
     let reconnectAttempts = 0
     const MAX_RECONNECT_ATTEMPTS = 10
 
-    // 流式事件按动画帧批量提交，避免每个 token 触发一次全量 re-render
-    let pendingEvents: RunEvent[] = []
+    // 流式消息帧按动画帧批量提交，避免每个 token 触发一次全量 re-render。
+    let pendingFrames: AgentMessageFrame[] = []
     let rafId = 0
 
-    const flushEvents = () => {
+    const flushFrames = () => {
       rafId = 0
-      if (pendingEvents.length === 0) return
-      const batch = pendingEvents
-      pendingEvents = []
+      if (pendingFrames.length === 0) return
+      const batch = pendingFrames
+      pendingFrames = []
       startTransition(() => {
-        for (const evt of batch) {
-          dispatch({ type: 'APPEND_EVENT', event: evt })
+        for (const frame of batch) {
+          dispatch({ type: 'APPEND_FRAME', frame })
         }
       })
     }
 
-    const enqueueEvent = (event: RunEvent) => {
-      pendingEvents.push(event)
+    const enqueueFrame = (frame: AgentMessageFrame) => {
+      pendingFrames.push(frame)
       if (rafId === 0) {
-        rafId = requestAnimationFrame(flushEvents)
+        rafId = requestAnimationFrame(flushFrames)
       }
     }
 
     const connect = () => {
       if (disposed) return
 
-      source = openRunEventStream(
+      source = openRunMessageStream(
         runId,
-        (event) => {
+        (frame) => {
           reconnectAttempts = 0
 
-          const isStreaming = event.type === 'message.delta' || event.type === 'thinking.delta' || event.type === 'loop.updated'
-          if (isStreaming) {
-            enqueueEvent(event)
+          if (frame.op === 'block_delta') {
+            enqueueFrame(frame)
           } else {
-            startTransition(() => dispatch({ type: 'APPEND_EVENT', event }))
+            if (rafId) {
+              cancelAnimationFrame(rafId)
+              rafId = 0
+            }
+            flushFrames()
+            startTransition(() => dispatch({ type: 'APPEND_FRAME', frame }))
           }
 
-          if (event.type === 'intent.parsed') {
-            startTransition(() => dispatch({ type: 'SET_INTENT', intent: event.payload as unknown as UserIntent }))
-          }
-          if (event.type === 'plan.ready') {
-            startTransition(() => dispatch({ type: 'SET_PLAN', plan: event.payload as unknown as ExecutionPlan }))
-          }
-          if (event.type === 'artifact.created' && event.payload) {
-            const artifact = event.payload as unknown as ArtifactRef
-            if (artifact?.artifactId) {
-              startTransition(() => dispatch({ type: 'APPEND_ARTIFACT', artifact }))
-            }
-          }
-          // 工具完成后，通用提取坐标数据驱动地图飞行（不针对特定工具）
-          if (event.type === 'tool.completed' && event.payload) {
-            const p = event.payload as Record<string, unknown>
-            const result = p.result as Record<string, unknown> | undefined
-            const selected = result?.selected as Record<string, unknown> | undefined
-            const lat = selected?.latitude ?? result?.latitude ?? result?.center_lat ?? result?.lat
-            const lng = selected?.longitude ?? result?.longitude ?? result?.center_lng ?? result?.lng
-            if (typeof lat === 'number' && typeof lng === 'number') {
-              startTransition(() => dispatch({
-                type: 'SET_PLACE_RESOLUTION',
-                placeResolution: { status: 'resolved', selected: { latitude: lat, longitude: lng } },
-              }))
-            }
-          }
-          if (event.type === 'warning.raised') {
-            dispatch({ type: 'SET_ERROR', error: undefined })
-          }
-          if (event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'approval.required' || event.type === 'clarification.required') {
-            if (event.type === 'run.failed') {
-              const payload = event.payload as Record<string, unknown> | undefined
+          if (frame.op === 'result') {
+            const resultType = String(frame.result?.type ?? '')
+            if (resultType === 'failed') {
+              const errors = frame.result?.errors
               dispatch({
                 type: 'SET_ERROR',
-                error: String((payload?.errors as string[] | undefined)?.join('；') || event.message),
+                error: Array.isArray(errors) ? errors.join('；') : String(frame.result?.message ?? '运行失败。'),
               })
             }
-            // 终止态统一 hydrate；人工等待事件会落到对应的 waiting_* 快照。
             getRun(runId)
               .then((latestRun) => {
                 if (disposed) return
@@ -376,7 +370,7 @@ export function useRunState() {
       source?.close()
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       if (rafId) cancelAnimationFrame(rafId)
-      pendingEvents = []
+      pendingFrames = []
     }
   }, [runId, runStatus])
 
@@ -386,6 +380,7 @@ export function useRunState() {
     intent: state.intent,
     executionPlan: state.executionPlan,
     events: state.events,
+    messages: state.messages,
     artifacts: state.artifacts,
     isSubmitting: state.isSubmitting,
     uiError: state.uiError,
@@ -400,5 +395,6 @@ export function useRunState() {
     setIntent,
     setPlan,
     appendArtifact,
+    setMessages: (messages: AgentMessage[]) => startTransition(() => dispatch({ type: 'SET_MESSAGES', messages })),
   }
 }

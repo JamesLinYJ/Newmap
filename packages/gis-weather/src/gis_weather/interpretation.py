@@ -23,7 +23,6 @@ PRIORITY_VARIABLES = ("dbz", "qpf", "qpf_06", "qpf_30", "thunder", "u", "v", "kd
 
 INTERPRETATION_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "additionalProperties": False,
     "required": ["summary", "keyFindings", "riskSignals", "methodNotes", "recommendedNextSteps", "reportText"],
     "properties": {
         "summary": {"type": "string"},

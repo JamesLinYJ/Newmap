@@ -843,6 +843,10 @@
     @apply mb-2 cursor-default text-[#6e7781] hover:text-[#6e7781];
   }
 
+  .cc-result-card {
+    @apply rounded-xl border border-[#d0d7de] bg-[#f6f8fa] px-4 py-3 text-[15px] leading-relaxed text-[#24292f];
+  }
+
   .cc-command-summary span {
     @apply truncate text-[14px] leading-5;
   }
@@ -1006,55 +1010,24 @@
     overflow-wrap: anywhere;
   }
 
-  .cc-clarification-overlay {
-    @apply fixed inset-0 z-[120] grid place-items-center bg-black/25 p-4 backdrop-blur-[10px];
+  .cc-clarification-bar {
+    @apply flex items-start gap-3 rounded-[7px] border border-[#0969da]/25 bg-[#ddf4ff]/70 px-3 py-2;
   }
 
-  .cc-clarification-dialog {
-    @apply flex w-[min(440px,calc(100vw-32px))] max-h-[min(620px,calc(100svh-48px))] flex-col gap-4 overflow-hidden rounded-[14px] border border-black/[0.12] bg-white p-4 shadow-[0_26px_80px_rgb(27_31_36/0.24)];
+  .cc-clarification-bar__question {
+    @apply shrink-0 text-[13px] font-medium text-[#0969da];
   }
 
-  .cc-clarification-dialog__header {
-    @apply flex flex-col gap-1 px-1;
+  .cc-clarification-bar__options {
+    @apply flex flex-1 flex-wrap items-center gap-2;
   }
 
-  .cc-clarification-dialog__header span {
-    @apply text-[12px] font-semibold text-[#0969da];
+  .cc-clarification-bar__chip {
+    @apply cursor-pointer rounded-full border border-[#0969da]/30 bg-white px-3 py-1 text-[12px] font-medium text-[#0969da] transition-colors duration-150 hover:bg-[#0969da]/8 active:bg-[#0969da]/15 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
-  .cc-clarification-dialog__header strong {
-    @apply text-[16px] font-semibold leading-6 text-[#24292f];
-    overflow-wrap: anywhere;
-  }
-
-  .cc-clarification-options {
-    @apply flex min-h-0 flex-col gap-2 overflow-y-auto pr-1;
-  }
-
-  .cc-clarification-option {
-    @apply grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] border border-black/[0.10] bg-white px-3 py-3 text-left shadow-[0_1px_2px_rgb(27_31_36/0.04)] transition-colors duration-150 hover:border-[#0969da]/35 hover:bg-[#f6f8fa] active:bg-[#eef1f4] disabled:cursor-not-allowed disabled:opacity-55;
-  }
-
-  .cc-clarification-option span {
-    @apply flex min-w-0 flex-col gap-0.5;
-  }
-
-  .cc-clarification-option strong {
-    @apply text-[14px] font-semibold leading-5 text-[#24292f];
-    overflow-wrap: anywhere;
-  }
-
-  .cc-clarification-option small {
-    @apply text-[12px] leading-5 text-[#6e7781];
-    overflow-wrap: anywhere;
-  }
-
-  .cc-clarification-option svg {
-    @apply -rotate-90 text-[#8c959f];
-  }
-
-  .cc-clarification-empty {
-    @apply flex flex-col gap-3 rounded-[8px] border border-dashed border-black/[0.14] bg-[#f6f8fa] px-3 py-4 text-[13px] text-[#6e7781];
+  .cc-clarification-bar__dismiss {
+    @apply cursor-pointer rounded-full border-0 bg-transparent px-2 py-1 text-[12px] text-[#6e7781] transition-colors duration-150 hover:text-[#24292f] hover:bg-black/5;
   }
 
   .cc-error-card {

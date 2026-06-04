@@ -69,6 +69,30 @@ def test_single_thread_appends_multiple_runs_to_one_log(tmp_path):
     assert [line["payload"].get("type") for line in lines if line["type"] == "response_item"].count("message") == 2
 
 
+def test_save_run_persists_user_message_frame_for_replay(tmp_path):
+    # 前端聊天 replay 只读 message_frame。
+    #
+    # 用户输入必须在 run 创建时立即进入 ledger；模型崩溃或取消后刷新页面
+    # 也不能靠前端 query 参数临时补一条假用户消息。
+    root = tmp_path / "sessions"
+    store = AgentSessionLogStore(root, cwd=tmp_path)
+    thread = store.create_thread(_thread())
+    run = _run("run_message_frame", thread.id, query="查询杭州天气")
+
+    store.save_run(run)
+
+    messages = store.list_messages(run.id)
+    assert len(messages) == 1
+    assert messages[0].type == "user"
+    assert messages[0].content[0].type == "text"
+    assert messages[0].content[0].text == "查询杭州天气"
+
+    rebuilt = AgentSessionLogStore(root, cwd=tmp_path)
+    replayed = rebuilt.list_messages(run.id)
+    assert replayed[0].message_id == messages[0].message_id
+    assert replayed[0].content[0].text == "查询杭州天气"
+
+
 def test_session_log_rebuilds_index_and_deletes_thread_file(tmp_path):
     # 启动重建只读取 JSONL 文件；删除 thread 会移除文件和内存索引。
     root = tmp_path / "sessions"
@@ -181,18 +205,19 @@ def _thread(*, created_at: datetime | None = None, updated_at: datetime | None =
     )
 
 
-def _run(run_id: str, thread_id: str) -> AnalysisRunRecord:
+def _run(run_id: str, thread_id: str, query: str | None = None) -> AnalysisRunRecord:
     timestamp = datetime.now(timezone.utc)
+    user_query = query or f"问题 {run_id}"
     return AnalysisRunRecord(
         id=run_id,
         thread_id=thread_id,
         session_id="session_test",
-        user_query=f"问题 {run_id}",
+        user_query=user_query,
         created_at=timestamp,
         updated_at=timestamp,
         state=AgentStateModel(
             session_id="session_test",
             thread_id=thread_id,
-            user_query=f"问题 {run_id}",
+            user_query=user_query,
         ),
     )

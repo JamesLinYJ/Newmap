@@ -268,7 +268,6 @@ class NowcastToolProvider:
             ToolDefinition("inspect_nowcast_sequence", inspect_nowcast_sequence, ToolMetadata("检查短临序列", "读取短临序列的时次、变量、范围和分析能力，确认是否可用于短临降水预报。", "meteorology", ["nowcast", "inspect", "气象"]), InspectNowcastSequenceArgs),
             ToolDefinition("analyze_nowcast_precipitation", analyze_nowcast_precipitation, ToolMetadata("分析短临降水", "基于短临序列和区划、AOI、bbox 或地点坐标生成降水时间线、趋势、移动方向和地图候选。", "meteorology", ["nowcast", "precipitation", "analysis"]), AnalyzeNowcastPrecipitationArgs),
             ToolDefinition("answer_nowcast_question", answer_nowcast_question, ToolMetadata("短临降水问答", "消费短临分析事实回答用户关于未来三小时、地点或区县降雨的问题，输出 forecast_text_ref。", "meteorology", ["nowcast", "qa", "forecast"]), AnswerNowcastQuestionArgs),
-            ToolDefinition("generate_nowcast_forecast_text", generate_nowcast_forecast_text, ToolMetadata("生成短临预报文字", "基于短临分析事实生成正式预报文字，适合播报、报告或后续摘要复用。", "meteorology", ["nowcast", "forecast", "text"]), GenerateNowcastForecastTextArgs),
             ToolDefinition("render_nowcast_raster", render_nowcast_raster, ToolMetadata("渲染短临降水图", "消费短临地图候选引用生成可叠加地图的 raster_png artifact，不批量渲染全序列。", "meteorology", ["nowcast", "map", "raster"]), RenderNowcastRasterArgs),
         ]
 

@@ -13,6 +13,8 @@
 // 封装前端对后端 REST 接口的请求入口与统一错误处理。
 
 import type {
+  AgentMessage,
+  AgentMessageFrame,
   AgentRuntimeConfig,
   AnalysisRun,
   AgentThreadRecord,
@@ -300,6 +302,10 @@ export function getRunEvents(runId: string) {
   return requestJson<RunEvent[]>(`/api/v2/runs/${runId}/events.json`)
 }
 
+export function getRunMessages(runId: string) {
+  return requestJson<AgentMessage[]>(`/api/v2/runs/${runId}/messages`)
+}
+
 export function getArtifacts(runId: string) {
   return requestJson<ArtifactRef[]>(`/api/v1/analysis/${runId}/artifacts`)
 }
@@ -459,6 +465,22 @@ export function openRunEventStream(
     } catch {
       // 后端返回畸形 JSON 时静默丢弃本条消息，不中断事件流
     }
+  }
+  source.onerror = onError
+  return source
+}
+
+export function openRunMessageStream(
+  runId: string,
+  onFrame: (frame: AgentMessageFrame) => void,
+  onError: (error: Event) => void,
+) {
+  // Agent 消息帧流。
+  //
+  // 聊天 UI 的实时展示只消费 message_frame；旧 RunEvent 不再参与 transcript。
+  const source = new EventSource(`${API_BASE_URL}/api/v2/runs/${runId}/messages/stream`)
+  source.onmessage = (message) => {
+    onFrame(JSON.parse(message.data) as AgentMessageFrame)
   }
   source.onerror = onError
   return source

@@ -27,13 +27,16 @@ from zoneinfo import ZoneInfo
 
 from shared_types.exceptions import NotFoundError
 from shared_types.schemas import (
+    AgentContentBlock,
+    AgentMessage,
+    AgentMessageFrame,
     AgentThreadRecord,
     AnalysisRunRecord,
     ContextEntryRecord,
     RunEvent,
     ThreadContextRecord,
 )
-from gis_common.ids import now_utc
+from gis_common.ids import make_id, now_utc
 
 
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
@@ -86,6 +89,8 @@ class AgentSessionLogStore:
         self._runs: dict[str, AnalysisRunRecord] = {}
         self._thread_runs: dict[str, list[str]] = {}
         self._events: dict[str, list[RunEvent]] = {}
+        self._message_frames: dict[str, list[AgentMessageFrame]] = {}
+        self._messages: dict[str, list[AgentMessage]] = {}
         self._context_entries: dict[str, dict[str, ContextEntryRecord]] = {}
         self._thread_context: dict[str, ThreadContextRecord] = {}
         self.root.mkdir(parents=True, exist_ok=True, mode=SESSION_LOG_DIR_MODE)
@@ -221,6 +226,33 @@ class AgentSessionLogStore:
                     },
                     timestamp=run.created_at,
                 )
+                self.append_message_frame(
+                    run.id,
+                    AgentMessageFrame(
+                        frame_id=make_id("msgfrm"),
+                        run_id=run.id,
+                        thread_id=run.thread_id,
+                        timestamp=run.created_at,
+                        op="message_append",
+                        message_id=f"user:{run.id}",
+                        message=AgentMessage(
+                            message_id=f"user:{run.id}",
+                            run_id=run.id,
+                            thread_id=run.thread_id,
+                            type="user",
+                            role="user",
+                            timestamp=run.created_at,
+                            status="completed",
+                            content=[
+                                AgentContentBlock(
+                                    block_id=f"user:{run.id}:text",
+                                    type="text",
+                                    text=run.user_query,
+                                )
+                            ],
+                        ),
+                    ),
+                )
             self._append_event_msg(
                 path,
                 {
@@ -289,6 +321,29 @@ class AgentSessionLogStore:
     def list_events(self, run_id: str, *, limit: int | None = None) -> list[RunEvent]:
         events = list(self._events.get(run_id, []))
         return events[-limit:] if limit is not None else events
+
+    def append_message_frame(self, run_id: str, frame: AgentMessageFrame) -> None:
+        # 消息帧是前端聊天 timeline 的事实源。
+        #
+        # RunEvent 只保留运行诊断；聊天 UI 必须通过 message_frame replay，
+        # 这样 thinking、text、tool_use、tool_result 的顺序不会被前端猜测。
+        with self._lock:
+            run = self.get_run(run_id)
+            path = self._path_for_thread(run.thread_id)
+            if self._apply_message_frame(frame):
+                self._append_record(
+                    path,
+                    "message_frame",
+                    frame.model_dump(mode="json", by_alias=True),
+                    timestamp=frame.timestamp,
+                )
+
+    def list_message_frames(self, run_id: str, *, limit: int | None = None) -> list[AgentMessageFrame]:
+        frames = list(self._message_frames.get(run_id, []))
+        return frames[-limit:] if limit is not None else frames
+
+    def list_messages(self, run_id: str) -> list[AgentMessage]:
+        return list(self._messages.get(run_id, []))
 
     def upsert_context_entry(self, entry: ContextEntryRecord) -> ContextEntryRecord:
         with self._lock:
@@ -414,6 +469,12 @@ class AgentSessionLogStore:
                 if isinstance(snapshot, dict):
                     context = ThreadContextRecord.model_validate(snapshot)
                     self._thread_context[context.thread_id] = context
+            elif kind == "message_frame":
+                try:
+                    frame = AgentMessageFrame.model_validate(payload)
+                except Exception as exc:
+                    raise ValueError(f"会话 message_frame 结构非法：{path}:{line_number}") from exc
+                self._apply_message_frame(frame)
             elif kind not in {"turn_context", "response_item"}:
                 raise ValueError(f"会话 JSONL 记录类型未知：{path}:{line_number}: {kind}")
             if thread_id:
@@ -450,6 +511,120 @@ class AgentSessionLogStore:
         if isinstance(payload.get("event"), dict):
             event = RunEvent.model_validate(payload["event"])
             self._events.setdefault(event.run_id, []).append(event)
+
+    def _apply_message_frame(self, frame: AgentMessageFrame) -> bool:
+        frames = self._message_frames.setdefault(frame.run_id, [])
+        if any(item.frame_id == frame.frame_id for item in frames):
+            return False
+        frames.append(frame)
+        messages = self._messages.setdefault(frame.run_id, [])
+
+        def find_message(message_id: str | None) -> AgentMessage | None:
+            if not message_id:
+                return None
+            return next((item for item in messages if item.message_id == message_id), None)
+
+        def upsert_message(message: AgentMessage) -> AgentMessage:
+            for index, item in enumerate(messages):
+                if item.message_id == message.message_id:
+                    messages[index] = message
+                    return message
+            messages.append(message)
+            return message
+
+        def ensure_message() -> AgentMessage | None:
+            existing = find_message(frame.message_id)
+            if existing is not None:
+                return existing
+            if frame.message is not None:
+                return upsert_message(frame.message)
+            if not frame.message_id:
+                return None
+            return upsert_message(
+                AgentMessage(
+                    message_id=frame.message_id,
+                    run_id=frame.run_id,
+                    thread_id=frame.thread_id,
+                    type=str(frame.metadata.get("type") or "assistant"),
+                    role=str(frame.metadata.get("role") or "assistant"),
+                    timestamp=frame.timestamp,
+                    status="streaming",
+                    content=[],
+                    metadata=dict(frame.metadata),
+                )
+            )
+
+        def find_block(message: AgentMessage, block_id: str | None) -> AgentContentBlock | None:
+            if not block_id:
+                return None
+            return next((item for item in message.content if item.block_id == block_id), None)
+
+        def replace_block(message: AgentMessage, block: AgentContentBlock) -> AgentMessage:
+            blocks = list(message.content)
+            for index, item in enumerate(blocks):
+                if item.block_id == block.block_id:
+                    blocks[index] = block
+                    return message.model_copy(update={"content": blocks})
+            blocks.append(block)
+            return message.model_copy(update={"content": blocks})
+
+        if frame.op == "message_append" and frame.message is not None:
+            upsert_message(frame.message)
+            return True
+
+        if frame.op == "message_start":
+            message = frame.message or ensure_message()
+            if message is not None:
+                upsert_message(message.model_copy(update={"status": "streaming"}))
+            return True
+
+        if frame.op == "block_start" and frame.block is not None:
+            message = ensure_message()
+            if message is not None and find_block(message, frame.block.block_id) is None:
+                upsert_message(message.model_copy(update={"content": [*message.content, frame.block], "status": "streaming"}))
+            return True
+
+        if frame.op == "block_delta":
+            message = ensure_message()
+            if message is None:
+                return True
+            block = find_block(message, frame.block_id)
+            if block is None:
+                return True
+            delta = frame.delta or {}
+            updates: dict[str, Any] = {}
+            if "text" in delta:
+                updates["text"] = f"{block.text or ''}{delta.get('text') or ''}"
+            if "thinking" in delta:
+                updates["thinking"] = f"{block.thinking or ''}{delta.get('thinking') or ''}"
+            if "content" in delta:
+                updates["content"] = f"{block.content or ''}{delta.get('content') or ''}"
+            if isinstance(delta.get("input"), dict):
+                updates["input"] = {**block.input, **delta["input"]}
+            if "inputJson" in delta:
+                metadata = dict(block.metadata)
+                metadata["inputJson"] = f"{metadata.get('inputJson') or ''}{delta.get('inputJson') or ''}"
+                updates["metadata"] = metadata
+            upsert_message(replace_block(message, block.model_copy(update=updates)))
+            return True
+
+        if frame.op == "block_stop":
+            message = find_message(frame.message_id)
+            block = find_block(message, frame.block_id) if message is not None else None
+            if message is not None and block is not None:
+                metadata = dict(block.metadata)
+                metadata["done"] = True
+                upsert_message(replace_block(message, block.model_copy(update={"metadata": metadata})))
+            return True
+
+        if frame.op == "message_stop":
+            message = find_message(frame.message_id)
+            if message is not None:
+                status = str(frame.metadata.get("status") or "completed")
+                upsert_message(message.model_copy(update={"status": status}))
+            return True
+
+        return True
 
     def _allocate_path(self, timestamp: datetime) -> Path:
         local = timestamp.astimezone(LOCAL_TZ)

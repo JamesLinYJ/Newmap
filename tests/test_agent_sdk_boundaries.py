@@ -15,14 +15,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import agent_core.graph as graph_module
-from agent_core import GeoAgentRuntime
+from agent_core import GeoAgentRuntime, MessageLedgerSink, RunEventSink, SdkToolAdapter, TurnRunner
 from agent_core.supervisor_config import build_default_runtime_config
 from model_adapters import ModelAdapterRegistry, RegistrySettings
 from gis_common.ids import now_utc
@@ -33,6 +35,7 @@ from shared_types.schemas import (
     ArtifactRef,
     ClarificationOption,
     ClarificationState,
+    EventType,
     PlaceResolution,
     PlaceSearchCandidate,
     ToolCall,
@@ -42,6 +45,7 @@ from shared_types.schemas import (
 )
 from tool_registry import (
     ToolMetadata,
+    ToolExecutionResult,
     ToolRegistry,
     ToolRuntime,
     ToolRuntimeContext,
@@ -777,6 +781,212 @@ def test_sdk_function_tools_raise_on_timeout_instead_of_returning_fake_result():
 
     assert tool.timeout_seconds == runtime._SDK_TOOL_TIMEOUT_SECONDS
     assert tool.timeout_behavior == "raise_exception"
+
+
+def test_claude_style_turn_runtime_removes_legacy_side_channels():
+    # Phase 1 运行时事实源。
+    #
+    # run/event/context index 只能来自 AgentSessionLogStore；不能再把旧 transcript
+    # 或伪 deferred tool search 作为另一条隐形上下文/工具发现通道。
+    graph_source = Path(graph_module.__file__).read_text(encoding="utf-8")
+    init_source = Path(graph_module.__file__).with_name("__init__.py").read_text(encoding="utf-8")
+    package_dir = Path(graph_module.__file__).parent
+
+    assert not (package_dir / "session_transcript.py").exists()
+    assert not (package_dir / "tool_search.py").exists()
+    assert "_serialize_run_to_transcript" not in graph_source
+    assert "load_thread_context" not in graph_source
+    assert "本线程历史对话摘要" not in graph_source
+    assert "name_override=\"tool_search\"" not in graph_source
+    assert "_should_defer" not in graph_source
+    assert "_concurrency_safe" not in graph_source
+    assert "SessionTranscript" not in init_source
+    assert "ToolSearchRegistry" not in init_source
+
+
+def test_sdk_tool_adapter_rejects_malformed_tool_results():
+    # 工具结果 schema 是 SDK 工具边界。
+    #
+    # 缺 message / 非标准结果不能被合成成功文本，否则后续模型会把坏输出当事实。
+    valid = ToolExecutionResult(message="已完成。", payload={"ok": True})
+
+    assert SdkToolAdapter.validate_result_message(valid, "demo_tool") == "已完成。"
+
+    with pytest.raises(TypeError):
+        SdkToolAdapter.validate_result_message(SimpleNamespace(message="ok", payload={}), "bad_tool")
+    with pytest.raises(ValueError, match="message"):
+        SdkToolAdapter.validate_result_message(ToolExecutionResult(message="", payload={}), "bad_tool")
+    with pytest.raises(ValueError, match="payload"):
+        SdkToolAdapter.validate_result_message(ToolExecutionResult(message="ok", payload=[]), "bad_tool")  # type: ignore[arg-type]
+
+
+def test_large_tool_observation_persists_before_truncation():
+    # 大工具结果持久化边界。
+    #
+    # 是否持久化必须基于完整 observation，而不是 per-tool 截断后的文本；
+    # 否则大结果会只留给模型一个截断片段，后续无法通过 artifact 引用取回。
+    class _ArtifactStore:
+        def __init__(self):
+            self.objects: dict[str, str] = {}
+
+        def put(self, artifact_id: str, content: str):
+            self.objects[artifact_id] = content
+
+    artifact_store = _ArtifactStore()
+    long_blob = "x" * 25_000
+    result = ToolExecutionResult(message="已生成统计。", payload={"blob": long_blob})
+
+    delivery = SdkToolAdapter.prepare_observation(
+        tool_name="large_stats",
+        result=result,
+        run_id="run_large",
+        format_observation=lambda **_: json.dumps(result.payload, ensure_ascii=False),
+        truncate=graph_module._truncate_observation,
+        max_chars=1000,
+        persist_threshold=2000,
+        artifact_export_store=artifact_store,
+    )
+
+    assert delivery.persisted_artifact is not None
+    assert delivery.persisted_artifact.artifact_type == "tool_result_persist"
+    assert delivery.persisted_artifact.metadata["size_chars"] > 2000
+    assert delivery.persisted_artifact.artifact_id in artifact_store.objects
+    assert long_blob in artifact_store.objects[delivery.persisted_artifact.artifact_id]
+    assert "[完整结果已持久化: artifact_id=" in delivery.text
+    assert len(delivery.text) < 1500
+
+
+def test_turn_runner_streams_reasoning_as_immediate_thinking_block():
+    # SDK raw reasoning delta 必须立刻进入 message ledger。
+    #
+    # 旧实现会等到 text delta 或 stream 结束后才一次性发 thinking，
+    # 前端因此出现“思考突然蹦出来”。新协议按 block_start/block_delta 原地更新。
+    class _Store:
+        def __init__(self):
+            self.events = []
+            self.frames = []
+
+        def append_event(self, run_id: str, event):
+            self.events.append(event)
+
+        def append_message_frame(self, run_id: str, frame):
+            self.frames.append(frame)
+
+    class _Raw:
+        def __init__(self, data):
+            self.data = data
+
+    class ResponseReasoningDeltaEvent:
+        def __init__(self, delta: str):
+            self.delta = delta
+
+    class ResponseTextDeltaEvent:
+        def __init__(self, delta: str):
+            self.delta = delta
+
+    class _Stream:
+        async def stream_events(self):
+            for event in [
+                _Raw(ResponseReasoningDeltaEvent("先检查上下文。")),
+                _Raw(ResponseTextDeltaEvent("完成。")),
+            ]:
+                yield event
+
+    store = _Store()
+    runner = TurnRunner(
+        event_sink=RunEventSink(store=store, run_id="run_stream", thread_id="thread_stream"),
+        message_sink=MessageLedgerSink(store=store, run_id="run_stream", thread_id="thread_stream"),
+        raw_event_cls=_Raw,
+        final_summary_extractor=lambda value: str(value or ""),
+        json_summary_extractor=lambda text: "",
+    )
+
+    summary = asyncio.run(runner.drain_stream(_Stream(), output_contract="plain_text"))
+
+    assert summary == "完成。"
+    assert [frame.op for frame in store.frames[:4]] == [
+        "message_start",
+        "block_start",
+        "block_delta",
+        "block_stop",
+    ]
+    assert store.frames[1].block.type == "thinking"
+    assert store.frames[2].delta == {"thinking": "先检查上下文。"}
+    assert any(frame.block and frame.block.type == "text" for frame in store.frames)
+    assert not store.events
+
+
+def test_sdk_approval_interruption_count_matches_pending_requests():
+    # 审批统计以 SDK interruption 为事实源。
+    #
+    # 一个 interruption 只能产生一次 approval_requests 增量，避免 UI runtime stats
+    # 比真实审批卡片数量大一倍。
+    class _ApprovalStore:
+        def __init__(self, run: AnalysisRunRecord):
+            self.run = run
+            self.events = []
+            self.message_frames = []
+
+        def get_runtime_config(self):
+            return build_default_runtime_config()
+
+        def get_run(self, run_id: str):
+            assert run_id == self.run.id
+            return self.run
+
+        def update_run_state(self, run_id: str, **fields):
+            assert run_id == self.run.id
+            state = self.run.state.model_copy(update=fields)
+            self.run = self.run.model_copy(update={"state": state, "updated_at": now_utc()})
+            return self.run
+
+        def complete_run(self, run_id: str, state: AgentStateModel):
+            assert run_id == self.run.id
+            status = "approval_required" if any(item.status == "pending" for item in state.approvals) else self.run.status
+            self.run = self.run.model_copy(update={"state": state, "status": status, "updated_at": now_utc()})
+            return self.run
+
+        def append_event(self, run_id: str, event):
+            assert run_id == self.run.id
+            self.events.append(event)
+
+        def append_message_frame(self, run_id: str, frame):
+            assert run_id == self.run.id
+            self.message_frames.append(frame)
+
+    class _SdkState:
+        def to_json(self):
+            return {"checkpoint": "sdk"}
+
+    run = _run_record(
+        "run_approval",
+        query="发布结果",
+        status="running",
+        created_at=now_utc(),
+        state=AgentStateModel(session_id="session_test", thread_id="thread_test", user_query="发布结果"),
+    )
+    store = _ApprovalStore(run)
+    runtime = GeoAgentRuntime(store=store, tool_registry=SimpleNamespace(), model_registry=SimpleNamespace())
+    runtime.stats = graph_module.RuntimeStats(run_id=run.id)
+    streaming = SimpleNamespace(
+        interruptions=[SimpleNamespace(tool_name="publish_result_geojson", raw_item={"id": "sdk_item"})],
+        to_state=lambda: _SdkState(),
+    )
+
+    runtime._persist_sdk_approval_interruptions(
+        run_id=run.id,
+        thread_id=run.thread_id,
+        streaming=streaming,
+        warnings=[],
+    )
+
+    assert runtime.stats.approval_requests == 1
+    assert len(store.run.state.approvals) == 1
+    assert store.run.state.approvals[0].payload["sdkRunState"] == {"checkpoint": "sdk"}
+    assert [event.type for event in store.events][-1] == EventType.APPROVAL_REQUIRED
+    graph_source = Path(graph_module.__file__).read_text(encoding="utf-8")
+    assert graph_source.count("approval_requests += 1") == 1
+    assert graph_source.count("approval_denied += 1") == 1
 
 
 def test_live_subagent_prompt_exposes_exact_tool_name_boundary():

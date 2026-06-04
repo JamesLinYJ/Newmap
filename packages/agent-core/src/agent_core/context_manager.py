@@ -1355,33 +1355,6 @@ _REPAIR_NOISE_TOOLS = {
 }
 
 
-def _extract_deliverable_texts(run_state: Any) -> list[str]:
-    # 修正观察的可交付事实。
-    #
-    # forecast_text 是短临工具链的真实文本产出；即使后续重复搜索上下文，
-    # 它也必须稳定出现在 repair prompt 中，避免被最近工具窗口挤掉。
-    texts: list[str] = []
-    seen: set[str] = set()
-
-    def remember(ref: Any) -> None:
-        kind = _safe_get_field(ref, "kind", "")
-        value = _safe_get_field(ref, "value", "")
-        if kind != "forecast_text" or not isinstance(value, str):
-            return
-        normalized = " ".join(value.strip().split())
-        if not normalized or normalized in seen:
-            return
-        seen.add(normalized)
-        texts.append(normalized)
-
-    for ref in _safe_get_field(run_state, "tool_value_refs", []) or []:
-        remember(ref)
-    for tool_call in _safe_get_field(run_state, "tool_results", []) or []:
-        for ref in _safe_get_field(tool_call, "value_refs", []) or []:
-            remember(ref)
-    return texts[:6]
-
-
 def _clip_context_text(text: str, max_chars: int, marker: str) -> str:
     """按字符上限截断上下文文本，保留头部事实边界。"""
     if max_chars <= 0 or len(text) <= max_chars:
@@ -1752,12 +1725,6 @@ class AgentContextManager:
                     "禁止再调用 list_context_references、search_thread_context 或其它工具；直接基于当前 run 已完成的工具事实输出最终答复。",
                 ]
             )
-
-        deliverable_texts = _extract_deliverable_texts(run_state)
-        if deliverable_texts:
-            lines.append("当前 run 已产出的可交付文本（必须汇总进最终回答）：")
-            for text in deliverable_texts:
-                lines.append(f"- {text}")
 
         # ---- 工具调用（取最近 tool_call_window 条） ----
         raw_tools = _safe_get_field(run_state, "tool_results", []) or []

@@ -13,7 +13,10 @@
 # 导出 Python 侧共享 schema，供 API、runtime 和服务层共同引用。
 
 from .schemas import (
+    AgentContentBlock,
     AgentFinalResponse,
+    AgentMessage,
+    AgentMessageFrame,
     AgentRuntimeConfig,
     AgentSessionLogRecord,
     AgentStateModel,
@@ -57,6 +60,9 @@ from .schemas import (
 
 __all__ = [
     "AgentFinalResponse",
+    "AgentContentBlock",
+    "AgentMessage",
+    "AgentMessageFrame",
     "AgentRuntimeConfig",
     "AgentSessionLogRecord",
     "AgentStateModel",

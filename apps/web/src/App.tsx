@@ -19,6 +19,7 @@ import { Route, Routes, useLocation } from 'react-router-dom'
 
 import type {
   AgentRuntimeConfig,
+  AgentState,
   AnalysisRun,
   AgentThreadRecord,
   ArtifactRef,
@@ -49,6 +50,7 @@ import {
   getRun,
   getSession,
   getSystemComponents,
+  getRunMessages,
   getThread,
   getWeatherJob,
   importManagedLayer,
@@ -80,7 +82,7 @@ import type { FileEntry } from './api'
 import './App.css'
 import { pickPreferredArtifactId } from './artifactSelection'
 import { buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from './motion'
-import { deriveThreadTranscript, pickTranscriptHeadline } from './runTranscript'
+import { pickMessageLedgerHeadline } from './messageLedger'
 import { useRunState } from './hooks/useRunState'
 import { useLayerManager } from './hooks/useLayerManager'
 import { ChatPanel } from './components/ChatPanel'
@@ -94,6 +96,7 @@ type PrimaryNav = 'analysis' | 'layers' | 'history' | 'compute'
 type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config' | 'layerManager'
 type SidebarItemId = 'assistant' | 'query' | 'sources' | 'config' | 'export'
 type MapLayerPreference = { visible: boolean; opacity: number }
+type MemoryKind = 'user' | 'feedback' | 'project' | 'reference'
 
 interface MapRenderLayer {
   kind: 'geojson' | 'raster'
@@ -147,6 +150,29 @@ function reportNonBlockingError(scope: string, error: unknown) {
   console.warn(`[${scope}]`, error)
 }
 
+async function aggregateThreadMessages(runs: { id: string; status: string }[]): Promise<unknown[]> {
+  const all: unknown[] = []
+  for (const run of runs) {
+    if (run.status === 'running') continue
+    try {
+      const msgs = await getRunMessages(run.id)
+      all.push(...msgs)
+    } catch {
+      // 单个 run 消息获取失败不影响整体
+    }
+  }
+  // 按时间戳排序，去重
+  const seen = new Set<string>()
+  return all
+    .sort((a: any, b: any) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+    .filter((m: any) => {
+      const key = m.id ?? JSON.stringify(m)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
 function useStableVoid<Args extends unknown[]>(fn: (...args: Args) => Promise<void>): (...args: Args) => void {
   const ref = useRef(fn)
   useEffect(() => {
@@ -185,7 +211,7 @@ function App() {
   const [uploadReferences, setUploadReferences] = useState<UploadReference[]>([])
   const [allFiles, setAllFiles] = useState<FileEntry[]>([])
   const [isFileSubmitting, setIsFileSubmitting] = useState(false)
-  const [memories, setMemories] = useState<Array<{ name: string; description: string; type: string; age: string }>>([])
+  const [memories, setMemories] = useState<Array<{ name: string; description: string; type: MemoryKind; age: string }>>([])
   const [toolRunResult, setToolRunResult] = useState<Record<string, unknown> | null>(null)
   const [isToolSubmitting, setIsToolSubmitting] = useState(false)
   const [isToolCatalogSubmitting, setIsToolCatalogSubmitting] = useState(false)
@@ -198,7 +224,7 @@ function App() {
 
   const {
     run, agentState, intent, executionPlan,
-    events, artifacts, isSubmitting, uiError,
+    events, messages, artifacts, isSubmitting, uiError,
     placeResolution,
     clearRun,
     hydrateRun,
@@ -206,8 +232,10 @@ function App() {
     startRun,
     stopSubmitting,
     setError: setUiError,
+    setMessages,
   } = useRunState()
   const deferredEvents = useDeferredValue(events)
+  const deferredMessages = useDeferredValue(messages)
   const reducedMotion = useReducedMotion() ?? false
 
   const selectedArtifact = useMemo(
@@ -224,17 +252,9 @@ function App() {
     artifacts,
     events: deferredEvents,
   })
-  const transcriptEntries = useMemo(
-    () => deriveThreadTranscript({
-      run,
-      threadRuns,
-      agentState,
-      events: deferredEvents,
-      artifacts,
-      query,
-      runtimeConfig,
-    }),
-    [deferredEvents, run, threadRuns, agentState, artifacts, query, runtimeConfig],
+  const transcriptHeadline = useMemo(
+    () => pickMessageLedgerHeadline(deferredMessages, run?.status),
+    [deferredMessages, run?.status],
   )
 
   // 从 compaction.executed 事件中提取压缩级别
@@ -255,11 +275,12 @@ function App() {
       if (!p) continue
       const tokensUsed = p.tokens_used ?? (p.usage as Record<string, unknown> | undefined)?.tokens_used
       if (typeof tokensUsed !== 'number') continue
-      const max = p.tokens_max ?? p.budget_max ?? (p.usage as Record<string, unknown> | undefined)?.max_tokens ?? 100000
+      const rawMax = p.tokens_max ?? p.budget_max ?? (p.usage as Record<string, unknown> | undefined)?.max_tokens ?? 100000
+      const max = typeof rawMax === 'number' ? rawMax : Number(rawMax) || 100000
       const budgetStatus = (p.budget_status as string) ?? (tokensUsed > max ? 'exceeded' : tokensUsed > max * 0.9 ? 'critical' : tokensUsed > max * 0.7 ? 'warning' : 'normal')
       return {
         used: tokensUsed,
-        max: Number(max),
+        max,
         status: budgetStatus as 'normal' | 'warning' | 'critical' | 'exceeded',
       }
     }
@@ -310,7 +331,6 @@ function App() {
           tokensUsed: Number(tokensUsed ?? 0),
         }
       }
-      // Fallback: scan runtime_stats in run state
       const stats = p.runtime_stats as Record<string, unknown> | undefined
       if (stats) {
         return {
@@ -321,7 +341,7 @@ function App() {
         }
       }
     }
-    return null
+    return undefined
   }, [events])
 
   // 从 agentState 提取拒绝计数
@@ -338,7 +358,6 @@ function App() {
     () => buildDataReferences({ layers, weatherDatasets, uploadReferences, artifacts, threadRuns, currentThreadId }),
     [artifacts, layers, uploadReferences, weatherDatasets, threadRuns, currentThreadId],
   )
-  const transcriptHeadline = pickTranscriptHeadline(transcriptEntries, run?.status)
   const selectedBasemap = useMemo(
     () => basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? DEFAULT_BASEMAP,
     [basemaps, selectedBasemapKey],
@@ -737,7 +756,7 @@ function App() {
       .then((res) => (res.ok ? res.json() : [] as unknown[]))
       .then((data) => {
         startTransition(() => {
-          setMemories(Array.isArray(data) ? data : [])
+          setMemories(Array.isArray(data) ? data as Array<{ name: string; description: string; type: MemoryKind; age: string }> : [])
         })
       })
       .catch(() => {
@@ -1293,16 +1312,23 @@ function App() {
 
   const handleSelectThread = useCallback(
     async (threadId: string) => {
-      // 主聊天面板按 thread 打开历史任务，保证同一轮澄清和续跑仍显示在一条对话里。
+      // 主聊天面板按 thread 打开历史任务，聚合所有 run 的消息以保证连续对话。
       try {
         setUiError(undefined)
         const threadPayload = await getThread(threadId)
+        const runs = threadPayload.runs ?? []
         startTransition(() => {
           setActiveThreadId(threadPayload.thread.id)
-          setThreadRuns(threadPayload.runs ?? [])
+          setThreadRuns(runs)
         })
         if (threadPayload.latestRun?.id) {
           await hydrateRunState(threadPayload.latestRun.id)
+          // 聚合 thread 内所有已完成 run 的消息
+          const completedRuns = runs.filter(r => r.status !== 'running')
+          if (completedRuns.length > 1) {
+            const allMessages = await aggregateThreadMessages(completedRuns)
+            setMessages(allMessages)
+          }
           if (session?.id) {
             syncUrl(session.id, threadPayload.latestRun.id, threadPayload.thread.id)
           }
@@ -1311,7 +1337,7 @@ function App() {
 
         startTransition(() => {
           clearActiveRunState()
-          setThreadRuns(threadPayload.runs ?? [])
+          setThreadRuns(runs)
           setActiveThreadId(threadPayload.thread.id)
         })
         if (session?.id) {
@@ -1321,7 +1347,7 @@ function App() {
         setUiError(formatUiError(error, '历史记录加载失败，请稍后重试。'))
       }
     },
-    [clearActiveRunState, hydrateRunState, session?.id, setUiError],
+    [clearActiveRunState, hydrateRunState, session?.id, setMessages, setUiError],
   )
 
   const handleRenameThread = useCallback(
@@ -1670,7 +1696,7 @@ function App() {
                         intent={intent}
                         clarification={agentState?.clarification}
                         sessionThreads={sessionThreads}
-                        transcriptEntries={transcriptEntries}
+                        messages={deferredMessages}
                         runtimeConfig={runtimeConfig}
                         availableTools={availableTools}
                         onQueryChange={setQuery}
@@ -1696,7 +1722,7 @@ function App() {
                             .then((res) => (res.ok ? res.json() : [] as unknown[]))
                             .then((data) => {
                               startTransition(() => {
-                                setMemories(Array.isArray(data) ? data : [])
+                                setMemories(Array.isArray(data) ? data as Array<{ name: string; description: string; type: MemoryKind; age: string }> : [])
                               })
                             })
                             .catch(() => {})

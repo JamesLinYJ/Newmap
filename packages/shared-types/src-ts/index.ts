@@ -367,6 +367,65 @@ export interface RunEvent {
   payload?: Record<string, unknown>
 }
 
+export type AgentMessageType = 'user' | 'assistant' | 'system' | 'progress' | 'result' | string
+export type AgentMessageStatus = 'streaming' | 'completed' | 'failed' | 'waiting' | string
+export type AgentContentBlockType = 'text' | 'thinking' | 'tool_use' | 'tool_result' | string
+export type AgentMessageFrameOp =
+  | 'message_start'
+  | 'message_append'
+  | 'block_start'
+  | 'block_delta'
+  | 'block_stop'
+  | 'message_stop'
+  | 'result'
+  | string
+
+export interface AgentContentBlock {
+  blockId: string
+  type: AgentContentBlockType
+  text?: string | null
+  thinking?: string | null
+  id?: string | null
+  toolUseId?: string | null
+  name?: string | null
+  input?: Record<string, unknown>
+  content?: string | null
+  isError?: boolean
+  structuredContent?: unknown
+  artifactId?: string | null
+  valueRefs?: ToolValueRef[]
+  metadata?: Record<string, unknown>
+}
+
+export interface AgentMessage {
+  messageId: string
+  runId: string
+  threadId?: string | null
+  type: AgentMessageType
+  role?: 'user' | 'assistant' | null | string
+  timestamp: string
+  status: AgentMessageStatus
+  content: AgentContentBlock[]
+  parentToolUseId?: string | null
+  metadata?: Record<string, unknown>
+}
+
+export interface AgentMessageFrame {
+  frameId: string
+  runId: string
+  threadId?: string | null
+  timestamp: string
+  op: AgentMessageFrameOp
+  messageId?: string | null
+  blockId?: string | null
+  blockIndex?: number | null
+  message?: AgentMessage | null
+  block?: AgentContentBlock | null
+  delta?: Record<string, unknown>
+  result?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
 export interface LayerPropertyDescriptor {
   name: string
   dataType: string
