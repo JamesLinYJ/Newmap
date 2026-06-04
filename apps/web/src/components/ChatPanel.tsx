@@ -14,6 +14,7 @@
 // 用户输入、思考过程、工具调用、审批通知和最终回答都保持同一条对话叙事。
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, LayoutGroup, m, useReducedMotion, type Variants } from 'framer-motion'
 import { ArrowUp, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Maximize2, Minimize2, Pencil, Plus, Settings2, Square, Trash2, Zap, type LucideIcon } from 'lucide-react'
 import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ConversationItem, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
@@ -491,14 +492,17 @@ export function ChatPanel(props: ChatPanelProps) {
 
   return (
     <div className={`cc-wrap${isPanelExpanded ? ' cc-wrap--expanded' : ''}`}>
-      {isPanelExpanded && (
+      {isPanelExpanded && createPortal(
         <m.div
+          key="backdrop"
           className="cc-expand-backdrop"
-          initial={false}
+          initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
           onClick={() => setIsPanelExpanded(false)}
-        />
+        />,
+        document.body,
       )}
       <LayoutGroup id={currentRunId ?? currentThreadId ?? 'home'}>
         <m.section className="cc-panel" layout {...buildFadeUpMotion(reducedMotion, 0, 10)}>
