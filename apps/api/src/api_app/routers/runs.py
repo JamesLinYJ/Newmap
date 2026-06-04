@@ -70,6 +70,13 @@ async def get_thread_run_items(run_id: str, store: PostgresPlatformStore = Depen
     return store.list_items(run_id)
 
 
+@router.get("/api/v2/runs/{run_id}/items/stream")
+async def stream_thread_run_items(run_id: str, request: Request, store: PostgresPlatformStore = Depends(get_store)):
+    """Codex 风格 SSE item 流 — item/started → item/delta → item/completed。"""
+    store.get_run(run_id)
+    return await _stream_analysis_items(run_id, store)
+
+
 @router.get("/api/v2/runs/{run_id}/messages/stream")
 async def stream_thread_run_messages(run_id: str, request: Request, store: PostgresPlatformStore = Depends(get_store)):
     return await _stream_analysis_messages(run_id, store)
@@ -196,5 +203,45 @@ async def _stream_analysis_messages(run_id: str, store: PostgresPlatformStore):
                     break
         finally:
             store.unsubscribe_messages(run_id, queue)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+async def _stream_analysis_items(run_id: str, store: PostgresPlatformStore):
+    import asyncio, json as _json
+
+    async def event_stream():
+        items = store.list_items(run_id) if hasattr(store, "list_items") else []
+        last_seen = len(items)
+        for item in items:
+            payload = item.model_dump(mode="json", by_alias=True) if hasattr(item, "model_dump") else item
+            yield f"event: item/completed\ndata: {_json.dumps({'item': payload}, ensure_ascii=False)}\n\n"
+
+        if store.get_run(run_id).status != "running":
+            return
+
+        try:
+            queue = store.subscribe(run_id)
+        except Exception:
+            queue = asyncio.Queue()
+        try:
+            while True:
+                try:
+                    await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                new_items = store.list_items(run_id) if hasattr(store, "list_items") else []
+                for item in new_items[last_seen:]:
+                    payload = item.model_dump(mode="json", by_alias=True) if hasattr(item, "model_dump") else item
+                    yield f"event: item/completed\ndata: {_json.dumps({'item': payload}, ensure_ascii=False)}\n\n"
+                last_seen = len(new_items)
+                if store.get_run(run_id).status != "running":
+                    break
+        finally:
+            try:
+                store.unsubscribe(run_id, queue)
+            except Exception:
+                pass
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
