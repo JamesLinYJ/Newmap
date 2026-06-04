@@ -272,10 +272,14 @@ export function useLayerManager(input: UseLayerManagerInput): UseLayerManagerOut
 
   const setSearchQuery = useCallback((q: string) => patchState({ searchQuery: q }), [patchState])
 
+  const stateRefForColor = useRef(state)
+  stateRefForColor.current = state
+
   const setColor = useCallback((id: string, color: string) => {
-    patchState(prev => ({
-      layerColor: { ...prev.layerColor, [id]: color },
-    }))
+    const current = stateRefForColor.current
+    patchState({
+      layerColor: { ...current.layerColor, [id]: color },
+    })
   }, [patchState])
 
   // Inject stored colors into tree nodes

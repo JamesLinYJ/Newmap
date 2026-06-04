@@ -522,7 +522,7 @@ export const LayerPanel = memo(function LayerPanel(props: LayerPanelProps) {
                   <div className="lp-prop-row lp-prop-row--block">
                     <span>分析能力</span>
                     <div className="lp-tag-list">
-                      {layerDetail.analysisCapabilities!.slice(0, 6).map(c => (
+                      {layerDetail.analysisCapabilities!.slice(0, 6).map((c: string) => (
                         <span key={c} className="lp-tag lp-tag--cap">{c}</span>
                       ))}
                     </div>
