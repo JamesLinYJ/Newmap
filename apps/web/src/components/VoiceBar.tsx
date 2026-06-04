@@ -12,7 +12,7 @@ interface VoiceBarProps {
 
 type VoiceState = 'idle' | 'loading' | 'ready' | 'playing' | 'paused'
 
-export function VoiceBar({ text, messageId, initialAudioUrl }: VoiceBarProps) {
+export function VoiceBar({ text, messageId: _messageId, initialAudioUrl }: VoiceBarProps) {
   const [state, setState] = useState<VoiceState>(() => initialAudioUrl ? 'ready' : 'idle')
   const [audioUrl, setAudioUrl] = useState<string | null>(() => initialAudioUrl ? `${apiBaseUrl}${initialAudioUrl}` : null)
   const [duration, setDuration] = useState(0)

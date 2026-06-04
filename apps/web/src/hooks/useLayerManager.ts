@@ -45,6 +45,7 @@ interface LayerManagerState {
   layerOrder: Record<string, number>
   layerVisible: Record<string, boolean>
   layerOpacity: Record<string, number>
+  layerColor: Record<string, string>
   customNames: Record<string, string>
   groupExpanded: Record<string, boolean>
   groups: Record<string, string[]>
@@ -165,7 +166,7 @@ export function useLayerManager(input: UseLayerManagerInput): UseLayerManagerOut
   const { mapLayers, onToggleVisibility, onChangeOpacity } = input
   const [state, setState] = useState<LayerManagerState>({
     selectedId: null, layerOrder: {}, layerVisible: {}, layerOpacity: {},
-    customNames: {}, groupExpanded: {}, groups: {}, searchQuery: '',
+    layerColor: {}, customNames: {}, groupExpanded: {}, groups: {}, searchQuery: '',
   })
   const stateRef = useRef(state)
   stateRef.current = state
@@ -273,15 +274,14 @@ export function useLayerManager(input: UseLayerManagerInput): UseLayerManagerOut
 
   const setColor = useCallback((id: string, color: string) => {
     patchState(prev => ({
-      ...prev,
-      layerColor: { ...(prev as any).layerColor, [id]: color },
+      layerColor: { ...prev.layerColor, [id]: color },
     }))
   }, [patchState])
 
   // Inject stored colors into tree nodes
   const treeWithColors = useMemo(() => {
-    const colors = (state as any).layerColor as Record<string, string> | undefined
-    if (!colors) return tree
+    const colors = state.layerColor
+    if (!colors || Object.keys(colors).length === 0) return tree
     const applyColor = (nodes: LayerTreeNode[]): LayerTreeNode[] =>
       nodes.map(n => ({
         ...n,
