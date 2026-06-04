@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { AnimatePresence, LayoutGroup, m, useReducedMotion, type Variants } from 'framer-motion'
-import { ArrowUp, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Pencil, Plus, Settings2, Square, Trash2, Zap, type LucideIcon } from 'lucide-react'
+import { ArrowUp, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Maximize2, Minimize2, Pencil, Plus, Settings2, Square, Trash2, Zap, type LucideIcon } from 'lucide-react'
 import type { AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ConversationItem, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
 import { SAMPLES, type DataReferenceSummary } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants, buildScaleInMotion } from '../motion'
@@ -188,6 +188,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const [composing, setComposing] = useState(false)
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const [composerMode, setComposerMode] = useState<ComposerMode>('auto')
+  const [isPanelExpanded, setIsPanelExpanded] = useState(false)
   const triggerRef = useRef<HTMLElement | null>(null)
   const firstClarificationOptionRef = useRef<HTMLButtonElement | null>(null)
   const composerInputRef = useRef<HTMLInputElement | null>(null)
@@ -208,6 +209,15 @@ export function ChatPanel(props: ChatPanelProps) {
       submittingRef.current = false
     }
   }, [isSubmitting])
+
+  useEffect(() => {
+    if (!isPanelExpanded) return
+    const handler = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setIsPanelExpanded(false)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isPanelExpanded])
 
   const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => {
@@ -481,7 +491,17 @@ export function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    <div className="cc-wrap">
+    {isPanelExpanded && (
+      <m.div
+        className="cc-expand-backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+        onClick={() => setIsPanelExpanded(false)}
+      />
+    )}
+    <div className={`cc-wrap${isPanelExpanded ? ' cc-wrap--expanded' : ''}`}>
       <LayoutGroup id={currentRunId ?? currentThreadId ?? 'home'}>
         <m.section className="cc-panel" layout {...buildFadeUpMotion(reducedMotion, 0, 10)}>
           <header className="cc-panel-header">
@@ -505,6 +525,13 @@ export function ChatPanel(props: ChatPanelProps) {
               <button className="cc-icon-button" aria-label="新建对话" onClick={onNewConversation}>
                 <Pencil size={14} />
                 <span>新建</span>
+              </button>
+              <button
+                className="cc-icon-button"
+                aria-label={isPanelExpanded ? '收起对话框' : '放大对话框'}
+                onClick={() => setIsPanelExpanded(v => !v)}
+              >
+                {isPanelExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
             </div>
           </header>

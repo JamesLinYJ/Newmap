@@ -683,6 +683,20 @@
     @apply flex min-h-0 flex-col gap-3;
   }
 
+  .cc-expand-backdrop {
+    @apply fixed inset-0 z-[100] backdrop-blur-xl;
+    background: rgba(0, 0, 0, 0.32);
+  }
+
+  .cc-wrap--expanded {
+    @apply fixed inset-4 z-[110];
+  }
+
+  .cc-wrap--expanded .cc-panel {
+    @apply rounded-2xl shadow-[0_25px_80px_rgb(0_0_0/0.28)];
+    height: calc(100svh - 32px);
+  }
+
   .cc-panel {
     @apply flex flex-col overflow-hidden rounded-[10px] border border-black/[0.16] bg-white text-[#1f2328] shadow-[0_14px_42px_rgb(15_23_42/0.06)];
     height: clamp(540px, calc(100svh - 120px), 820px);
