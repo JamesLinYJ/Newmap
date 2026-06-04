@@ -82,7 +82,6 @@ import type { FileEntry } from './api'
 import './App.css'
 import { pickPreferredArtifactId } from './artifactSelection'
 import { buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from './motion'
-import { pickMessageLedgerHeadline } from './messageLedger'
 import { useRunState } from './hooks/useRunState'
 import { useLayerManager } from './hooks/useLayerManager'
 import { ChatPanel } from './components/ChatPanel'
@@ -254,10 +253,12 @@ function App() {
     artifacts,
     events: deferredEvents,
   })
-  const transcriptHeadline = useMemo(
-    () => pickMessageLedgerHeadline(deferredMessages, run?.status),
-    [deferredMessages, run?.status],
-  )
+  const transcriptHeadline = useMemo(() => {
+    if (!deferredItems.length) return { title: '就绪', body: '提交问题后开始分析。' }
+    const last = deferredItems[deferredItems.length - 1]
+    const body = (last.body || last.output) ?? ''
+    return { title: last.itemType === 'message' ? '回答' : '运行中', body }
+  }, [deferredItems])
 
   // 从 compaction.executed 事件中提取压缩级别
   const compactionLevel = useMemo(() => {

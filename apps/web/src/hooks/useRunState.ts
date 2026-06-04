@@ -21,7 +21,6 @@ import type {
 } from '@geo-agent-platform/shared-types'
 import { getRun, getRunItems, getRunMessages, openRunMessageStream } from '../api'
 import type { ConversationItem } from '@geo-agent-platform/shared-types'
-import { applyAgentMessageFrame } from '../messageLedger'
 
 // 运行状态所有权
 //
@@ -125,14 +124,6 @@ function runReducer(state: RunState, action: RunAction): RunState {
       const events = [...retainedEvents, action.event]
       const seenEventIds = new Set(events.map((event) => event.eventId))
       return { ...state, events, seenEventIds }
-    }
-    case 'APPEND_FRAME': {
-      if (state.seenFrameIds.has(action.frame.frameId)) return state
-      return {
-        ...state,
-        messages: applyAgentMessageFrame(state.messages, action.frame),
-        seenFrameIds: new Set([...state.seenFrameIds, action.frame.frameId]),
-      }
     }
     case 'SET_SUBMITTING':
       return { ...state, isSubmitting: action.value }
