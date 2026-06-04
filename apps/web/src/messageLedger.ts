@@ -133,7 +133,7 @@ export function deriveEntriesFromItems(
   for (const item of items) {
     switch (item.itemType) {
       case 'message': {
-        const body = (item.body ?? '').trim()
+        const body = ((item.body || item.output) ?? '').trim()
         if (!body) break
         entries.push({
           id: item.callId || item.turnId || `msg:${entries.length}`,
@@ -147,7 +147,7 @@ export function deriveEntriesFromItems(
         break
       }
       case 'reasoning': {
-        const body = item.body ?? ''
+        const body = (item.body || item.output) ?? ''
         if (!body) break
         entries.push({
           id: item.callId || item.turnId || `think:${entries.length}`,
