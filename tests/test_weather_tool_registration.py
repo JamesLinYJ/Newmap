@@ -93,6 +93,11 @@ def test_weather_tools_are_registered_in_registry_and_catalog_descriptors() -> N
     assert nowcast_params["coordinate_ref"].data_type == "string"
     assert nowcast_params["bbox_ref"].data_type == "string"
 
+    sequence_params = {item.key: item for item in descriptor_by_name["create_nowcast_sequence"].parameters}
+    assert sequence_params["dataset_set_ref"].required is False
+    assert sequence_params["dataset_set_ref"].data_type == "string"
+    assert sequence_params["dataset_ids"].data_type == "json"
+
 
 def test_default_runtime_config_contains_weather_subagent() -> None:
     # 子智能体注册契约。

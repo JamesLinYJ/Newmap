@@ -7,13 +7,14 @@ import { apiBaseUrl } from '../api'
 interface VoiceBarProps {
   text: string
   messageId: string
+  initialAudioUrl?: string | null
 }
 
 type VoiceState = 'idle' | 'loading' | 'ready' | 'playing' | 'paused'
 
-export function VoiceBar({ text, messageId }: VoiceBarProps) {
-  const [state, setState] = useState<VoiceState>('idle')
-  const [audioUrl, setAudioUrl] = useState<string | null>(null)
+export function VoiceBar({ text, messageId, initialAudioUrl }: VoiceBarProps) {
+  const [state, setState] = useState<VoiceState>(() => initialAudioUrl ? 'ready' : 'idle')
+  const [audioUrl, setAudioUrl] = useState<string | null>(() => initialAudioUrl ? `${apiBaseUrl}${initialAudioUrl}` : null)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [showText, setShowText] = useState(false)
@@ -59,6 +60,14 @@ export function VoiceBar({ text, messageId }: VoiceBarProps) {
       audio.removeEventListener('pause', onPause)
     }
   }, [audioUrl])
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !audioUrl || state !== 'playing') {
+      return
+    }
+    void audio.play().catch(() => setState('ready'))
+  }, [audioUrl, state])
 
   const togglePlay = () => {
     const audio = audioRef.current

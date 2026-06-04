@@ -288,7 +288,7 @@ export function deriveConversationEntries(
         role: 'assistant',
         timestamp: entry.timestamp,
         title: '结果已生成',
-        body: `我已经生成结果”${sanitizeUserFacingText(entry.title)}”，现在可以在地图里继续查看。`,
+        body: `我已经生成结果“${sanitizeUserFacingText(entry.title)}”，现在可以在地图里继续查看。`,
         status: entry.status,
         artifactId: entry.artifactId,
         note: '如果你想继续分析，我会直接基于这个结果往下处理。',
@@ -385,15 +385,16 @@ function mapEventToTranscriptEntry(event: RunEvent, events: RunEvent[]): Transcr
   if (event.type === 'tool.started' || event.type === 'tool.completed') {
     const toolName = stringOrNull(payload.tool)
     const toolArgs = payload.args ?? findPreviousToolArgs(event, events)
-    const commandText = toolName ? buildToolCommandText(toolName, toolArgs) : null
+    const displayName = toolPayloadLabel(payload)
+    const commandText = toolName ? buildToolCommandText(displayName, toolArgs) : null
     const toolStatus: TranscriptEntryStatus =
       event.type === 'tool.started' ? 'running' : payload.status === 'failed' ? 'failed' : 'completed'
     return {
       id: event.eventId,
       kind: 'tool',
       timestamp: event.timestamp,
-      title: toolName ?? '工具调用',
-      body: event.type === 'tool.started' ? `正在调用工具“${toolName ?? '未知工具'}”。` : sanitizeUserFacingText(event.message),
+      title: displayName,
+      body: event.type === 'tool.started' ? `正在调用工具“${displayName}”。` : sanitizeUserFacingText(event.message),
       status: toolStatus,
       commandText,
       toolName,
@@ -723,13 +724,16 @@ function mergeConversationCommands(toolEntries: TranscriptEntry[], toolMetadataB
       : 'running'
     const body = pair.completed ? pair.completed.body : (pair.started ? '执行中…' : '')
     const displayEntry = pair.started ?? pair.completed ?? anchorEntry
+    const title = humanizeToolLabel(displayEntry.title, displayEntry.toolName, toolMetadataByName)
+    const commandArgs = pair.started?.details?.args ?? pair.completed?.details?.args
+    const existingCommandText = pair.started?.commandText ?? pair.completed?.commandText
 
     commands.push({
       id: anchorEntry.id,
-      title: humanizeToolLabel(displayEntry.title, displayEntry.toolName, toolMetadataByName),
+      title,
       status,
       body,
-      commandText: pair.started?.commandText ?? pair.completed?.commandText,
+      commandText: buildToolCommandText(title, commandArgs, existingCommandText),
       toolName: displayEntry.toolName,
       details: pair.completed?.details ?? pair.started?.details,
     })
@@ -744,16 +748,18 @@ function buildCommandPairKey(entry: TranscriptEntry) {
   return `signature:${entry.toolName ?? entry.title}:${entry.commandText ?? ''}`
 }
 
-function buildToolCommandText(toolName: string, args: unknown) {
+function buildToolCommandText(displayName: string, args: unknown, existingCommandText?: string | null) {
   // commandText 刻意控制得很短，只保留用户能看懂的工具名和关键参数，
   // 不把整份 payload 直接抛给 UI。
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
-    return `> ${toolName}`
+    const existing = existingCommandText?.replace(/^>\s*/u, '').trim()
+    const rest = existing?.split(/\s+/u).slice(1).join(' ')
+    return rest ? `> ${displayName} ${rest}` : `> ${displayName}`
   }
   const pairs = Object.entries(args as Record<string, unknown>)
     .slice(0, 4)
     .map(([key, value]) => `${key}=${formatCommandValue(value)}`)
-  return pairs.length ? `> ${toolName} ${pairs.join(' ')}` : `> ${toolName}`
+  return pairs.length ? `> ${displayName} ${pairs.join(' ')}` : `> ${displayName}`
 }
 
 function formatCommandValue(value: unknown) {
@@ -767,18 +773,21 @@ function formatCommandValue(value: unknown) {
 }
 
 function humanizeToolLabel(label: string, toolName: string | null | undefined, toolMetadataByName: ReadonlyMap<string, ToolDescriptor>) {
+  // 工具中文名优先级：
+  // 1. 后端 ToolDescriptor.label（领域工具）
+  // 2. 事件 payload 派生出的 title（toolLabel）
+  // 3. 元数据缺失时的通用空值展示。不要从 toolName 推断中文名。
   const descriptor = toolName ? toolMetadataByName.get(toolName) : undefined
   if (descriptor?.label?.trim()) {
     return descriptor.label.trim()
   }
   const normalized = sanitizeUserFacingText(label)
-  if (normalized.includes('_')) {
-    return normalized
-      .split('_')
-      .filter(Boolean)
-      .join(' ')
-  }
-  return normalized
+  return normalized || '工具调用'
+}
+
+function toolPayloadLabel(payload: Record<string, unknown>) {
+  // 工具显示名来自后端事件元数据；缺失时只给通用中文占位。
+  return stringOrNull(payload.toolLabel ?? payload.label ?? payload.displayName) ?? '工具调用'
 }
 
 function deriveRecoveryNote(event: RunEvent, events: RunEvent[]) {

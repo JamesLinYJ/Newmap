@@ -38,6 +38,7 @@ import type {
 import {
   type AgentExecutionMode,
   cancelRun,
+  createThread,
   deleteLayer,
   deleteThread,
   deleteToolCatalogEntry,
@@ -1074,6 +1075,26 @@ function App() {
     [session, currentThreadId],
   )
 
+  const ensureUploadThread = useCallback(async () => {
+    // 上传归属边界
+    //
+    // 上传文件必须写入具体 thread；如果用户还没发消息，前端先创建一个
+    // “文件上传”线程，再把文件、数据集和本地 UI 指针全部绑定到它。
+    if (!session) {
+      throw new Error('当前会话还没有初始化，暂时不能上传文件。')
+    }
+    if (currentThreadId) {
+      return currentThreadId
+    }
+    const thread = await createThread(session.id, '文件上传')
+    startTransition(() => {
+      setActiveThreadId(thread.id)
+      setSessionThreads((current) => current.some((item) => item.id === thread.id) ? current : [thread, ...current])
+    })
+    syncUrl(session.id, undefined, thread.id)
+    return thread.id
+  }, [currentThreadId, session])
+
   const handleUploadFiles = useCallback(
     async (files: File[]) => {
       // 多文件/文件夹上传编排。
@@ -1083,25 +1104,18 @@ function App() {
       if (!session) {
         return
       }
-      // 如果没有活跃线程，先自动创建一个（上传文件必须属于某个线程）
-      let resolvedThreadId = currentThreadId
-      if (!resolvedThreadId) {
-        try {
-          const thread = await createThread(session.id, '文件上传')
-          startTransition(() => {
-            setActiveThreadId(thread.id)
-            setSessionThreads((prev) => [thread, ...prev])
-          })
-          resolvedThreadId = thread.id
-        } catch {
-          setUiError('无法自动创建对话线程，请先发送一条消息再上传。')
-          return
-        }
-      }
       const uploadable = files.filter((file) => classifyUploadFile(file))
       const skippedCount = files.length - uploadable.length
       if (!uploadable.length) {
         setUiError('没有找到可上传的 GeoJSON、GPKG、ZIP Shapefile、NetCDF、GRIB、GeoTIFF、HDF5 或雷达 bz2 文件。')
+        return
+      }
+
+      let resolvedThreadId: string
+      try {
+        resolvedThreadId = await ensureUploadThread()
+      } catch (error) {
+        setUiError(formatUiError(error, '上传前创建对话线程失败。'))
         return
       }
 
@@ -1135,7 +1149,7 @@ function App() {
         )
       }
       if (weatherUploaded) {
-        refreshes.push(refreshWeatherDatasets(session.id))
+        refreshes.push(refreshWeatherDatasets(session.id, resolvedThreadId))
       }
       try {
         await Promise.all(refreshes)
@@ -1150,7 +1164,7 @@ function App() {
         setUiError(`已上传 ${uploadable.length} 个文件，跳过 ${skippedCount} 个不支持的文件。`)
       }
     },
-    [refreshWeatherDatasets, session, setUiError, uploadOneFile],
+    [ensureUploadThread, refreshWeatherDatasets, session, setUiError, uploadOneFile],
   )
 
   const handleUpload = useCallback(
@@ -1231,14 +1245,15 @@ function App() {
   const handleUploadAnyFile = useCallback(async (file: File) => {
     setIsFileSubmitting(true)
     try {
-      await uploadAnyFile(file, currentThreadId)
-      await refreshAllFiles(currentThreadId)
+      const resolvedThreadId = await ensureUploadThread()
+      await uploadAnyFile(file, resolvedThreadId)
+      await refreshAllFiles(resolvedThreadId)
     } catch (error) {
       setUiError(formatUiError(error, `上传 ${file.name} 失败`))
     } finally {
       setIsFileSubmitting(false)
     }
-  }, [currentThreadId, refreshAllFiles, setUiError])
+  }, [ensureUploadThread, refreshAllFiles, setUiError])
 
   const handleDeleteAnyFile = useCallback(async (fileId: string) => {
     try {
@@ -1693,13 +1708,6 @@ function App() {
                         denialCounts={denialCounts}
                         executionPlan={executionPlan}
                         tasks={progressTasks}
-                        sessions={sessionRuns?.map(run => ({
-                          id: run.id,
-                          title: run.title ?? run.userQuery ?? '',
-                          created_at: run.createdAt,
-                          latest_query: run.userQuery ?? '',
-                          run_count: 1,
-                        }))}
                       />
                     </m.div>
 

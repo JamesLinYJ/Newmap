@@ -31,6 +31,15 @@ async def create_session(store: PostgresPlatformStore = Depends(get_store)):
     return store.create_session()
 
 
+@router.get("/api/v1/sessions/default")
+async def get_default_session(store: PostgresPlatformStore = Depends(get_store)):
+    # 默认工作台会话
+    #
+    # 返回跨浏览器/设备的稳态会话。首次调用自动创建；
+    # 后续所有无共享链接的用户都会复用同一份服务器端会话记录。
+    return store.get_or_create_default_session()
+
+
 @router.get("/api/v1/sessions/{session_id}")
 async def get_session(session_id: str, store: PostgresPlatformStore = Depends(get_store)):
     return store.get_session(session_id)

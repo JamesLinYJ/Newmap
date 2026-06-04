@@ -270,12 +270,16 @@ class AgentSessionLogStore:
                 timestamp=event.timestamp,
             )
             if event.type.value == "run.completed":
+                final_response = event.payload.get("finalResponse") if isinstance(event.payload, dict) else None
+                response_text = event.message
+                if not response_text and isinstance(final_response, dict):
+                    response_text = str(final_response.get("summary") or "")
                 self._append_response_item(
                     path,
                     {
                         "type": "message",
                         "role": "assistant",
-                        "content": [{"type": "output_text", "text": event.message}],
+                        "content": [{"type": "output_text", "text": response_text}],
                         "runId": run_id,
                         "threadId": event.thread_id,
                     },

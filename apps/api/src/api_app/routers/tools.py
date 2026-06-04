@@ -68,6 +68,7 @@ async def run_tool(payload: ToolRunRequest, request: Request, store: PostgresPla
     run = store.get_run(payload.run_id) if payload.run_id else store.create_run(session.id, f"工具调用：{payload.tool_name}", thread_id=thread.id)
     if not payload.run_id:
         store.mark_run_running(run.id)
+    tool_label = _resolve_tool_label(request, payload)
 
     try:
         result = await _execute_tool_request(
@@ -85,6 +86,7 @@ async def run_tool(payload: ToolRunRequest, request: Request, store: PostgresPla
             args=dict(payload.args),
             result=result,
             tool_kind=payload.tool_kind,
+            tool_label=tool_label,
         )
         return {
             "run": updated_run.model_dump(mode="json"),
@@ -96,14 +98,24 @@ async def run_tool(payload: ToolRunRequest, request: Request, store: PostgresPla
             "warnings": result.warnings,
         }
     except NotFoundError as exc:
-        _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, exc=Exception(str(exc)))
+        _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, tool_label=tool_label, exc=Exception(str(exc)))
         raise
     except HTTPException as exc:
-        _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, exc=Exception(str(exc.detail)))
+        _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, tool_label=tool_label, exc=Exception(str(exc.detail)))
         raise
     except Exception as exc:
-        _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, exc=exc)
+        _record_tool_failure(store, run_id=run.id, tool_name=payload.tool_name, args=dict(payload.args), tool_kind=payload.tool_kind, tool_label=tool_label, exc=exc)
         raise HTTPException(
             status_code=400 if isinstance(exc, (ValueError, KeyError, JSONDecodeError, ValidationError)) else 503,
             detail=str(exc).strip() or f"Tool runner {payload.tool_name} failed: {exc.__class__.__name__}: {exc}",
         ) from exc
+
+
+def _resolve_tool_label(request: Request, payload: ToolRunRequest) -> str:
+    # 工具事件展示名只来自 registry metadata；未注册工具后续仍按原路径失败。
+    if payload.tool_kind != "registry":
+        return ""
+    try:
+        return str(request.app.state.tool_registry.get_definition(payload.tool_name).metadata.label)
+    except Exception:
+        return ""

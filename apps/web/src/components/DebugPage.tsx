@@ -406,7 +406,7 @@ export function DebugPage({
                   id="debug-layer-upload"
                   type="file"
                   accept=".geojson,.json,.gpkg,.zip,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
-                  hidden
+                  className="cc-file-hidden"
                   onChange={(event) => {
                     const file = event.target.files?.[0]
                     if (file) {

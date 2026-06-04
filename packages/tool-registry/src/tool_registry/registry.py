@@ -917,12 +917,28 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
             thread_id=runtime.context.thread_id,
         )
         message = f"Found {len(datasets)} weather dataset(s)." if datasets else "No weather datasets in current thread. Upload .nc/.tif/.grib files first."
+        value_refs = []
+        dataset_ids = [item.dataset_id for item in datasets]
+        if dataset_ids:
+            dataset_set_ref = ToolValueStore(runtime, source_tool="list_meteorological_datasets").put(
+                kind="weather_dataset_set",
+                label=f"当前线程气象数据集（{len(dataset_ids)} 个）",
+                value={"datasetIds": dataset_ids},
+                ref_id=make_value_ref_id("weather_dataset_set", runtime.context.thread_id, len(dataset_ids), *dataset_ids),
+                metadata={"datasetCount": len(dataset_ids), "threadId": runtime.context.thread_id},
+            )
+            value_refs = [dataset_set_ref]
         return ToolExecutionResult(
             message=message,
-            payload={"datasets": [item.model_dump(mode="json") for item in datasets]},
+            payload={
+                "datasets": [item.model_dump(mode="json") for item in datasets],
+                "datasetSetRef": value_refs[0].ref_id if value_refs else None,
+                "valueRefs": serialize_value_refs_for_model(value_refs),
+            },
             source="meteorological_store",
             provenance={"sessionId": runtime.context.session_id, "threadId": runtime.context.thread_id},
             feature_count=len(datasets),
+            value_refs=value_refs,
         )
 
     async def inspect_meteorological_dataset(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
@@ -1300,7 +1316,7 @@ def build_default_tool_definitions() -> list[ToolDefinition]:
         ToolDefinition("create_stat_chart", create_stat_chart, ToolMetadata("生成统计图表", "把统计结果渲染成美观的 PNG 图表 artifact，支持柱状图、折线图、饼图和散点图。适合展示数量排名、时间趋势、比例结构和统计摘要。", "visualization", ["chart", "statistics", "png"]), CreateStatChartArgs),
         ToolDefinition("symmetric_difference", symmetric_difference, ToolMetadata("对称差集", "计算两个图层的对称差集（XOR）。返回只在其中一个图层中存在、而不在两者交集中的区域。", "analysis", ["symmetric_difference", "overlay", "xor"]), SymmetricDifferenceArgs),
         ToolDefinition("publish_result_geojson", publish_result_geojson, ToolMetadata("导出为 GeoJSON", "把已有的分析结果导出为可下载、可在地图上展示的 GeoJSON 文件。", "output", ["export", "geojson"]), PublishResultGeojsonArgs),
-        ToolDefinition("list_meteorological_datasets", list_meteorological_datasets, ToolMetadata("列出气象数据集", "查看当前线程可用的气象数据集；未解析数据会在 inspect/render/stats 等工具消费时按需解析。", "meteorology", ["meteorology", "气象", "dataset"])),
+        ToolDefinition("list_meteorological_datasets", list_meteorological_datasets, ToolMetadata("列出气象数据集", "查看当前线程可用的气象数据集，并返回 dataset_set_ref 供短临序列工具直接引用；不要复制长 dataset id 列表。", "meteorology", ["meteorology", "气象", "dataset"])),
         ToolDefinition("inspect_meteorological_dataset", inspect_meteorological_dataset, ToolMetadata("检查气象数据集", "读取一个气象数据集的变量、时间、范围和解析警告。", "meteorology", ["meteorology", "气象", "metadata"]), InspectMeteorologicalDatasetArgs),
         ToolDefinition("interpret_meteorological_dataset", interpret_meteorological_dataset, ToolMetadata("解读 NC 气象数据", "基于气象 metadata、统计摘要和连续时次事实调用当前模型生成专业解读，并返回可手动选择的地图候选。", "meteorology", ["meteorology", "气象", "nc", "interpretation"]), InterpretMeteorologicalDatasetArgs),
         ToolDefinition("render_meteorological_raster", render_meteorological_raster, ToolMetadata("生成气象栅格图", "把 NetCDF/GRIB/HDF5/GeoTIFF 中的连续变量或解读工具产出的地图候选渲染成可叠加地图的 PNG 栅格图 artifact。", "meteorology", ["meteorology", "气象", "raster", "heatmap"]), RenderMeteorologicalRasterArgs),
@@ -1322,7 +1338,7 @@ class _SynthesizeSpeechArgs(ToolArgsModel):
 async def _synthesize_speech_handler(
     args: dict[str, Any], runtime: ToolRuntime,
 ) -> ToolExecutionResult:
-    """调用 ChatTTS 引擎将文本转为语音文件。"""
+    """准备语音播报文本，避免在 Agent 工具阶段同步等待 TTS。"""
     text = str(args.get("text", "")).strip()
     if not text:
         return ToolExecutionResult(
@@ -1333,50 +1349,29 @@ async def _synthesize_speech_handler(
     try:
         from pathlib import Path
         import hashlib
-        import json as _json
-        import shutil
-        from datetime import datetime, timezone
-
-        from media_tts import ChatTTSEngine
-
-        # 缓存结构: runtime/tts_cache/{hash}.wav + {hash}.txt + index.json
+        # 缓存结构: runtime/tts_cache/{hash}.wav + {hash}.txt + index.json。
+        #
+        # Agent 工具调用不能同步跑 ChatTTS：长文本和首次模型加载会阻塞整轮
+        # supervisor。这里仅检查缓存；未命中时把文本交给前端 VoiceBar 按需生成。
         text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         cache_dir = Path("runtime/tts_cache")
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_wav = cache_dir / f"{text_hash}.wav"
         cache_txt = cache_dir / f"{text_hash}.txt"
-        index_file = cache_dir / "index.json"
-
-        if not cache_wav.exists():
-            engine = ChatTTSEngine()
-            result = await engine.synthesize(text)
-            shutil.copy(result.audio_path, cache_wav)
+        if not cache_txt.exists():
             cache_txt.write_text(text, encoding="utf-8")
 
-            # 更新索引
-            index: dict = {}
-            if index_file.exists():
-                try:
-                    index = _json.loads(index_file.read_text(encoding="utf-8"))
-                except (_json.JSONDecodeError, OSError):
-                    index = {}
-            index[text_hash] = {
-                "text": text[:200],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "size_bytes": cache_wav.stat().st_size,
-            }
-            index_file.write_text(_json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        audio_url = f"/api/v1/media/tts/{text_hash}.wav"
+        cached = cache_wav.exists()
+        audio_url = f"/api/v1/media/tts/{text_hash}.wav" if cached else None
         return ToolExecutionResult(
-            message=f"语音已生成：{audio_url}",
-            payload={"audio_url": audio_url, "text_hash": text_hash, "text": text[:200]},
+            message="已准备语音播报。" if not cached else f"语音已生成：{audio_url}",
+            payload={
+                "audio_url": audio_url,
+                "cached": cached,
+                "text_hash": text_hash,
+                "text": text,
+            },
             source="media",
-        )
-    except ImportError:
-        return ToolExecutionResult(
-            message="ChatTTS 未安装，无法生成语音。请先 pip install ChatTTS。",
-            payload={}, source="media",
         )
     except Exception as exc:
         return ToolExecutionResult(

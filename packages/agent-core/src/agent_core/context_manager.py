@@ -1311,7 +1311,86 @@ def try_reactive_compact(
 
 
 # ===================================================================
-# 7. AgentContextManager — 对外公开的 Facade
+# 7. 辅助函数 — 安全路径解析与字段读取
+# ===================================================================
+
+
+def _resolve_safe_path(project_root: Path, rel_path: str) -> Path | None:
+    """将记忆文件路径安全解析到 project_root 内。
+
+    前导 / 被去除后作为相对路径处理；解析后的绝对路径必须在 project_root
+    子树内，否则返回 None 表示越界路径（调用方静默跳过）。
+
+    WHY: 显式记忆文件路径来自用户配置，不能允许 ../ 逃逸到 project_root 之外。
+    """
+    clean = rel_path.strip().lstrip("/")
+    if not clean:
+        return None
+    candidate = (project_root / clean).resolve()
+    try:
+        candidate.relative_to(project_root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _safe_get_field(obj: Any, field: str, default: Any = "") -> Any:
+    """安全获取字段值，兼容 Pydantic 对象和原生 dict。
+
+    build_repair_observation 需要同时处理 Pydantic ToolCall/ArtifactRef
+    和 dict 形式的 run_state 数据。
+    """
+    if isinstance(obj, dict):
+        return obj.get(field, default)
+    return getattr(obj, field, default)
+
+
+_REPAIR_CONTEXT_TOOLS = {"list_context_references", "search_thread_context"}
+_REPAIR_NOISE_TOOLS = {
+    *_REPAIR_CONTEXT_TOOLS,
+    "todo_write",
+    "task_create",
+    "task_list",
+    "task_update",
+}
+
+
+def _extract_deliverable_texts(run_state: Any) -> list[str]:
+    # 修正观察的可交付事实。
+    #
+    # forecast_text 是短临工具链的真实文本产出；即使后续重复搜索上下文，
+    # 它也必须稳定出现在 repair prompt 中，避免被最近工具窗口挤掉。
+    texts: list[str] = []
+    seen: set[str] = set()
+
+    def remember(ref: Any) -> None:
+        kind = _safe_get_field(ref, "kind", "")
+        value = _safe_get_field(ref, "value", "")
+        if kind != "forecast_text" or not isinstance(value, str):
+            return
+        normalized = " ".join(value.strip().split())
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        texts.append(normalized)
+
+    for ref in _safe_get_field(run_state, "tool_value_refs", []) or []:
+        remember(ref)
+    for tool_call in _safe_get_field(run_state, "tool_results", []) or []:
+        for ref in _safe_get_field(tool_call, "value_refs", []) or []:
+            remember(ref)
+    return texts[:6]
+
+
+def _clip_context_text(text: str, max_chars: int, marker: str) -> str:
+    """按字符上限截断上下文文本，保留头部事实边界。"""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}\n{marker}"
+
+
+# ===================================================================
+# 8. AgentContextManager — 对外公开的 Facade
 # ===================================================================
 
 class AgentContextManager:
@@ -1556,32 +1635,67 @@ class AgentContextManager:
         run_id: str,
         thread_id: str | None,
         query: str = "",
-        context_entries: list[Any] | None = None,
-        session_summary: str = "",
     ) -> ContextPacket:
         """构建实时上下文包，供 supervisor prompt 装配使用。
 
-        从线程上下文索引和记忆系统收集信息，构建一个包含 prompt 文本、
-        引用列表和上下文条目的包。
+        从线程上下文索引和显式记忆文件收集信息；不扫描旧 run/event 日志。
+        store 未实现 list_context_entries 时返回空上下文。
+
+        prompt 只注入上下文边界提示和条目数量，不泄露旧 artifactId、坐标、
+        label、summary 等具体历史事实。
 
         Args:
-            run_id: 运行 ID。
+            run_id: 当前运行 ID（用于排除自身产生的上下文条目）。
             thread_id: 线程 ID。
             query: 当前用户查询。
-            context_entries: 历史上下文条目列表。
-            session_summary: 会话摘要文本（用于 /resume 恢复时提供历史背景）。
         """
-        entries = context_entries or []
-        references = [getattr(e, "reference", None) for e in entries if getattr(e, "reference", None)]
-        sections: list[str] = []
+        # ---- 步骤 1: 从 store context index 读取历史条目 ----
+        entries: list[Any] = []
+        list_context_entries = getattr(self.store, "list_context_entries", None)
+        if thread_id and callable(list_context_entries):
+            entries = list(
+                list_context_entries(
+                    thread_id,
+                    limit=self.config.context_entry_window,
+                    exclude_source_run_id=run_id,
+                )
+            )
 
-        if session_summary:
-            sections.extend([
-                "## 会话历史摘要",
-                "",
-                session_summary.strip(),
-                "",
-            ])
+        # ---- 步骤 2: 构建引用列表（只暴露 reference 给装配器，不注入 prompt） ----
+        references = [
+            _safe_get_field(e, "reference", None)
+            for e in entries
+            if _safe_get_field(e, "reference", None) is not None
+        ]
+
+        # ---- 步骤 3: 读取显式记忆文件 ----
+        memory_sections: list[str] = []
+        for rel_path in self.config.memory_file_paths:
+            resolved = _resolve_safe_path(self.project_root, rel_path)
+            if resolved is None:
+                continue  # 越界路径静默跳过
+            if not resolved.exists():
+                continue
+            if not resolved.is_file():
+                continue
+            try:
+                raw = resolved.read_bytes()
+                content = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError(
+                    f"显式记忆文件不是有效 UTF-8：{resolved}"
+                ) from None
+            # 按字符限制截断
+            if len(content) > self.config.memory_file_char_limit:
+                content = _clip_context_text(
+                    content,
+                    self.config.memory_file_char_limit,
+                    "[... 记忆文件已截断 ...]",
+                )
+            memory_sections.append(f"## 记忆文件：{rel_path}\n\n{content}")
+
+        # ---- 步骤 4: 构建 prompt 上下文文本（不泄露具体历史事实） ----
+        sections: list[str] = []
 
         if entries:
             sections.extend([
@@ -1590,7 +1704,19 @@ class AgentContextManager:
                 "- 不要根据未展示的历史内容直接作答；只有用户明确要求延续、引用上一轮或复用已有数据时，先调用 list_context_references 或 search_thread_context。",
             ])
 
+        if memory_sections:
+            sections.extend(memory_sections)
+
         prompt_text = "\n".join(sections) if sections else ""
+
+        # ---- 步骤 5: 按 prompt_max_chars 截断 ----
+        if len(prompt_text) > self.config.prompt_max_chars:
+            prompt_text = _clip_context_text(
+                prompt_text,
+                self.config.prompt_max_chars,
+                "[... 上下文已截断 ...]",
+            )
+
         return ContextPacket(
             prompt_context=prompt_text,
             references=references,
@@ -1607,22 +1733,112 @@ class AgentContextManager:
     ) -> str:
         """构建校验失败后的修正观察文本。
 
-        参照 Agent SDK context_manager: buildRepairObservation()
+        使用 config 的 tool_call_window / artifact_window / warning_window
+        取最近条目；兼容 Pydantic 对象和 dict。输出按 prompt_max_chars 截断。
+
+        Args:
+            query: 用户原始查询。
+            validation_error: 校验失败错误。
+            run_state: AgentStateModel 或等效运行时状态。
+            packet: 上下文包（包含 prompt_context）。
         """
         reason = str(validation_error or "运行时校验未通过。")
+        final_format_repair = "最终答复" in reason or "结构化" in reason
         lines = [f"用户原始问题：{query}", f"上一轮结果边界未通过：{reason}"]
-        tool_results = getattr(run_state, "tool_results", []) or []
-        if tool_results:
-            lines.append("当前 run 已执行工具：")
-            for tr in tool_results[-5:]:
-                t = getattr(tr, "tool", "") or tr.get("tool", "") if isinstance(tr, dict) else ""
-                m = getattr(tr, "message", "") or tr.get("message", "") if isinstance(tr, dict) else ""
-                s = getattr(tr, "status", "") or tr.get("status", "") if isinstance(tr, dict) else ""
+        if final_format_repair:
+            lines.extend(
+                [
+                    "这是最终答复格式修正，不是新一轮分析。",
+                    "禁止再调用 list_context_references、search_thread_context 或其它工具；直接基于当前 run 已完成的工具事实输出最终答复。",
+                ]
+            )
+
+        deliverable_texts = _extract_deliverable_texts(run_state)
+        if deliverable_texts:
+            lines.append("当前 run 已产出的可交付文本（必须汇总进最终回答）：")
+            for text in deliverable_texts:
+                lines.append(f"- {text}")
+
+        # ---- 工具调用（取最近 tool_call_window 条） ----
+        raw_tools = _safe_get_field(run_state, "tool_results", []) or []
+        tool_window = getattr(self.config, "tool_call_window", 5)
+        recent_tools = (
+            raw_tools[-tool_window:] if len(raw_tools) > tool_window else raw_tools
+        )
+        business_tools = [
+            item
+            for item in raw_tools
+            if _safe_get_field(item, "tool", "") not in _REPAIR_NOISE_TOOLS
+        ]
+        recent_tools = (
+            business_tools[-tool_window:]
+            if business_tools
+            else raw_tools[-tool_window:] if len(raw_tools) > tool_window else raw_tools
+        )
+        context_lookup_count = sum(
+            1
+            for item in raw_tools
+            if _safe_get_field(item, "tool", "") in _REPAIR_CONTEXT_TOOLS
+        )
+        if context_lookup_count:
+            lines.append(f"当前 run 已调用上下文工具 {context_lookup_count} 次；不要继续重复搜索历史。")
+        if recent_tools:
+            lines.append("当前 run 已执行业务工具：")
+            for tr in recent_tools:
+                # 兼容 Pydantic ToolCall 对象和 dict
+                t = _safe_get_field(tr, "tool", "")
+                m = _safe_get_field(tr, "message", "")
+                s = _safe_get_field(tr, "status", "")
                 lines.append(f"- {t}: {m}（{s}）")
-        if packet.prompt_context:
+
+        # ---- 制品（取最近 artifact_window 条） ----
+        raw_artifacts = _safe_get_field(run_state, "artifacts", []) or []
+        artifact_window = getattr(self.config, "artifact_window", 3)
+        recent_artifacts = (
+            raw_artifacts[-artifact_window:]
+            if len(raw_artifacts) > artifact_window
+            else raw_artifacts
+        )
+        if recent_artifacts:
+            lines.append("已产出制品：")
+            for art in recent_artifacts:
+                name = _safe_get_field(art, "name", "")
+                atype = _safe_get_field(art, "artifact_type", "")
+                artifact_id = _safe_get_field(art, "artifact_id", "")
+                suffix = f"，artifactId={artifact_id}" if artifact_id else ""
+                lines.append(f"- {name}（{atype}）{suffix}")
+
+        # ---- 告警（取最近 warning_window 条） ----
+        raw_warnings = _safe_get_field(run_state, "warnings", []) or []
+        warning_window = getattr(self.config, "warning_window", 3)
+        recent_warnings = (
+            raw_warnings[-warning_window:]
+            if len(raw_warnings) > warning_window
+            else raw_warnings
+        )
+        if recent_warnings:
+            lines.append("系统告警：")
+            for w in recent_warnings:
+                # 告警字段可能是纯字符串或对象
+                lines.append(f"- {w}")
+
+        # ---- 组装并截断 ----
+        if packet.prompt_context and not final_format_repair:
             lines.extend(["可用线程上下文：", packet.prompt_context])
-        lines.extend(["请只基于以上事实修正结果。"])
-        return "\n".join(lines)
+        elif packet.prompt_context:
+            lines.append("线程上下文索引存在，但本轮只是最终答复格式修正，不要再搜索上下文。")
+
+        if final_format_repair:
+            lines.append('请只输出最终答复对象内容：summary 为中文完整结论，limitations 和 nextActions 为数组。不要输出过程说明。')
+        else:
+            lines.append("请只基于以上事实修正结果。")
+        result = "\n".join(lines)
+
+        max_chars = getattr(self.config, "prompt_max_chars", 4000)
+        if len(result) > max_chars:
+            result = _clip_context_text(result, max_chars, "[... 修正观察已截断 ...]")
+
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

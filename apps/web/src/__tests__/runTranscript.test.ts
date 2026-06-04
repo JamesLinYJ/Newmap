@@ -429,19 +429,19 @@ describe('tool events', () => {
     expect(toolEntries[1].toolName).toBe('geocode_place')
   })
 
-  it('rebuilds commandText for tool.completed from previous tool.started args', () => {
+  it('rebuilds commandText from toolLabel metadata and previous tool.started args', () => {
     const events: RunEvent[] = [
       makeEvent({
         type: 'tool.started',
         eventId: 'ts1',
         message: '',
-        payload: { tool: 'buffer', args: { distance: 500, unit: 'm' }, stepId: 's1' },
+        payload: { tool: 'buffer', toolLabel: '生成缓冲区', args: { distance: 500, unit: 'm' }, stepId: 's1' },
       }),
       makeEvent({
         type: 'tool.completed',
         eventId: 'tc1',
         message: '缓冲区完成',
-        payload: { tool: 'buffer', stepId: 's1' },
+        payload: { tool: 'buffer', toolLabel: '生成缓冲区', stepId: 's1' },
       }),
     ]
     const result = deriveRunTranscript({
@@ -450,8 +450,8 @@ describe('tool events', () => {
       artifacts: [],
     })
     const completedTool = result.find((e) => e.kind === 'tool' && e.status === 'completed')
-    expect(completedTool?.commandText).toContain('buffer')
-    // commandText should contain args from the started event
+    expect(completedTool?.commandText).toBe('> 生成缓冲区 distance=500 unit="m"')
+    // commandText 保留 started event 的参数，工具显示名来自事件元数据。
     expect(completedTool?.details?.args).toEqual({ distance: 500, unit: 'm' })
   })
 })
@@ -1055,6 +1055,7 @@ describe('deriveConversationEntries', () => {
     const result = deriveConversationEntries(transcript, 'completed', descriptors)
     const batch = result.find((e) => e.kind === 'command_batch')
     expect(batch?.commands?.[0].title).toBe('地理编码服务')
+    expect(batch?.commands?.[0].commandText).toBe('> 地理编码服务 query="上海"')
   })
 })
 
@@ -1236,7 +1237,7 @@ describe('clarification.required edge case', () => {
 // deriveRunTranscript — tool.completed with no args fallback
 // ---------------------------------------------------------------------------
 describe('tool.completed with missing args', () => {
-  it('falls back to toolName-only commandText when no args and no previous tool.started', () => {
+  it('uses a generic commandText when toolLabel metadata is missing', () => {
     const events: RunEvent[] = [
       makeEvent({
         type: 'tool.completed',
@@ -1251,8 +1252,8 @@ describe('tool.completed with missing args', () => {
       artifacts: [],
     })
     const toolEntry = result.find((e) => e.kind === 'tool')
-    // buildToolCommandText returns "> some_tool" even when args are absent
-    expect(toolEntry?.commandText).toBe('> some_tool')
+    // 元数据缺失时只显示通用工具调用。
+    expect(toolEntry?.commandText).toBe('> 工具调用')
   })
 })
 

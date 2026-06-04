@@ -78,10 +78,6 @@ interface ChatPanelProps {
   // 新增 — Task 面板
   tasks?: { id: string; content: string; status: string; activeForm: string }[]
 
-  // 新增 — Session 历史面板
-  sessions?: { id: string; title: string; created_at: string; latest_query: string; run_count: number }[]
-  onSelectSession?: (id: string) => void
-  onResumeSession?: (sessionId: string) => void
 }
 
 type MemoryEntry = {
@@ -90,7 +86,7 @@ type MemoryEntry = {
   age: string;
 }
 
-type TaskView = 'chat' | 'summary' | 'all'
+type TaskView = 'chat' | 'history'
 type TaskDialog = { mode: 'rename' | 'delete'; task: AgentThreadRecord } | null
 type ComposerMode = 'plan' | 'auto'
 const DIRECTORY_PICKER_PROPS = { webkitdirectory: '', directory: '' } as Record<string, string>
@@ -178,9 +174,6 @@ export function ChatPanel(props: ChatPanelProps) {
     onApprovePlan,
     onEditPlan,
     tasks: progressTasks,
-    sessions,
-    onSelectSession,
-    onResumeSession,
   } = props
   const [taskViewState, setTaskViewState] = useState<{ mode: TaskView; bound?: string }>({
     mode: 'chat',
@@ -190,7 +183,6 @@ export function ChatPanel(props: ChatPanelProps) {
   const [dialog, setDialog] = useState<TaskDialog>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [composing, setComposing] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const [clarificationDialogOpen, setClarificationDialogOpen] = useState(false)
   const [composerMode, setComposerMode] = useState<ComposerMode>('auto')
@@ -262,7 +254,6 @@ export function ChatPanel(props: ChatPanelProps) {
     el.scrollTop = el.scrollHeight
   }, [conversation])
 
-  const recentTasks = useMemo(() => sessionThreads.slice(0, 4), [sessionThreads])
   const filteredTasks = useMemo(() => {
     const keyword = search.trim().toLowerCase()
     if (!keyword) {
@@ -274,8 +265,8 @@ export function ChatPanel(props: ChatPanelProps) {
         .some((value) => value!.toLowerCase().includes(keyword)),
     )
   }, [search, sessionThreads])
-  const tasks = taskView === 'all' ? filteredTasks : recentTasks
-  const isTaskMode = taskView !== 'chat'
+  const tasks = filteredTasks
+  const isTaskMode = taskView === 'history'
   const showSamples = !isSubmitting && conversation.length === 0 && !isTaskMode
   const feedVariants = buildListVariants(reducedMotion, 0.02, 0.008)
   const entryVariants = buildListItemVariants(reducedMotion, 8)
@@ -406,8 +397,9 @@ export function ChatPanel(props: ChatPanelProps) {
             <span className="cc-timeline-dot" />
             <div className="cc-timeline-body">
               <VoiceBar
-                text={commands[0].body}
+                text={extractSpeechText(commands[0])}
                 messageId={entry.id}
+                initialAudioUrl={extractSpeechAudioUrl(commands[0])}
               />
             </div>
           </div>
@@ -508,15 +500,15 @@ export function ChatPanel(props: ChatPanelProps) {
             </div>
             <div className="cc-header-actions">
               {sessionThreads.length > 0 && (
-                <button className="cc-icon-button" aria-label="任务历史" onClick={() => setTaskView(taskView === 'chat' ? 'summary' : 'chat')}>
+                <button
+                  className="cc-icon-button"
+                  aria-label="历史会话"
+                  onClick={() => {
+                    setTaskView(taskView === 'chat' ? 'history' : 'chat')
+                  }}
+                >
                   <AppIcon name="history" size={15} />
                   <span>{taskView === 'chat' ? sessionThreads.length : '返回'}</span>
-                </button>
-              )}
-              {sessions && sessions.length > 0 && (
-                <button className="cc-icon-button" aria-label="历史会话" onClick={() => setShowHistory(!showHistory)}>
-                  <AppIcon name="history_edu" size={15} />
-                  <span>{showHistory ? '返回' : sessions.length}</span>
                 </button>
               )}
               <button className="cc-icon-button" aria-label="新建对话" onClick={onNewConversation}>
@@ -527,25 +519,17 @@ export function ChatPanel(props: ChatPanelProps) {
           </header>
 
           <AnimatePresence mode="wait" initial={false}>
-            {showHistory ? (
-              <m.section key="sessions" className="cc-session-view" aria-label="历史会话" layout {...buildFadeUpMotion(reducedMotion, 0, 16)}>
-                <ProgressSessionPanel
-                  sessions={sessions ?? []}
-                  onSelectSession={onSelectSession}
-                  onResume={onResumeSession}
-                />
-              </m.section>
-            ) : isTaskMode ? (
-              <m.section key={`tasks-${taskView}`} className="cc-task-view" aria-label="任务列表" layout {...buildFadeUpMotion(reducedMotion, 0, 16)}>
+            {isTaskMode ? (
+              <m.section key="history" className="cc-task-view" aria-label="历史会话" layout {...buildFadeUpMotion(reducedMotion, 0, 16)}>
                 <div className="cc-task-top">
-                  <button className="cc-back-button" onClick={() => (taskView === 'all' ? setTaskView('summary') : setTaskView('chat'))}>
+                  <button className="cc-back-button" onClick={() => setTaskView('chat')}>
                     <AppIcon name="arrow_back" size={15} />
-                    {taskView === 'all' ? '最近' : '关闭'}
+                    返回
                   </button>
-                  <strong>{taskView === 'all' ? '全部任务' : '最近任务'}</strong>
+                  <strong>历史会话</strong>
                   <span>{sessionThreads.length} 个</span>
                 </div>
-                {taskView === 'all' && <input className="cc-task-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索任务" />}
+                <input className="cc-task-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索会话..." />
                 <m.div className="cc-task-list" variants={feedVariants} initial="hidden" animate="visible" layout>
                   {tasks.length ? (
                     tasks.map((task) => (
@@ -558,9 +542,13 @@ export function ChatPanel(props: ChatPanelProps) {
                             setSearch('')
                           }}
                         >
-                          <span>
+                          <span className="cc-task-row__main">
                             <strong>{task.title}</strong>
                             <small>{task.historyPreview || task.latestUserQuery || '暂无摘要'}</small>
+                          </span>
+                          <span className="cc-task-row__meta">
+                            {formatSessionDate(task.updatedAt)}
+                            <small>{task.runCount} 次运行</small>
                           </span>
                         </button>
                         <div className="cc-task-actions">
@@ -574,14 +562,9 @@ export function ChatPanel(props: ChatPanelProps) {
                       </div>
                     ))
                   ) : (
-                    <div className="cc-empty">没有匹配的任务</div>
+                    <div className="cc-empty">没有匹配的会话</div>
                   )}
                 </m.div>
-                {taskView === 'summary' && sessionThreads.length > recentTasks.length && (
-                  <button className="cc-view-all" onClick={() => setTaskView('all')}>
-                    查看全部 {sessionThreads.length} 个任务
-                  </button>
-                )}
               </m.section>
             ) : (
               <m.div key={`chat-${currentRunId ?? 'idle'}`} className="cc-chat-mode" layout {...buildFadeMotion(reducedMotion)}>
@@ -695,7 +678,7 @@ export function ChatPanel(props: ChatPanelProps) {
               <input
                 id="chat-file-upload"
                 type="file"
-                hidden
+                className="cc-file-hidden"
                 multiple
                 accept=".geojson,.json,.gpkg,.zip,.nc,.nc4,.tif,.tiff,.grib,.grb,.grb2,.h5,.hdf5,.bz2"
                 onChange={(event) => {
@@ -712,7 +695,7 @@ export function ChatPanel(props: ChatPanelProps) {
               <input
                 id="chat-folder-upload"
                 type="file"
-                hidden
+                className="cc-file-hidden"
                 multiple
                 {...DIRECTORY_PICKER_PROPS}
                 onChange={(event) => {
@@ -1168,61 +1151,6 @@ function TaskPanel({ tasks, entryVariants }: {
   )
 }
 
-function ProgressSessionPanel({ sessions, onSelectSession, onResume }: {
-  sessions: NonNullable<ChatPanelProps['sessions']>
-  onSelectSession?: (id: string) => void
-  onResume?: (sessionId: string) => void
-}) {
-  const [search, setSearch] = useState('')
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase()
-    if (!keyword) return sessions
-    return sessions.filter(s =>
-      s.title.toLowerCase().includes(keyword) ||
-      s.latest_query.toLowerCase().includes(keyword)
-    )
-  }, [sessions, search])
-
-  return (
-    <div className="cc-session-panel">
-      <div className="cc-session-panel__header">
-        <strong>历史会话</strong>
-        <span className="text-[12px] text-[#6e7781]">{sessions.length} 个</span>
-      </div>
-      <input
-        className="cc-session-panel__search"
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        placeholder="搜索会话..."
-      />
-      <div className="cc-session-panel__list">
-        {filtered.length > 0 ? filtered.map(session => (
-          <div key={session.id} className="cc-session-item">
-            <div className="cc-session-item__info">
-              <strong className="cc-session-item__title">{session.title || '未命名会话'}</strong>
-              <span className="cc-session-item__query">{session.latest_query || '暂无查询记录'}</span>
-            </div>
-            <div className="cc-session-item__meta">
-              <span>{formatSessionDate(session.created_at)}</span>
-              <span>{session.run_count} 次运行</span>
-            </div>
-            <div className="cc-session-item__actions">
-              {onSelectSession && (
-                <button className="cc-mini-button" onClick={() => onSelectSession(session.id)}>查看</button>
-              )}
-              {onResume && (
-                <button className="cc-mini-button cc-mini-button--primary" onClick={() => onResume(session.id)}>恢复</button>
-              )}
-            </div>
-          </div>
-        )) : (
-          <div className="cc-session-empty">没有匹配的会话</div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 function formatTaskStatus(status: string) {
   if (status === 'pending') return '待处理'
   if (status === 'in_progress' || status === 'running') return '进行中'
@@ -1310,6 +1238,36 @@ function formatReferenceKind(kind: DataReferenceSummary['kind']) {
   if (kind === 'weather') return '气象'
   if (kind === 'artifact') return '结果'
   return '图层'
+}
+
+function extractSpeechText(command: ConversationCommand) {
+  const result = command.details?.result
+  if (isRecord(result)) {
+    const text = stringOrNull(result.text)
+    if (text) return text
+  }
+  const args = command.details?.args
+  if (isRecord(args)) {
+    const text = stringOrNull(args.text)
+    if (text) return text
+  }
+  return command.body
+}
+
+function extractSpeechAudioUrl(command: ConversationCommand) {
+  const result = command.details?.result
+  if (isRecord(result)) {
+    return stringOrNull(result.audio_url ?? result.audioUrl)
+  }
+  return stringOrNull(command.details?.audio_url ?? command.details?.audioUrl)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value : null
 }
 
 function isThoughtEntry(entry: ConversationEntry) {

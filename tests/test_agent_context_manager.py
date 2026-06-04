@@ -30,6 +30,7 @@ from shared_types.schemas import (
     RuntimeContextConfig,
     ThreadContextRecord,
     ToolCall,
+    ToolValueRef,
 )
 from api_app.platform_store import PostgresPlatformStore
 
@@ -132,6 +133,57 @@ def test_repair_observation_is_bounded_and_fact_based(tmp_path):
     assert "新告警" in packet
     assert "旧告警" not in packet
     assert len(packet) <= config.prompt_max_chars + 40
+
+
+def test_final_response_repair_uses_current_nowcast_texts_not_history_search(tmp_path):
+    # 最终答复格式修正不是新一轮检索。
+    #
+    # 短临问答文本已经是当前 run 的 forecast_text valueRef；repair prompt
+    # 必须稳定携带它，并禁止继续 search_thread_context 刷历史。
+    config = RuntimeContextConfig(
+        memory_file_paths=[],
+        prompt_max_chars=1200,
+        tool_call_window=2,
+        artifact_window=1,
+        warning_window=1,
+    )
+    forecast_ref = ToolValueRef(
+        ref_id="value:forecast:qa",
+        kind="forecast_text",
+        label="短临问答文本",
+        value="市民中心未来三小时不会下雨，您可以放心出门。",
+        source_tool="answer_nowcast_question",
+    )
+    state = AgentStateModel(
+        session_id="session_test",
+        user_query="生成杭州短临预报并回答市民中心天气。",
+        tool_value_refs=[forecast_ref],
+        tool_results=[
+            ToolCall(step_id="analysis", tool="analyze_nowcast_precipitation", args={}, status="completed", message="已完成短临降水分析。"),
+            ToolCall(step_id="answer", tool="answer_nowcast_question", args={}, status="completed", message="市民中心未来三小时不会下雨，您可以放心出门。", value_refs=[forecast_ref]),
+            ToolCall(step_id="search1", tool="search_thread_context", args={"query": "nowcast"}, status="completed", message="已检索当前对话上下文，找到 0 条相关记录。"),
+            ToolCall(step_id="search2", tool="search_thread_context", args={"query": "forecast"}, status="completed", message="已检索当前对话上下文，找到 0 条相关记录。"),
+        ],
+    )
+
+    packet = AgentContextManager(
+        store=object(),
+        config=config,
+        project_root=tmp_path,
+    ).build_repair_observation(
+        query=state.user_query,
+        validation_error=RuntimeError("OpenAI Agents SDK 没有产出合格的结构化最终答复。"),
+        run_state=state,
+        packet=_FakePacket("当前线程有 2 个已索引的历史上下文对象"),
+    )
+
+    assert "这是最终答复格式修正，不是新一轮分析" in packet
+    assert "禁止再调用 list_context_references、search_thread_context" in packet
+    assert "市民中心未来三小时不会下雨" in packet
+    assert "answer_nowcast_question" in packet
+    assert "analyze_nowcast_precipitation" in packet
+    assert "当前 run 已调用上下文工具 2 次" in packet
+    assert "可用线程上下文：" not in packet
 
 
 def test_run_context_projection_creates_executable_entries():

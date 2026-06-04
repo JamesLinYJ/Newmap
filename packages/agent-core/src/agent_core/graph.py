@@ -24,6 +24,7 @@ from typing import Any
 try:
     from agents import (
         Agent,
+        AgentsException,
         FunctionTool,
         GuardrailFunctionOutput,
         ModelSettings,
@@ -39,6 +40,7 @@ try:
     from openai.types.responses import ResponseCompletedEvent, ResponseFunctionToolCall, ResponseOutputMessage
 except ModuleNotFoundError:  # pragma: no cover - exercised by deployment smoke checks.
     Agent = FunctionTool = GuardrailFunctionOutput = ModelSettings = OpenAIChatCompletionsModel = OutputGuardrailTripwireTriggered = RawResponsesStreamEvent = None  # type: ignore[assignment]
+    AgentsException = Exception  # type: ignore[assignment]
     RunConfig = Runner = RunState = output_guardrail = None  # type: ignore[assignment]
     AsyncOpenAI = None  # type: ignore[assignment]
     ResponseCompletedEvent = ResponseFunctionToolCall = ResponseOutputMessage = None  # type: ignore[assignment]
@@ -62,10 +64,11 @@ from shared_types.schemas import (
     RunEvent,
     SubAgentState,
     ToolCall,
+    ToolValueRef,
     UserIntent,
 )
 from tool_registry import ToolRegistry, ToolRuntime, ToolExecutionResult
-from tool_registry.value_refs import serialize_value_refs_for_model
+from tool_registry.value_refs import make_value_ref_id, remember_value_ref, serialize_value_refs_for_model
 
 from .context_manager import (
     AgentContextManager, ContextPacket,
@@ -131,9 +134,14 @@ if OpenAIChatCompletionsModel is not None:
         async def stream_response(self, *args: Any, **kwargs: Any):
             async for event in super().stream_response(*args, **kwargs):
                 if ResponseCompletedEvent is not None and isinstance(event, ResponseCompletedEvent):
-                    normalized_response = event.response.model_copy(
-                        update={"output": _normalize_chat_completions_tool_output_order(list(event.response.output))}
-                    )
+                    raw_response = event.response
+                    if isinstance(raw_response, dict):
+                        normalized_output = _normalize_chat_completions_tool_output_order(list(raw_response.get("output", [])))
+                        normalized_response = {**raw_response, "output": normalized_output}
+                    else:
+                        normalized_response = raw_response.model_copy(
+                            update={"output": _normalize_chat_completions_tool_output_order(list(raw_response.output))}
+                        )
                     yield event.model_copy(update={"response": normalized_response})
                     continue
                 yield event
@@ -167,6 +175,14 @@ def _infer_clarification_kind(options: list[ClarificationOption]) -> str:
     # 让前端按每个 option 自己的 kind 渲染，不在这里猜业务含义。
     kinds = {item.kind for item in options if item.kind}
     return next(iter(kinds)) if len(kinds) == 1 else "generic"
+
+
+class _ClarificationRequested(AgentsException):  # type: ignore[misc, valid-type]
+    # request_clarification 是人工输入边界。
+    #
+    # 工具一旦写入 clarification state，本轮 SDK loop 必须停止等待用户，
+    # 不能继续把后续工具结果和澄清请求混在同一次交付里。
+    pass
 
 
 # 最终摘要质量判定
@@ -205,6 +221,13 @@ def _format_tool_observation(*, tool_name: str, result: Any) -> str:
             "artifactId": getattr(getattr(result, "artifact", None), "artifact_id", None),
             "featureCount": payload.get("featureCount") or payload.get("feature_count") or getattr(result, "feature_count", None),
         }
+        deliverable_texts = [
+            {"refId": ref.ref_id, "label": ref.label, "text": ref.value}
+            for ref in value_refs
+            if ref.kind == "forecast_text" and isinstance(ref.value, str) and ref.value.strip()
+        ]
+        if deliverable_texts:
+            compact_payload["deliverableTexts"] = deliverable_texts
     if tool_name == "list_context_references":
         compact_payload = {"references": payload.get("references", [])[:12]}
     elif tool_name == "search_thread_context":
@@ -540,6 +563,8 @@ class GeoAgentRuntime:
             initial_state = self.store.get_run(run_id).state
             runtime.state.plan_mode = execution_mode == "plan" or initial_state.plan_mode
             runtime.state.todos = [item.model_dump(mode="json", by_alias=True) for item in initial_state.todos]
+            for value_ref in initial_state.tool_value_refs:
+                remember_value_ref(runtime, value_ref)
         except Exception:
             runtime.state.plan_mode = execution_mode == "plan"
 
@@ -801,12 +826,15 @@ class GeoAgentRuntime:
         query: str,
         latest_uploaded_layer_key: str | None,
         clarification_option_id: str | None = None,
-    ) -> tuple[UserIntent, str | None]:
+    ) -> tuple[UserIntent, dict[str, Any] | None]:
         # 运行时意图解析入口。
         #
-        # 默认按当前 query 直接解析；只有前端显式提交 optionId 时，
-        # 才把本轮视为上一轮澄清的结构化选择。
-        # 普通文本由 Agent SDK 自己结合上下文判断，不再靠 label 模糊匹配。
+        # 默认按当前 query 直接解析；只有前端显式提交 optionId 或检测到
+        # 上一轮停在 clarification_needed 时才把本轮视为澄清续跑。
+        #
+        # 澄清续跑返回 (continued_intent, continuation_dict)。
+        # 模型输入由 _build_clarification_continuation_prompt 单独组装，
+        # 确保包含原始任务、上一轮澄清问题、用户选择和已确认的解析事实。
         continuation = self._match_clarification_continuation(
             run_id=run_id,
             thread_id=thread_id,
@@ -852,8 +880,8 @@ class GeoAgentRuntime:
                     candidates=[selected_candidate],
                 ),
             )
-        note = f"已接收澄清结果，并继续沿用上一轮任务目标：{continuation['parent_query']}"
-        return continued_intent, note
+        continuation["continued_intent"] = continued_intent
+        return continued_intent, continuation
 
     def _match_clarification_continuation(
         self,
@@ -875,7 +903,8 @@ class GeoAgentRuntime:
         if previous_run is None:
             return None
 
-        previous_intent = previous_run.state.parsed_intent
+        root_run = self._find_clarification_root_run(previous_run, runs)
+        previous_intent = root_run.state.parsed_intent or previous_run.state.parsed_intent
         previous_clarification = previous_run.state.clarification
         if previous_run.status != "clarification_needed":
             return None
@@ -913,7 +942,8 @@ class GeoAgentRuntime:
 
         return {
             "parent_run_id": previous_run.id,
-            "parent_query": previous_run.user_query,
+            "parent_query": root_run.user_query,
+            "immediate_parent_query": previous_run.user_query,
             "parent_intent": previous_intent,
             "parent_question": previous_clarification.question if previous_clarification else previous_intent.clarification_question,
             "parent_options": options,
@@ -921,8 +951,43 @@ class GeoAgentRuntime:
             "selected_label": selected_label,
             "selected_option_id": (selected_option.option_id or selected_option.label) if selected_option else selected_label,
             "selected_kind": selected_option.kind if selected_option else None,
+            "selected_payload": selected_option.payload if selected_option else {},
             "selected_candidate": selected_candidate,
         }
+
+    def _find_clarification_root_run(self, pending_run: Any, runs: list[Any]) -> Any:
+        # 澄清链根任务追溯。
+        #
+        # 用户可能连续确认多个候选；每次确认都会创建一个新 run，user_query
+        # 只是选项文本。这里沿着“当前 run 的输入匹配更早 waiting run 的候选”
+        # 往前追，保证续跑目标始终回到用户最初的复合任务。
+        root = pending_run
+        while True:
+            older_runs = [
+                item
+                for item in runs
+                if item.id != root.id and getattr(item, "created_at", None) and getattr(root, "created_at", None)
+                and item.created_at < root.created_at
+            ]
+            parent = next((item for item in older_runs if self._run_query_matches_pending_clarification(root.user_query, item)), None)
+            if parent is None:
+                return root
+            root = parent
+
+    def _run_query_matches_pending_clarification(self, query: str, run: Any) -> bool:
+        clarification = getattr(getattr(run, "state", None), "clarification", None)
+        intent = getattr(getattr(run, "state", None), "parsed_intent", None)
+        if getattr(run, "status", "") != "clarification_needed":
+            return False
+        if clarification is not None and clarification.selected_option_id is not None:
+            return False
+        options = (
+            intent.clarification_options
+            if intent is not None and intent.clarification_required and intent.clarification_options
+            else clarification.options if clarification is not None else []
+        )
+        normalized_query = _normalize_clarification_label(query)
+        return any(_normalize_clarification_label(item.label) == normalized_query for item in options)
 
     def _match_clarification_option(
         self,
@@ -972,6 +1037,207 @@ class GeoAgentRuntime:
             unique.append(candidate)
         return unique[0] if len(unique) == 1 else None
 
+    def _remember_clarification_coordinate_ref(
+        self,
+        *,
+        runtime: ToolRuntime,
+        run_id: str,
+        continuation: dict[str, Any],
+    ) -> str | None:
+        # 澄清选项坐标黑板化。
+        #
+        # 地点候选来自上一轮 geocode_place 的工具事实。用户点选后，
+        # 当前 run 需要一个新的 coordinate valueRef，后续 nowcast 工具才能按
+        # valueRef 边界继续执行，而不是让模型手抄经纬度。
+        selected_payload = continuation.get("selected_payload")
+        existing_ref_id = self._extract_clarification_coordinate_ref_id(selected_payload)
+        if existing_ref_id:
+            existing_ref = self._find_clarification_value_ref(run_id=run_id, continuation=continuation, ref_id=existing_ref_id)
+            if existing_ref is not None:
+                remember_value_ref(runtime, existing_ref)
+                state = self.store.get_run(run_id).state
+                refs = [item for item in state.tool_value_refs if item.ref_id != existing_ref.ref_id]
+                self.store.update_run_state(run_id, tool_value_refs=[*refs, existing_ref])
+                return existing_ref.ref_id
+        candidate = continuation.get("selected_candidate")
+        if not isinstance(candidate, PlaceSearchCandidate):
+            return None
+        if candidate.latitude is None or candidate.longitude is None:
+            return None
+        label = continuation.get("selected_label") or candidate.display_name or candidate.label
+        ref = ToolValueRef(
+            ref_id=make_value_ref_id("coordinate", "clarification", continuation.get("selected_option_id"), label),
+            kind="coordinate",
+            label=str(label),
+            value={"lat": float(candidate.latitude), "lng": float(candidate.longitude), "label": str(label)},
+            source_tool="request_clarification",
+            metadata={
+                "clarificationParentRunId": continuation.get("parent_run_id"),
+                "selectedOptionId": continuation.get("selected_option_id"),
+                "displayName": candidate.display_name,
+                "source": candidate.source,
+            },
+            created_at=now_utc(),
+        )
+        remember_value_ref(runtime, ref)
+        state = self.store.get_run(run_id).state
+        refs = [item for item in state.tool_value_refs if item.ref_id != ref.ref_id]
+        self.store.update_run_state(run_id, tool_value_refs=[*refs, ref])
+        return ref.ref_id
+
+    @staticmethod
+    def _extract_clarification_coordinate_ref_id(payload: Any) -> str | None:
+        # 澄清选项 payload 的坐标引用契约。
+        #
+        # 前端和工具模型里可能分别使用 coordinate_ref / coordinateRef；
+        # 通用 valueRef 表示“这个选项本身就是一个工具值引用”。这里只接受
+        # 明确的结构化字段，不从 label、经纬度文本或历史摘要里猜。
+        if not isinstance(payload, dict):
+            return None
+        ref_id = str(
+            payload.get("coordinate_ref")
+            or payload.get("coordinateRef")
+            or payload.get("valueRef")
+            or ""
+        ).strip()
+        return ref_id or None
+
+    def _find_clarification_value_ref(self, *, run_id: str, continuation: dict[str, Any], ref_id: str) -> ToolValueRef | None:
+        # 复用上一轮候选携带的 valueRef。
+        #
+        # request_clarification 的 option payload 可以直接包含 coordinate_ref。
+        # 用户选择后，新 run 要把这个旧引用装回当前 runtime 黑板，否则后续工具
+        # 会因为找不到 ref 而被迫重新地理编码。
+        run_ids = [run_id, str(continuation.get("parent_run_id") or "")]
+        for candidate_run_id in run_ids:
+            if not candidate_run_id:
+                continue
+            try:
+                state = self.store.get_run(candidate_run_id).state
+            except Exception:
+                continue
+            for value_ref in state.tool_value_refs:
+                if value_ref.ref_id == ref_id:
+                    return value_ref
+        return None
+
+    @staticmethod
+    def _build_clarification_continuation_prompt(
+        *,
+        continuation: dict[str, Any],
+        current_query: str,
+        coordinate_ref: str | None,
+    ) -> str:
+        # 澄清续跑输入。
+        #
+        # 模型本轮看到的是完整任务恢复包，而不是用户刚点击的短标签；
+        # 这样子智能体才能把地点确认结果汇入原始复合任务。
+        lines = [
+            "## 澄清续跑",
+            f"原始任务：{continuation.get('parent_query') or current_query}",
+            f"上一轮需要确认：{continuation.get('parent_question') or '请选择一个候选项。'}",
+            f"用户已选择：{continuation.get('selected_label') or current_query}",
+            "",
+            "请继续完成原始任务中尚未交付的全部内容，不要把用户选择当成一个新的孤立问题。",
+            "如果这是同一地点的澄清结果，不要再次 request_clarification；除非出现新的、不同的歧义。",
+        ]
+        if coordinate_ref:
+            lines.extend(
+                [
+                    "",
+                    "## 已确认地点引用",
+                    f"- coordinate_ref: {coordinate_ref}",
+                    "- 地点天气、短临降水等后续工具必须直接使用这个 coordinate_ref。",
+                ]
+            )
+        selected_candidate = continuation.get("selected_candidate")
+        if isinstance(selected_candidate, PlaceSearchCandidate):
+            lines.extend(
+                [
+                    "",
+                    "## 已确认地点候选",
+                    f"- 名称: {selected_candidate.display_name or selected_candidate.label}",
+                    f"- 来源: {selected_candidate.source or 'geocode_place'}",
+                ]
+            )
+        return "\n".join(lines).strip()
+
+    @classmethod
+    def _build_clarification_final_response(cls, state: AgentStateModel) -> AgentFinalResponse:
+        question = state.clarification.question if state.clarification else "请确认下一步。"
+        delivered = cls._extract_delivered_nowcast_texts(state)
+        if delivered:
+            summary = "已完成的短临结果：\n" + "\n".join(f"- {item}" for item in delivered)
+            summary = f"{summary}\n\n还需要你确认：{question}"
+        else:
+            summary = question
+        options = [option.label for option in state.clarification.options] if state.clarification else []
+        return AgentFinalResponse(summary=summary, limitations=[], next_actions=options or ["补充说明"])
+
+    @staticmethod
+    def _extract_delivered_nowcast_texts(state: AgentStateModel) -> list[str]:
+        # 子智能体文本汇总。
+        #
+        # nowcast 文本工具会把真实回答写入 forecast_text valueRef；最终等待澄清时
+        # 仍要把这些已完成事实交给用户，不能只剩一个澄清问题。
+        delivered: list[str] = []
+        seen: set[str] = set()
+        for ref in state.tool_value_refs:
+            if ref.kind != "forecast_text" or not isinstance(ref.value, str):
+                continue
+            normalized = " ".join(str(ref.value).strip().split())
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            delivered.append(normalized)
+        for call in state.tool_results:
+            if call.status != "completed" or call.tool not in {"answer_nowcast_question", "generate_nowcast_forecast_text"}:
+                continue
+            candidates: list[str] = []
+            for ref in call.value_refs:
+                if ref.kind == "forecast_text" and isinstance(ref.value, str):
+                    candidates.append(ref.value)
+            if not candidates and call.tool == "answer_nowcast_question":
+                candidates.append(call.message)
+            for text in candidates:
+                normalized = " ".join(str(text).strip().split())
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                delivered.append(normalized)
+        return delivered[:3]
+
+    @classmethod
+    def _final_response_includes_delivered_nowcast(cls, final_response: AgentFinalResponse, state: AgentStateModel) -> bool:
+        # 短临最终交付边界。
+        #
+        # 子智能体会把真实问答/预报写入 forecast_text valueRef，并通过
+        # tool_result observation 回灌给模型。最终回答必须由模型自己汇总这些
+        # 文本；运行时只校验，不替模型拼接。
+        delivered = cls._extract_delivered_nowcast_texts(state)
+        if not delivered:
+            return True
+        summary = final_response.summary.strip()
+        return all(text[:24] in summary for text in delivered)
+
+    @staticmethod
+    def _complete_todos_for_success(state: AgentStateModel) -> list[Any] | None:
+        # 成功完成态 Todo 收口。
+        #
+        # todo_write 是模型可见的进度工具，但模型有时完成所有业务工具后
+        # 直接输出最终答复，不会再调用一次 todo_write。运行时完成边界已经
+        # 证明任务可交付，此时把遗留 pending/running todo 收口为 completed，
+        # 避免 UI 停在旧的执行中状态。
+        if not state.todos:
+            return None
+        if state.errors:
+            return None
+        if any(item.status == "pending" for item in state.approvals):
+            return None
+        if state.clarification and state.clarification.selected_option_id is None:
+            return None
+        return [item.model_copy(update={"status": "completed"}) for item in state.todos]
+
     async def _run_with_oai_agents(
         self,
         *,
@@ -999,10 +1265,33 @@ class GeoAgentRuntime:
         )
         # 初始化运行时统计
         self.stats = RuntimeStats(run_id=run_id)
-        intent, continuation_note = self._build_effective_intent(
+        intent, clarification_continuation = self._build_effective_intent(
             run_id=run_id, thread_id=thread_id, query=query,
             latest_uploaded_layer_key=runtime.context.latest_uploaded_layer_key,
             clarification_option_id=clarification_option_id,
+        )
+        continuation_coordinate_ref = (
+            self._remember_clarification_coordinate_ref(
+                runtime=runtime,
+                run_id=run_id,
+                continuation=clarification_continuation,
+            )
+            if clarification_continuation
+            else None
+        )
+        continuation_note = (
+            f"已接收澄清结果，并继续沿用上一轮任务目标：{clarification_continuation['parent_query']}"
+            if clarification_continuation
+            else None
+        )
+        model_query = (
+            self._build_clarification_continuation_prompt(
+                continuation=clarification_continuation,
+                current_query=query,
+                coordinate_ref=continuation_coordinate_ref,
+            )
+            if clarification_continuation
+            else query
         )
         self.store.update_run_state(run_id, parsed_intent=intent, loop_phase=LOOP_PHASES["observe"])
         if execution_mode == "plan":
@@ -1015,7 +1304,7 @@ class GeoAgentRuntime:
         # 组装；不再从 .geoagent/transcripts 读取 session_summary 自动注入。
         # session_transcript.py 保留为遗留模块，仅用于 JSONL 事后序列化。
         context_packet = context_manager.build_live_packet(
-            run_id=run_id, thread_id=thread_id, query=query,
+            run_id=run_id, thread_id=thread_id, query=model_query,
         )
         # 初始化工具结果预算追踪和自动压缩追踪状态
         tool_result_budget = ToolResultBudget(max_tokens=80000)
@@ -1029,7 +1318,7 @@ class GeoAgentRuntime:
             selected_data_sources=_collect_selected_data_sources(plan), plan_repair_attempts=0,
             text_only_delivery=plan.goal in {"text_only_delivery", "missing_data_sources"},
             context_references=context_packet.references,
-            context_resolution=ContextResolution(status="observed", query=query, candidates=context_packet.references),
+            context_resolution=ContextResolution(status="observed", query=model_query, candidates=context_packet.references),
             sub_agents=[], loop_phase=LOOP_PHASES["observe"],
         )
         self._append_event(run_id, thread_id, EventType.PLAN_READY, "已交给 Agent 决策。", payload=plan.model_dump(mode="json"))
@@ -1040,7 +1329,7 @@ class GeoAgentRuntime:
             model_name=model_name,
             run_id=run_id,
             thread_id=thread_id,
-            query=query,
+            query=model_query,
             intent=intent,
             plan=plan,
             available_layers=available_layers,
@@ -1070,10 +1359,10 @@ class GeoAgentRuntime:
                 # —— user_context 描述的是用户的环境信息，属于"用户侧"上下文，
                 # 放在 user message 开头可以让模型在阅读用户问题之前先了解环境背景。
                 user_ctx = getattr(getattr(self, '_last_prompt_parts', None), 'user_context', '')
-                repair_input = f"{user_ctx}\n\n{query}" if user_ctx else query
+                repair_input = f"{user_ctx}\n\n{model_query}" if user_ctx else model_query
             else:
                 repair_input = context_manager.build_repair_observation(
-                    query=query,
+                    query=model_query,
                     validation_error=validation_error,
                     run_state=self.store.get_run(run_id).state,
                     packet=context_packet,
@@ -1086,7 +1375,7 @@ class GeoAgentRuntime:
             if current_state_for_compact is not None:
                 conversation_msgs = _build_messages_for_compression(
                     supervisor=supervisor,
-                    query=query,
+                    query=model_query,
                     repair_input=repair_input,
                     state=current_state_for_compact,
                     context_prompt=context_packet.prompt_context,
@@ -1154,8 +1443,12 @@ class GeoAgentRuntime:
 
             @_guardrail_retry
             async def _stream_with_retry():
+                active_supervisor = self._build_delivery_repair_supervisor(
+                    supervisor,
+                    validation_error=validation_error,
+                )
                 _streaming = Runner.run_streamed(
-                    supervisor, repair_input,
+                    active_supervisor, repair_input,
                     max_turns=runtime_config.max_turns,
                     run_config=run_config,
                 )
@@ -1170,6 +1463,11 @@ class GeoAgentRuntime:
 
             try:
                 streaming, final_summary = await _stream_with_retry()
+            except _ClarificationRequested:
+                current_state = self.store.get_run(run_id).state
+                final_response = self._build_clarification_final_response(current_state)
+                validation_error = None
+                break
             except OutputGuardrailTripwireTriggered as exc:
                 # guardrail 重试已达上限 -> 永久失败
                 guardrail_error = self._extract_output_guardrail_error(exc) or "结果边界校验未通过。"
@@ -1240,7 +1538,7 @@ class GeoAgentRuntime:
                 if any(item.status == "pending" for item in current_state.approvals):
                     final_response = AgentFinalResponse(summary="分析结果已生成，需要你确认是否发布到地图服务。", limitations=current_state.warnings, next_actions=["确认发布", "先在地图上看看", "下载 GeoJSON"])
                 elif current_state.clarification and current_state.clarification.selected_option_id is None:
-                    final_response = AgentFinalResponse(summary=current_state.clarification.question, limitations=[], next_actions=[option.label for option in current_state.clarification.options] or ["补充说明"])
+                    final_response = self._build_clarification_final_response(current_state)
                 else:
                     final_response = self._coerce_sdk_final_response(
                         getattr(streaming, "final_output", None),
@@ -1279,7 +1577,11 @@ class GeoAgentRuntime:
         if final_response is None:
             raise RuntimeError("OpenAI Agents SDK 没有产出合格的最终答复。")
 
-        self.store.update_run_state(run_id, final_response=final_response)
+        completion_updates: dict[str, Any] = {"final_response": final_response}
+        completed_todos = self._complete_todos_for_success(self.store.get_run(run_id).state)
+        if completed_todos is not None:
+            completion_updates["todos"] = completed_todos
+        self.store.update_run_state(run_id, **completion_updates)
         # 运行完成时记录统计
         self._record_runtime_stats(run_id)
         final_state = self.store.get_run(run_id).state
@@ -1301,12 +1603,14 @@ class GeoAgentRuntime:
             )
 
         event_type = EventType.CLARIFICATION_REQUIRED if completed_run.status == "clarification_needed" else EventType.RUN_COMPLETED
-        # 流式消息已通过 MESSAGE_DELTA 事件发送完整文本。此处仅发送运行状态，不重复文本。
+        # run.completed 既是 SSE 终止态，也是 JSONL assistant response 的事实源。
+        # 前端 transcript 会基于 payload 去重；这里保留 summary，避免历史记录中
+        # 出现空 assistant 消息。
         self._append_event(
             run_id,
             thread_id,
             event_type,
-            "",
+            final_response.summary,
             payload={
                 "finalResponse": final_response.model_dump(mode="json"),
                 "clarification": completed_run.state.clarification.model_dump(mode="json") if completed_run.state.clarification else None,
@@ -1574,7 +1878,10 @@ class GeoAgentRuntime:
             if parsed is None and streamed_text and streamed_text != output:
                 parsed = self._decode_final_response_json(streamed_text)
             if parsed is None:
-                if not allow_plain_text or not self._can_use_plain_sdk_text_as_final_response(raw_text, state):
+                if not (
+                    (allow_plain_text and self._can_use_plain_sdk_text_as_final_response(raw_text, state))
+                    or self._can_project_nowcast_plain_text_final_response(raw_text, state)
+                ):
                     return None
                 final_response = AgentFinalResponse(summary=raw_text, limitations=state.warnings, next_actions=[])
             else:
@@ -1586,11 +1893,40 @@ class GeoAgentRuntime:
             return None
         if _is_mechanical_final_summary(final_response.summary):
             return None
+        if not self._final_response_includes_delivered_nowcast(final_response, state):
+            return None
         return AgentFinalResponse(
             summary=self._correct_artifact_count_claims(final_response.summary.strip(), state),
             limitations=final_response.limitations[:3],
             next_actions=final_response.next_actions[:3],
         )
+
+    @staticmethod
+    def _build_delivery_repair_supervisor(supervisor: Any, *, validation_error: RuntimeError | None) -> Any:
+        # 最终交付修正边界。
+        #
+        # 当上一轮只是最终答复格式/结构化输出不合格时，当前 run 的工具事实
+        # 已经足够，修正轮应该像 Claude Code 的最终回答阶段一样只生成答复。
+        # 这里保留原模型、response_format、output_type 和 guardrail，只关闭工具选择。
+        if not GeoAgentRuntime._is_final_response_format_error(validation_error):
+            return supervisor
+        if ModelSettings is None:
+            return supervisor
+        settings = getattr(supervisor, "model_settings", None)
+        if settings is None:
+            settings = ModelSettings()
+        try:
+            repaired_settings = settings.__replace__(tool_choice="none")
+            return supervisor.clone(model_settings=repaired_settings)
+        except Exception:
+            return supervisor
+
+    @staticmethod
+    def _is_final_response_format_error(error: RuntimeError | None) -> bool:
+        if error is None:
+            return False
+        reason = str(error)
+        return "最终答复" in reason or "结构化" in reason
 
     @staticmethod
     def _can_use_plain_sdk_text_as_final_response(text: str, state: AgentStateModel) -> bool:
@@ -1606,6 +1942,24 @@ class GeoAgentRuntime:
             or state.approvals
             or state.place_resolution
             or state.tool_results
+        )
+
+    @classmethod
+    def _can_project_nowcast_plain_text_final_response(cls, text: str, state: AgentStateModel) -> bool:
+        # 短临文本交付投影。
+        #
+        # Agents SDK 有时已经给出完整自然语言总结，但没有按 output_type
+        # 投影成 AgentFinalResponse。只有当前 run 已有 forecast_text 工具事实，
+        # 且自然语言总结逐项包含这些事实时，才把文本投影为 finalResponse。
+        # 这不是补造结果；缺少短临工具事实或缺少任一事实文本仍返回 None。
+        if not text or _is_mechanical_final_summary(text):
+            return False
+        delivered = cls._extract_delivered_nowcast_texts(state)
+        if not delivered:
+            return False
+        return cls._final_response_includes_delivered_nowcast(
+            AgentFinalResponse(summary=text, limitations=[], next_actions=[]),
+            state,
         )
 
     @staticmethod
@@ -2343,7 +2697,10 @@ class GeoAgentRuntime:
                 if self.stats is not None:
                     self.stats.tool_attempts += 1
                     self.stats.tool_failures += 1
-                tool_results[-1] = tool_results[-1].model_copy(update={"status": "failed", "message": formatted_error, "completed_at": now_utc()})
+                if isinstance(tool_results[-1], dict):
+                    tool_results[-1] = {**tool_results[-1], "status": "failed", "message": formatted_error, "completed_at": now_utc()}
+                else:
+                    tool_results[-1] = tool_results[-1].model_copy(update={"status": "failed", "message": formatted_error, "completed_at": now_utc()})
 
                 fail_trace = list(state.loop_trace)
                 fail_entry = LoopTraceEntry(
@@ -2407,7 +2764,10 @@ class GeoAgentRuntime:
             # 避免下游消费方（前端、transcript、分析报告）遇到缺失 key 崩溃。
             _validated_message = _validate_and_normalize_tool_result(result, tool_name)
 
-            tool_results[-1] = tool_results[-1].model_copy(update={"status": "completed", "message": _validated_message, "completed_at": now_utc()})
+            if isinstance(tool_results[-1], dict):
+                tool_results[-1] = {**tool_results[-1], "status": "completed", "message": _validated_message, "completed_at": now_utc()}
+            else:
+                tool_results[-1] = tool_results[-1].model_copy(update={"status": "completed", "message": _validated_message, "completed_at": now_utc()})
             tool_results[-1] = self._attach_tool_result_metadata(tool_results[-1], result)
 
             artifacts = list(state.artifacts)
@@ -2495,6 +2855,8 @@ class GeoAgentRuntime:
                 self._append_event(run_id, thread_id, EventType.SUBAGENT_UPDATED, f"{owner.role} 已完成 {tool_name}", payload=self._find_sub_agent(updated_sub_agents, owner.agent_id).model_dump(mode="json"))
             self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, result.message, payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})
             self._append_event(run_id, thread_id, EventType.LOOP_UPDATED, result.message, payload=observe_entry.model_dump(mode="json"))
+            if tool_name == "request_clarification":
+                raise _ClarificationRequested(result.message)
             observation = _format_tool_observation(tool_name=tool_name, result=result)
 
             # 工具结果累积预算消费 — 在截断之前记录原始大小，
@@ -2899,6 +3261,7 @@ class GeoAgentRuntime:
                 "",
                 "## 使用 Todo 清单",
                 "使用 **todo_write** 创建和管理本次分析会话的结构化任务清单。这能帮助你追踪进度、组织复杂任务，也让用户了解整体推进情况。",
+                "Todo 工具只有 **todo_write**：它每次覆盖式写入完整清单。工具函数名必须逐字来自可用工具列表，不要按中文标题或意图自行翻译、创造新工具名。",
                 "",
                 "### 何时使用此工具",
                 "在以下场景主动使用：",
@@ -2943,16 +3306,18 @@ class GeoAgentRuntime:
                 "   - 使用清晰、描述性的任务名称",
                 "   - 每项都必须提供 content 和 activeForm",
                 "",
-                "拿不准时，宁可多用。主动追踪任务进度能帮助你完整达成所有需求。",
+                "拿不准时直接使用。",
                 "- 历史上下文不是默认事实源；不要表现得自动知道上一轮细节。只有用户明确说「刚才」「上一轮」「用已有结果」等延续指令时，才调用 list_context_references 或 search_thread_context 查真实对象。",
                 '- 遇到指代词（「这个地点」「刚才那个结果」），先用上下文工具找它对应的真实对象；找不到就向用户确认。',
+                "- **不要重复搜索同一内容**：如果前 2 次 search_thread_context / list_context_references 都没找到需要的数据，就停下来——数据可能不存在或已被清除。用已有的工具结果直接输出，不要反复搜。",
+                '- 结构化输出不是最终目标——**结果的质量和准确性才是**。如果找不到足够数据来填充完整的 JSON，宁可输出部分结果或向用户说明局限性，也不要反复重试。',
                 "- 以下情况主动确认，别替用户做主：地点有多个候选、用户意图模糊、操作代价大（如发布、删除）、查询条件不明确。用 request_clarification 生成选项让用户选。",
                 "- 优先自己动手调工具，需要协作时才分派给子智能体。",
                 "- layer_key 不确定就 list_available_layers 看一眼，别自己编。",
                 "- 空间工具的参数只引用真实的引用 ID，不凭空构造。",
                 "- 工具返回 valueRefs 时，后续工具必须直接传 valueRef（如 coordinate_ref、threshold_ref、variable_ref、bbox_ref、time_index_ref），不要把坐标、阈值或统计数值抄出来再传。",
                 "- 地图跳转/定位类任务必须调用 geocode_place 写回真实 place_resolution；不能只在最终文本里说坐标。",
-                "- 始终用中文，像和懂 GIS 的同事聊天，不是写技术文档。",
+                "- 始终用中文。直接输出结果，不加寒暄、不评价、不解释过程。",
                 "",
                 "## 当前问题",
                 query,
@@ -3034,13 +3399,23 @@ class GeoAgentRuntime:
 
     def _build_live_subagent_prompt(self, subagent_config) -> str:
         # 子智能体 prompt 来源于 runtime config，避免代码和数据库出现两套定义。
+        #
+        # 子智能体只拥有 runtime config 明确列出的专属工具。这里把真实函数名
+        # 写进 prompt，是为了防止模型把中文工具标题或任务意图翻译成不存在的
+        # 函数名；未知工具仍由 SDK 硬失败，不做别名或兼容修补。
+        tool_names = [str(name).strip() for name in subagent_config.tools if str(name).strip()]
         lines = [
             (subagent_config.system_prompt or subagent_config.summary).strip(),
             "",
+            "## 专属工具清单",
+            "你本轮只能调用下面这些工具函数名；函数名必须逐字匹配，不要根据中文标题、任务意图或其它智能体的习惯创造工具名：",
+            *(f"- {name}" for name in tool_names),
+            "",
             "## 协作约定",
             "- 使用分配给你的专属工具完成任务，不自行构造图层名或执行步骤。",
+            "- 进度清单由 supervisor 统一维护；除非专属工具清单里明确列出进度工具，否则不要创建或更新 Todo/Task。",
             "- 需要加载图层时，直接使用 supervisor 已确认的 layer_key，不要猜测或拼接。",
-            "- 完成后用中文简洁汇报，让 supervisor 能快速理解你的输出。",
+            "- 完成后直接输出工具返回的答案文本，不加任何前缀后缀、不汇报过程。",
         ]
         return "\n".join(lines).strip()
 
@@ -3078,6 +3453,8 @@ class GeoAgentRuntime:
                 return
             raise RuntimeError("实时智能体没有产出地点解析结果。")
 
+        self._ensure_nowcast_request_coverage(state)
+
         if state.artifacts or state.approvals:
             return
 
@@ -3085,6 +3462,67 @@ class GeoAgentRuntime:
         if normalized and not normalized.endswith("分析已完成。"):
             raise RuntimeError("实时智能体没有产出可交付结果，只返回了过程说明文本。")
         raise RuntimeError("实时智能体没有产出可交付结果。")
+
+    @staticmethod
+    def _ensure_nowcast_request_coverage(state: AgentStateModel) -> None:
+        # 短临任务覆盖边界。
+        #
+        # 用户同时要“接下来天气”和“市民中心天气”时，不能只做全市区域分析
+        # 后用地图 artifact 通过交付边界。地点问题必须先解析坐标，并把
+        # coordinate_ref 传入 analyze_nowcast_precipitation。
+        query = state.user_query or ""
+        nowcast_tools = {
+            item.tool
+            for item in state.tool_results
+            if item.tool in {
+                "create_nowcast_sequence",
+                "analyze_nowcast_precipitation",
+                "answer_nowcast_question",
+                "generate_nowcast_forecast_text",
+                "render_nowcast_raster",
+            }
+        }
+        if not nowcast_tools:
+            return
+        answer_questions = [
+            str(item.args.get("question") or "")
+            for item in state.tool_results
+            if item.tool == "answer_nowcast_question" and item.status == "completed"
+        ]
+        if ("预报文字" in query or "生成预报" in query) and not any(
+            item.tool == "generate_nowcast_forecast_text" and item.status == "completed"
+            for item in state.tool_results
+        ):
+            raise RuntimeError("短临任务要求生成预报文字，但尚未调用 generate_nowcast_forecast_text。")
+        if "接下来" in query and not any("接下来" in question for question in answer_questions):
+            raise RuntimeError("短临任务要求回答“接下来天气怎么样”，但 answer_nowcast_question 未覆盖该问题。")
+        if "市民中心" not in query:
+            return
+        has_place_geocode = any(
+            item.tool == "geocode_place"
+            and item.status == "completed"
+            and "市民中心" in str(item.args.get("query") or "")
+            for item in state.tool_results
+        )
+        has_point_analysis = any(
+            item.tool == "analyze_nowcast_precipitation"
+            and item.status == "completed"
+            and (
+                bool(str(item.args.get("coordinate_ref") or "").strip())
+                or (item.args.get("latitude") is not None and item.args.get("longitude") is not None)
+            )
+            for item in state.tool_results
+        )
+        has_place_answer = any("市民中心" in question for question in answer_questions)
+        missing: list[str] = []
+        if not has_place_geocode:
+            missing.append("geocode_place 解析市民中心")
+        if not has_point_analysis:
+            missing.append("analyze_nowcast_precipitation 使用市民中心 coordinate_ref")
+        if not has_place_answer:
+            missing.append("answer_nowcast_question 覆盖市民中心天气")
+        if missing:
+            raise RuntimeError("短临任务未完整回答市民中心天气问题，缺少：" + "、".join(missing) + "。")
 
     def _is_text_delivery_allowed(self, intent: UserIntent, state: AgentStateModel, final_summary: str) -> bool:
         # 文本交付边界。

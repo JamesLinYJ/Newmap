@@ -22,6 +22,7 @@ import pytest
 
 from api_app.session_log_store import AgentSessionLogStore
 from shared_types.schemas import (
+    AgentFinalResponse,
     AgentStateModel,
     AgentThreadRecord,
     AnalysisRunRecord,
@@ -112,6 +113,33 @@ def test_session_log_rebuilds_index_and_deletes_thread_file(tmp_path):
     rebuilt.delete_thread(thread.id)
     assert not path.exists()
     assert rebuilt.list_runs_for_session(thread.session_id) == []
+
+
+def test_run_completed_response_item_uses_final_response_when_message_empty(tmp_path):
+    # run.completed 事件 message 可能为空，finalResponse 才是最终回答事实源。
+    #
+    # JSONL response_item 必须写入 summary，避免历史对话出现空 assistant。
+    store = AgentSessionLogStore(tmp_path / "sessions", cwd=tmp_path)
+    thread = store.create_thread(_thread())
+    run = _run("run_done", thread.id)
+    store.save_run(run)
+    store.append_event(
+        run.id,
+        RunEvent(
+            event_id="evt_done",
+            run_id=run.id,
+            thread_id=thread.id,
+            type=EventType.RUN_COMPLETED,
+            message="",
+            timestamp=datetime.now(timezone.utc),
+            payload={"finalResponse": AgentFinalResponse(summary="最终回答已生成。").model_dump(mode="json")},
+        ),
+    )
+
+    records = [json.loads(line) for line in store.get_thread_log_path(thread.id).read_text(encoding="utf-8").splitlines()]
+    response_items = [item["payload"] for item in records if item["type"] == "response_item" and item["payload"].get("role") == "assistant"]
+
+    assert response_items[-1]["content"][0]["text"] == "最终回答已生成。"
 
 
 def test_session_log_corrupt_jsonl_fails_loudly(tmp_path):

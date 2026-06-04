@@ -736,7 +736,7 @@ export const DetailPanel = memo(function DetailPanel({
                 上传文件
                 <input
                   type="file"
-                  hidden
+                  className="cc-file-hidden"
                   onChange={(event) => {
                     const file = event.target.files?.[0]
                     if (file) onUploadFile(file)

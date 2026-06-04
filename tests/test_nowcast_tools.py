@@ -26,6 +26,7 @@ import xarray as xr
 from gis_weather import WeatherDataService
 from shared_types.schemas import ArtifactRef, WeatherDatasetRecord
 from tool_registry import ToolRuntime, ToolRuntimeContext, ToolRuntimeState, ToolRuntimeStore, build_default_registry
+from tool_registry.value_refs import ToolValueStore
 
 
 @pytest.mark.asyncio
@@ -58,6 +59,67 @@ async def test_nowcast_tool_chain_uses_refs_for_analysis_answer_and_map(tmp_path
     assert render.artifact.artifact_type == "raster_png"
     assert render.artifact.metadata["source"] == "nowcast"
     assert render.artifact.metadata["datasetId"] in {"d0", "d1", "d2"}
+
+
+@pytest.mark.asyncio
+async def test_nowcast_sequence_uses_dataset_set_ref_instead_of_copying_ids(tmp_path: Path) -> None:
+    # 数据集集合引用。
+    #
+    # 短临任务常一次上传几十个 NC 文件；模型不应复制整串 dataset id，
+    # 而应把 list_meteorological_datasets 产出的集合 valueRef 交给序列工具。
+    registry = build_default_registry()
+    runtime = _runtime(tmp_path, _datasets(tmp_path), model_registry=_FakeModelRegistry(_FakeModelAdapter()))
+
+    listed = await registry.execute("list_meteorological_datasets", {}, runtime)
+    dataset_set_ref = next(ref.ref_id for ref in listed.value_refs if ref.kind == "weather_dataset_set")
+    created = await registry.execute("create_nowcast_sequence", {"dataset_set_ref": dataset_set_ref}, runtime)
+
+    assert listed.payload["datasetSetRef"] == dataset_set_ref
+    assert created.feature_count == 3
+    assert created.provenance["datasetIds"] == ["d0", "d1", "d2"]
+
+
+@pytest.mark.asyncio
+async def test_nowcast_analysis_generates_forecast_text_and_question_answer(tmp_path: Path) -> None:
+    # 杭州短临智能问答交付链。
+    #
+    # 同一次短临分析必须能同时产出正式预报文字和用户问答文本；
+    # 两类文本都以 forecast_text valueRef 进入当前 run 事实，供主智能体最终汇总。
+    registry = build_default_registry()
+    runtime = _runtime(tmp_path, _datasets(tmp_path), model_registry=_FakeModelRegistry(_FakeModelAdapter()))
+
+    sequence = await registry.execute("create_nowcast_sequence", {}, runtime)
+    sequence_ref = next(ref.ref_id for ref in sequence.value_refs if ref.kind == "nowcast_sequence")
+    coordinate_ref = ToolValueStore(runtime, source_tool="geocode_place").put(
+        kind="coordinate",
+        label="杭州市民中心",
+        value={"lat": 30.1, "lng": 120.15, "label": "杭州市民中心"},
+    )
+    analyzed = await registry.execute(
+        "analyze_nowcast_precipitation",
+        {
+            "sequence_ref": sequence_ref,
+            "district_layer_key": "districts",
+            "district_name_field": "district_name",
+            "coordinate_ref": coordinate_ref.ref_id,
+        },
+        runtime,
+    )
+    analysis_ref = next(ref.ref_id for ref in analyzed.value_refs if ref.kind == "nowcast_analysis")
+
+    forecast = await registry.execute("generate_nowcast_forecast_text", {"nowcast_analysis_ref": analysis_ref, "style": "public"}, runtime)
+    answer = await registry.execute(
+        "answer_nowcast_question",
+        {"nowcast_analysis_ref": analysis_ref, "question": "接下来天气怎么样？市民中心天气怎么样？"},
+        runtime,
+    )
+
+    forecast_text_ref = next(ref for ref in forecast.value_refs if ref.kind == "forecast_text")
+    answer_text_ref = next(ref for ref in answer.value_refs if ref.kind == "forecast_text")
+    assert forecast.payload["forecastTextRef"] == forecast_text_ref.ref_id
+    assert answer.payload["forecastTextRef"] == answer_text_ref.ref_id
+    assert forecast_text_ref.value == "未来三小时局地降水增强，建议关注东部区。"
+    assert answer.message == "未来三小时局地降水增强，建议关注东部区。"
 
 
 @pytest.mark.asyncio

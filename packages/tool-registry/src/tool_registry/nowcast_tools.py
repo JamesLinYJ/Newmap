@@ -38,7 +38,8 @@ from .value_refs import ToolValueStore, make_value_ref_id, resolve_coordinate_ar
 
 
 class CreateNowcastSequenceArgs(ToolArgsModel):
-    dataset_ids: list[str] | None = Field(None, title="气象数据集列表", description="组成短临序列的 NC dataset id 列表；为空时使用当前线程气象数据集。", json_schema_extra={"x-ui-source": "json"})
+    dataset_set_ref: str | None = Field(None, title="气象数据集集合引用", description="list_meteorological_datasets 产出的 weather_dataset_set valueRef；优先用它或留空使用当前线程全部数据集，避免手抄长 dataset id 列表。", json_schema_extra={"x-ui-source": "text"})
+    dataset_ids: list[str] | None = Field(None, title="气象数据集列表", description="确实只需子集时才填写 NC dataset id 列表；当前线程全部数据集请留空或使用 dataset_set_ref。", json_schema_extra={"x-ui-source": "json"})
     profile_id: str | None = Field(None, title="产品 Profile", description="短临产品变量口径配置 ID；默认适配 QPF/dbz/thunder/u/v/kdp。", json_schema_extra={"x-ui-source": "text"})
 
 
@@ -76,7 +77,7 @@ class RenderNowcastRasterArgs(ToolArgsModel):
 
 
 async def create_nowcast_sequence(args: dict[str, Any], runtime: ToolRuntime) -> ToolExecutionResult:
-    datasets = _resolve_weather_datasets(runtime, args.get("dataset_ids"))
+    datasets = _resolve_weather_datasets(runtime, args.get("dataset_ids"), dataset_set_ref=args.get("dataset_set_ref"))
     service = NowcastSequenceService()
     sequence = service.create_sequence(
         sequence_id=make_id("nowcast_sequence"),
@@ -263,7 +264,7 @@ class NowcastToolProvider:
 
     def list_definitions(self) -> list[ToolDefinition]:
         return [
-            ToolDefinition("create_nowcast_sequence", create_nowcast_sequence, ToolMetadata("创建短临序列", "把当前线程或指定的 NC 气象数据集组成短临降水序列，并登记 sequence_ref 供后续分析工具使用。", "meteorology", ["nowcast", "sequence", "气象"]), CreateNowcastSequenceArgs),
+            ToolDefinition("create_nowcast_sequence", create_nowcast_sequence, ToolMetadata("创建短临序列", "把当前线程、dataset_set_ref 或指定子集的 NC 气象数据集组成短临降水序列；当前线程全量数据不要手抄长 dataset id 列表。", "meteorology", ["nowcast", "sequence", "气象"]), CreateNowcastSequenceArgs),
             ToolDefinition("inspect_nowcast_sequence", inspect_nowcast_sequence, ToolMetadata("检查短临序列", "读取短临序列的时次、变量、范围和分析能力，确认是否可用于短临降水预报。", "meteorology", ["nowcast", "inspect", "气象"]), InspectNowcastSequenceArgs),
             ToolDefinition("analyze_nowcast_precipitation", analyze_nowcast_precipitation, ToolMetadata("分析短临降水", "基于短临序列和区划、AOI、bbox 或地点坐标生成降水时间线、趋势、移动方向和地图候选。", "meteorology", ["nowcast", "precipitation", "analysis"]), AnalyzeNowcastPrecipitationArgs),
             ToolDefinition("answer_nowcast_question", answer_nowcast_question, ToolMetadata("短临降水问答", "消费短临分析事实回答用户关于未来三小时、地点或区县降雨的问题，输出 forecast_text_ref。", "meteorology", ["nowcast", "qa", "forecast"]), AnswerNowcastQuestionArgs),
@@ -275,13 +276,32 @@ class NowcastToolProvider:
 provider = NowcastToolProvider()
 
 
-def _resolve_weather_datasets(runtime: ToolRuntime, dataset_ids: Any) -> list[Any]:
+def _resolve_weather_datasets(runtime: ToolRuntime, dataset_ids: Any, *, dataset_set_ref: Any = None) -> list[Any]:
+    ref_id = str(dataset_set_ref or "").strip()
+    if ref_id and dataset_ids:
+        raise ValueError("create_nowcast_sequence 的 dataset_set_ref 和 dataset_ids 只能二选一。")
+    if ref_id:
+        ref = resolve_value_ref(runtime, ref_id, expected_kinds={"weather_dataset_set"})
+        dataset_ids = _dataset_ids_from_set_ref(ref.value, ref_id=ref_id)
     if dataset_ids:
         return [_ensure_weather_dataset_parsed(runtime, str(dataset_id)) for dataset_id in dataset_ids]
     datasets = runtime.store.platform_store.list_weather_datasets(session_id=runtime.context.session_id, thread_id=runtime.context.thread_id)
     if not datasets:
         raise ValueError("当前线程没有可用短临 NC 数据集，请先上传短临产品。")
     return [_ensure_weather_dataset_parsed(runtime, item.dataset_id) for item in datasets]
+
+
+def _dataset_ids_from_set_ref(value: Any, *, ref_id: str) -> list[str]:
+    if isinstance(value, dict):
+        raw_ids = value.get("datasetIds") or value.get("dataset_ids")
+    else:
+        raw_ids = value
+    if not isinstance(raw_ids, list):
+        raise ValueError(f"气象数据集集合引用不是 dataset id 列表：{ref_id}")
+    dataset_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+    if not dataset_ids:
+        raise ValueError(f"气象数据集集合引用为空：{ref_id}")
+    return dataset_ids
 
 
 def _ensure_weather_dataset_parsed(runtime: ToolRuntime, dataset_id: str):

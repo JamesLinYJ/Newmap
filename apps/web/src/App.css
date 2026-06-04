@@ -1118,6 +1118,18 @@
     @apply grid size-8 cursor-pointer place-items-center rounded-[6px] border-0 bg-transparent text-[#24292f] transition-colors duration-150 hover:bg-[#f6f8fa] active:bg-[#eef1f4];
   }
 
+  .cc-file-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
   .cc-composer-spacer {
     @apply flex-1;
   }
@@ -1243,19 +1255,27 @@
   }
 
   .cc-task-row {
-    @apply min-w-0 cursor-pointer border-0 bg-transparent px-3 py-2.5 text-left;
+    @apply grid min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-0 bg-transparent px-3 py-2.5 text-left;
   }
 
-  .cc-task-row span {
+  .cc-task-row__main {
     @apply flex min-w-0 flex-col gap-0.5;
   }
 
-  .cc-task-row strong {
+  .cc-task-row__main strong {
     @apply truncate text-[14px] font-semibold text-[#24292f];
   }
 
-  .cc-task-row small {
+  .cc-task-row__main small {
     @apply truncate text-[12px] text-[#6e7781];
+  }
+
+  .cc-task-row__meta {
+    @apply flex shrink-0 flex-col items-end gap-0.5 text-[11px] text-[#8c959f];
+  }
+
+  .cc-task-row__meta small {
+    @apply text-[11px] text-[#6e7781];
   }
 
   .cc-task-row--active {
@@ -1268,10 +1288,6 @@
 
   .cc-task-actions button {
     @apply grid size-7 cursor-pointer place-items-center rounded-[6px] border-0 bg-transparent text-[#57606a] transition-colors duration-150 hover:bg-white hover:text-[#24292f];
-  }
-
-  .cc-view-all {
-    @apply cursor-pointer rounded-[7px] border border-black/[0.12] bg-white px-3 py-2 text-[13px] font-medium text-[#24292f] hover:bg-[#f6f8fa];
   }
 
   .cc-empty {
@@ -1383,50 +1399,6 @@
   }
   .cc-task-progress-item__tag--blocked {
     @apply bg-[#fff8c5] text-[#9a6700];
-  }
-
-  /* ── Session 历史面板 ─────────────────────── */
-  .cc-session-view {
-    @apply flex min-h-0 flex-1 flex-col gap-3 px-5 py-4;
-  }
-  .cc-session-panel {
-    @apply flex min-h-0 flex-1 flex-col gap-3;
-  }
-  .cc-session-panel__header {
-    @apply flex items-center justify-between gap-3;
-  }
-  .cc-session-panel__header strong {
-    @apply text-[15px] font-semibold text-[#1f2328];
-  }
-  .cc-session-panel__search {
-    @apply h-9 w-full rounded-[7px] border border-black/[0.12] bg-white px-3 text-[13px] text-[#24292f] outline-none placeholder:text-[#6e7781] transition-colors duration-150 focus:border-[#0969da]/40;
-  }
-  .cc-session-panel__list {
-    @apply flex flex-col gap-2 flex-1 overflow-y-auto;
-  }
-  .cc-session-item {
-    @apply grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-[8px] border border-black/[0.08] bg-white/80 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-[#f6f8fa] cursor-pointer;
-  }
-  .cc-session-item__info {
-    @apply min-w-0;
-  }
-  .cc-session-item__title {
-    @apply block truncate text-[14px] font-semibold text-[#1f2328];
-  }
-  .cc-session-item__query {
-    @apply block truncate text-[12px] text-[#6e7781] mt-0.5;
-  }
-  .cc-session-item__meta {
-    @apply flex shrink-0 items-center gap-2 text-[11px] text-[#8b949e];
-  }
-  .cc-session-item__meta span {
-    @apply whitespace-nowrap;
-  }
-  .cc-session-item__actions {
-    @apply flex items-center gap-1.5;
-  }
-  .cc-session-empty {
-    @apply flex flex-1 items-center justify-center text-[14px] text-[#6e7781];
   }
 
   .cc-data-context {

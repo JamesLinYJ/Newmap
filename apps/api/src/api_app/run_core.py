@@ -212,6 +212,7 @@ def _apply_tool_result_to_run(
     args: dict[str, object],
     result: ToolExecutionResult,
     tool_kind: str,
+    tool_label: str = "",
 ):
     run = store.get_run(run_id)
     tool_results = list(run.state.tool_results)
@@ -258,7 +259,7 @@ def _apply_tool_result_to_run(
             type=EventType.TOOL_COMPLETED,
             message=result.message,
             timestamp=now_utc(),
-            payload={"tool": tool_name, "toolKind": tool_kind, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None, "valueRefs": serialize_value_refs_for_model(result.value_refs)},
+            payload={"tool": tool_name, "toolLabel": tool_label, "toolKind": tool_kind, "args": args, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None, "valueRefs": serialize_value_refs_for_model(result.value_refs)},
         ),
     )
     store.append_event(
@@ -270,7 +271,7 @@ def _apply_tool_result_to_run(
             type=EventType.STEP_COMPLETED,
             message=result.message,
             timestamp=now_utc(),
-            payload={"tool": tool_name, "toolKind": tool_kind, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None, "valueRefs": serialize_value_refs_for_model(result.value_refs)},
+            payload={"tool": tool_name, "toolLabel": tool_label, "toolKind": tool_kind, "args": args, "artifact": result.artifact.model_dump(mode="json") if result.artifact else None, "valueRefs": serialize_value_refs_for_model(result.value_refs)},
         ),
     )
     return updated_run
@@ -284,6 +285,7 @@ def _record_tool_failure(
     args: dict[str, object],
     tool_kind: str,
     exc: Exception,
+    tool_label: str = "",
 ) -> None:
     try:
         run = store.get_run(run_id)
@@ -313,7 +315,7 @@ def _record_tool_failure(
             type=EventType.TOOL_COMPLETED,
             message=str(exc),
             timestamp=now_utc(),
-            payload={"tool": tool_name, "toolKind": tool_kind, "errors": errors},
+            payload={"tool": tool_name, "toolLabel": tool_label, "toolKind": tool_kind, "args": args, "errors": errors},
         ),
     )
     store.append_event(
@@ -325,7 +327,7 @@ def _record_tool_failure(
             type=EventType.RUN_FAILED,
             message=str(exc),
             timestamp=now_utc(),
-            payload={"tool": tool_name, "toolKind": tool_kind, "errors": errors},
+            payload={"tool": tool_name, "toolLabel": tool_label, "toolKind": tool_kind, "args": args, "errors": errors},
         ),
     )
 

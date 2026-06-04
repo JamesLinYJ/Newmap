@@ -139,11 +139,27 @@ async def list_meteorological_datasets(args: dict[str, Any], runtime: ToolRuntim
         session_id=runtime.context.session_id,
         thread_id=runtime.context.thread_id,
     )
+    value_refs = []
+    dataset_ids = [item.dataset_id for item in datasets]
+    if dataset_ids:
+        dataset_set_ref = ToolValueStore(runtime, source_tool="list_meteorological_datasets").put(
+            kind="weather_dataset_set",
+            label=f"当前线程气象数据集（{len(dataset_ids)} 个）",
+            value={"datasetIds": dataset_ids},
+            ref_id=make_value_ref_id("weather_dataset_set", runtime.context.thread_id, len(dataset_ids), *dataset_ids),
+            metadata={"datasetCount": len(dataset_ids), "threadId": runtime.context.thread_id},
+        )
+        value_refs = [dataset_set_ref]
     return ToolExecutionResult(
         message=f"当前线程可用气象数据集 {len(datasets)} 个。" if datasets else "当前线程没有气象数据集，请先上传气象文件（.nc/.tif/.grib 等）。",
-        payload={"datasets": [_dataset_summary(item) for item in datasets]},
+        payload={
+            "datasets": [_dataset_summary(item) for item in datasets],
+            "datasetSetRef": value_refs[0].ref_id if value_refs else None,
+            "valueRefs": serialize_value_refs_for_model(value_refs),
+        },
         source="weather_catalog",
         feature_count=len(datasets),
+        value_refs=value_refs,
     )
 
 

@@ -345,16 +345,25 @@ class NowcastTextService:
 
     def build_prompt(self, *, facts: dict[str, Any], question: str, draft: dict[str, Any]) -> str:
         facts_text = json.dumps({"question": question, "facts": facts, "draft": draft}, ensure_ascii=False, indent=2)
+        is_qa = "正式" not in question and "预报文字" not in question
+        if is_qa:
+            return (
+                "你是杭州短临降水预报员。只基于 facts 和 draft 输出最终答案。\n"
+                "要求：\n"
+                "1. answer 直接用 draft 中的 answer 内容，不添加任何新信息。\n"
+                "2. basis 每条不超过 15 字。\n"
+                "3. 只返回 JSON：{\"answer\":\"...\",\"basis\":[...],\"confidence\":0.X,\"warnings\":[...]}。\n"
+                "4. answer 禁止包含：emoji、标题、表格、列表、温馨提示、地图说明、置信度、数据源、变量名。\n\n"
+                f"{facts_text}"
+            )
         return (
-            "你是杭州短临降水预报员。请只基于 facts 和 draft 生成中文问答结果。\n"
+            "你是杭州短临降水预报员。只基于 facts 和 draft 输出正式预报文字。\n"
             "要求：\n"
-            "1. 不要编造区县、坐标、雨量、移动方向或时次。\n"
-            '2. answer 面向市民，简洁但全面——有降雨的区县要说明「什么时候开始下、下多大、持续多久、会不会变大或变小」；\n'
-            '   无降雨的区县如果数量多可以概括为「其余区县无雨」，不要逐个列举。\n'
-            '3. 如果 facts 中有移动方向信息，要在回答中体现「降雨区往哪个方向移动」。\n'
-            "4. answer 中不要出现置信度数值、区县总数统计、数据变量名等元数据。\n"
-            "5. basis 列出关键诊断依据，每条不超过 30 字。\n"
-            "6. 只返回 JSON，字段为 answer、basis、confidence、warnings。\n\n"
+            "1. answer 用 draft 中的 answer 内容，不加任何新信息。\n"
+            "2. basis 每条不超过 15 字。\n"
+            "3. 只返回 JSON：{\"answer\":\"...\",\"basis\":[...],\"confidence\":0.X,\"warnings\":[...]}。\n"
+            "4. answer 禁止包含：emoji、标题、Markdown、表格、温馨提示、地图说明、置信度、数据源、变量名。\n"
+            "5. answer 是纯文本，一段到底，不用列表格式。\n\n"
             f"{facts_text}"
         )
 
