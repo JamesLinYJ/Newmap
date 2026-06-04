@@ -15,6 +15,7 @@
 import type {
   AgentMessage,
   AgentMessageFrame,
+  ConversationItem,
   AgentRuntimeConfig,
   AnalysisRun,
   AgentThreadRecord,
@@ -304,6 +305,10 @@ export function getRunEvents(runId: string) {
 
 export function getRunMessages(runId: string) {
   return requestJson<AgentMessage[]>(`/api/v2/runs/${runId}/messages`)
+}
+
+export function getRunItems(runId: string) {
+  return requestJson<ConversationItem[]>(`/api/v2/runs/${runId}/items`)
 }
 
 export function getArtifacts(runId: string) {

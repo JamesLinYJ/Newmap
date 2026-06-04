@@ -426,6 +426,26 @@ export interface AgentMessageFrame {
   metadata?: Record<string, unknown>
 }
 
+export type ConversationItemType = 'message' | 'reasoning' | 'function_call' | 'function_call_output' | 'error'
+
+export interface ConversationItem {
+  itemType: ConversationItemType
+  runId: string
+  threadId?: string | null
+  turnId?: string | null
+  callId?: string | null
+  role?: string | null
+  body?: string | null
+  name?: string | null
+  arguments?: string | null
+  output?: string | null
+  isError: boolean
+  phase?: string | null
+  status?: string | null
+  metadata?: Record<string, unknown>
+  timestamp: string
+}
+
 export interface LayerPropertyDescriptor {
   name: string
   dataType: string

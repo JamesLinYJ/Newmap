@@ -30,6 +30,7 @@ from shared_types.schemas import (
     AgentContentBlock,
     AgentMessage,
     AgentMessageFrame,
+    ConversationItem,
     AgentThreadRecord,
     AnalysisRunRecord,
     ContextEntryRecord,
@@ -91,6 +92,7 @@ class AgentSessionLogStore:
         self._events: dict[str, list[RunEvent]] = {}
         self._message_frames: dict[str, list[AgentMessageFrame]] = {}
         self._messages: dict[str, list[AgentMessage]] = {}
+        self._items: dict[str, list[ConversationItem]] = {}
         self._context_entries: dict[str, dict[str, ContextEntryRecord]] = {}
         self._thread_context: dict[str, ThreadContextRecord] = {}
         self.root.mkdir(parents=True, exist_ok=True, mode=SESSION_LOG_DIR_MODE)
@@ -345,6 +347,40 @@ class AgentSessionLogStore:
     def list_messages(self, run_id: str) -> list[AgentMessage]:
         return list(self._messages.get(run_id, []))
 
+    # ---- response_item（新平铺模型，对齐 Codex） ----
+
+    def append_response_item(self, item: ConversationItem) -> None:
+        """写入一个 response_item 到日志并更新内存索引。"""
+        with self._lock:
+            items = self._items.setdefault(item.run_id, [])
+            items.append(item)
+            path = self._path_for_run(item.run_id)
+            self._append_event_msg(
+                path,
+                {
+                    "type": "response_item",
+                    "item": item.model_dump(mode="json", by_alias=True),
+                },
+                timestamp=item.timestamp,
+            )
+
+    def list_items(self, run_id: str) -> list[ConversationItem]:
+        """返回按时间戳排序的平铺 item 列表。"""
+        return list(self._items.get(run_id, []))
+
+    def _replay_response_item(self, data: dict[str, Any]) -> None:
+        """JSONL 重放：恢复一个 response_item。"""
+        item_data = data.get("item", data)
+        item = ConversationItem.model_validate(item_data)
+        items = self._items.setdefault(item.run_id, [])
+        # 如果 item 已经存在（通过 item_type + call_id 或 body 去重），更新而非追加
+        if item.call_id and item.item_type == "function_call_output":
+            for i, existing in enumerate(items):
+                if existing.call_id == item.call_id and existing.item_type == "function_call":
+                    # function_call_output 更新对应的 function_call
+                    pass
+        items.append(item)
+
     def upsert_context_entry(self, entry: ContextEntryRecord) -> ContextEntryRecord:
         with self._lock:
             path = self._path_for_thread(entry.thread_id)
@@ -475,7 +511,9 @@ class AgentSessionLogStore:
                 except Exception as exc:
                     raise ValueError(f"会话 message_frame 结构非法：{path}:{line_number}") from exc
                 self._apply_message_frame(frame)
-            elif kind not in {"turn_context", "response_item"}:
+            elif kind == "response_item":
+                self._replay_response_item(payload)
+            elif kind not in {"turn_context"}:
                 raise ValueError(f"会话 JSONL 记录类型未知：{path}:{line_number}: {kind}")
             if thread_id:
                 self._thread_paths.setdefault(thread_id, path)

@@ -13,7 +13,7 @@
 // 只把后端 canonical AgentMessage[] 投影为聊天 UI 可渲染条目。
 // 本文件不读取旧 RunEvent，不猜工具参数，也不补造最终摘要。
 
-import type { AgentContentBlock, AgentMessage, AgentMessageFrame, ToolDescriptor } from '@geo-agent-platform/shared-types'
+import type { AgentContentBlock, AgentMessage, AgentMessageFrame, ConversationItem, ToolDescriptor } from '@geo-agent-platform/shared-types'
 
 export type LedgerEntryStatus = 'idle' | 'running' | 'completed' | 'failed' | 'blocked'
 export type ConversationEntryKind = 'message' | 'command_batch' | 'approval' | 'artifact' | 'error' | 'system'
@@ -119,6 +119,121 @@ export function applyAgentMessageFrame(messages: AgentMessage[], frame: AgentMes
     }
   }
   return current
+}
+
+export function deriveEntriesFromItems(
+  items: ReadonlyArray<ConversationItem>,
+  _runStatus?: string,
+  tools: ReadonlyArray<ToolDescriptor> = [],
+): ConversationEntry[] {
+  const toolLabels = new Map(tools.map((tool) => [tool.name, tool.label]))
+  const entries: ConversationEntry[] = []
+  const toolCalls = new Map<string, ConversationItem>()
+
+  for (const item of items) {
+    switch (item.itemType) {
+      case 'message': {
+        const body = (item.body ?? '').trim()
+        if (!body) break
+        entries.push({
+          id: item.callId || item.turnId || `msg:${entries.length}`,
+          kind: 'message',
+          role: (item.role as 'user' | 'assistant') || 'assistant',
+          timestamp: item.timestamp,
+          title: item.role === 'user' ? '用户' : '回答',
+          body,
+          status: item.status === 'running' ? 'running' : 'completed',
+        })
+        break
+      }
+      case 'reasoning': {
+        const body = item.body ?? ''
+        if (!body) break
+        entries.push({
+          id: item.callId || item.turnId || `think:${entries.length}`,
+          kind: 'message',
+          role: 'assistant',
+          timestamp: item.timestamp,
+          title: '思考',
+          body,
+          status: item.status === 'running' ? 'running' : 'completed',
+          badge: 'thinking',
+        })
+        break
+      }
+      case 'function_call': {
+        if (!item.callId) break
+        toolCalls.set(item.callId, item)
+        const toolName = item.name ?? 'unknown'
+        const title = toolLabels.get(toolName) ?? toolName
+        entries.push({
+          id: `tool:${item.callId}`,
+          kind: 'command_batch',
+          timestamp: item.timestamp,
+          title,
+          body: '执行中...',
+          status: 'running',
+          commands: [{
+            id: item.callId,
+            title,
+            status: 'running',
+            body: '执行中...',
+            toolName,
+            commandText: item.arguments ?? '',
+            details: { args: safeJsonParse(item.arguments ?? '') },
+          }],
+        })
+        break
+      }
+      case 'function_call_output': {
+        if (!item.callId) break
+        const call = toolCalls.get(item.callId)
+        const toolName = call?.name ?? 'unknown'
+        const title = toolLabels.get(toolName) ?? toolName
+        const entryId = `tool:${item.callId}`
+        const existingIdx = entries.findIndex(e => e.id === entryId)
+        const entry: ConversationEntry = {
+          id: entryId,
+          kind: 'command_batch',
+          timestamp: item.timestamp,
+          title,
+          body: item.output ?? '',
+          status: item.isError ? 'failed' : 'completed',
+          commands: [{
+            id: item.callId,
+            title,
+            status: item.isError ? 'failed' : 'completed',
+            body: item.output ?? '',
+            toolName,
+            commandText: call?.arguments ?? '',
+            details: { args: safeJsonParse(call?.arguments ?? '') },
+          }],
+        }
+        if (existingIdx >= 0) {
+          entries[existingIdx] = entry
+        } else {
+          entries.push(entry)
+        }
+        break
+      }
+      case 'error': {
+        entries.push({
+          id: item.callId || `err:${entries.length}`,
+          kind: 'error',
+          timestamp: item.timestamp,
+          title: '运行出错',
+          body: item.body ?? '',
+          status: 'failed',
+        })
+        break
+      }
+    }
+  }
+  return entries
+}
+
+function safeJsonParse(s: string): Record<string, unknown> {
+  try { return JSON.parse(s) as Record<string, unknown> } catch { return {} }
 }
 
 export function deriveConversationEntriesFromMessages(

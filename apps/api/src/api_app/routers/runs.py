@@ -60,11 +60,14 @@ async def get_thread_run(run_id: str, store: PostgresPlatformStore = Depends(get
 
 @router.get("/api/v2/runs/{run_id}/messages")
 async def get_thread_run_messages(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
-    # Claude Code 风格聊天事实源。
-    #
-    # 返回 replay 后的稳定消息列表；前端不再从 RunEvent 推导 transcript。
     store.get_run(run_id)
     return store.list_messages(run_id)
+
+@router.get("/api/v2/runs/{run_id}/items")
+async def get_thread_run_items(run_id: str, store: PostgresPlatformStore = Depends(get_store)):
+    """Codex 风格平铺 item 列表 — 前端按行序渲染。"""
+    store.get_run(run_id)
+    return store.list_items(run_id)
 
 
 @router.get("/api/v2/runs/{run_id}/messages/stream")

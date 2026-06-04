@@ -631,6 +631,29 @@ class AgentMessageFrame(CamelModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ConversationItem(CamelModel):
+    """对话平铺 item — 对齐 Codex response_item 模型。
+
+    reasoning / message / function_call / function_call_output 按时间顺序
+    直接写入 JSONL。前端按行序渲染，不需要 flatten+sort。
+    """
+    item_type: str  # message | reasoning | function_call | function_call_output | error
+    run_id: str
+    thread_id: str | None = None
+    turn_id: str | None = None
+    call_id: str | None = None       # function_call / function_call_output 配对
+    role: str | None = None          # user | assistant
+    body: str | None = None          # 文本内容
+    name: str | None = None          # 工具名 (function_call)
+    arguments: str | None = None     # 工具参数 JSON (function_call)
+    output: str | None = None        # 工具输出 (function_call_output)
+    is_error: bool = False
+    phase: str | None = None         # commentary | final_answer
+    status: str | None = None        # running | completed
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
 class AgentStateModel(CamelModel):
     session_id: str
     thread_id: str | None = None
