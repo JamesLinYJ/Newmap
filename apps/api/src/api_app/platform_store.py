@@ -435,6 +435,12 @@ class PostgresPlatformStore:
     def list_messages(self, run_id: str) -> list[AgentMessage]:
         return self.session_log_store.list_messages(run_id)
 
+    def append_response_item(self, item: Any) -> None:
+        return self.session_log_store.append_response_item(item)
+
+    def list_items(self, run_id: str) -> list[Any]:
+        return self.session_log_store.list_items(run_id)
+
     def list_runs_for_thread(self, thread_id: str, *, limit: int | None = None) -> list[AnalysisRunRecord]:
         return self.session_log_store.list_runs_for_thread(thread_id, limit=limit)
 

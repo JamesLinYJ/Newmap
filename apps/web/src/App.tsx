@@ -227,6 +227,7 @@ function App() {
     events, messages, artifacts, isSubmitting, uiError,
     placeResolution,
     clearRun,
+    items,
     hydrateRun,
     acceptRun,
     startRun,

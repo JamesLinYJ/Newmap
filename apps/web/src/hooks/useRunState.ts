@@ -397,6 +397,7 @@ export function useRunState() {
     uiError: state.uiError,
     placeResolution: state.placeResolution,
     clearRun,
+    items: state.items,
     hydrateRun,
     acceptRun,
     startRun,
