@@ -112,7 +112,6 @@ function runReducer(state: RunState, action: RunAction): RunState {
       }
     case 'SET_ITEMS':
       return { ...state, items: action.items }
-      }
     case 'CLEAR_RUN':
       return {
         ...initialState(),
