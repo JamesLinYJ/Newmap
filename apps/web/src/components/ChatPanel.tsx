@@ -19,7 +19,8 @@ import { ArrowUp, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Pencil, Pl
 import type { AgentMessage, AgentRuntimeConfig, AgentThreadRecord, ClarificationOption, ClarificationState, ToolDescriptor, UserIntent } from '@geo-agent-platform/shared-types'
 import { SAMPLES, type DataReferenceSummary } from '../constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants, buildScaleInMotion } from '../motion'
-import { deriveConversationEntriesFromMessages, type ConversationCommand, type ConversationEntry } from '../messageLedger'
+import type { ConversationItem } from '@geo-agent-platform/shared-types'
+import { deriveConversationEntriesFromMessages, deriveEntriesFromItems, type ConversationCommand, type ConversationEntry } from '../messageLedger'
 import { AppIcon } from './AppIcon'
 import { Markdown } from './Markdown'
 import { VoiceBar } from './VoiceBar'
@@ -40,6 +41,7 @@ interface ChatPanelProps {
   clarification?: ClarificationState | null
   sessionThreads: AgentThreadRecord[]
   messages: ReadonlyArray<AgentMessage>
+  items?: ReadonlyArray<ConversationItem>
   runtimeConfig?: AgentRuntimeConfig
   availableTools?: ToolDescriptor[]
   onQueryChange: (value: string) => void
@@ -146,6 +148,7 @@ export function ChatPanel(props: ChatPanelProps) {
     clarification,
     sessionThreads,
     messages,
+    items,
     availableTools = [],
     onQueryChange,
     onSubmit,
@@ -223,8 +226,10 @@ export function ChatPanel(props: ChatPanelProps) {
   const selectedComposerMode = COMPOSER_MODES.find((mode) => mode.id === composerMode) ?? COMPOSER_MODES[1]
   const SelectedModeIcon = selectedComposerMode.icon
   const conversation = useMemo(
-    () => deriveConversationEntriesFromMessages(messages, runStatus, availableTools),
-    [availableTools, runStatus, messages],
+    () => items?.length
+      ? deriveEntriesFromItems(items, runStatus, availableTools)
+      : deriveConversationEntriesFromMessages(messages, runStatus, availableTools),
+    [availableTools, runStatus, messages, items],
   )
   const errorTitle = useMemo(() => errorCardTitle(errorMessage), [errorMessage])
   const activeClarification = useMemo(

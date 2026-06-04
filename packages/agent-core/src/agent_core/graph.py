@@ -2282,6 +2282,7 @@ class GeoAgentRuntime:
             tool_results = list(state.tool_results)
             tool_results.append(call)
             message_sink.append_tool_use(tool_use_id=call.step_id, tool_name=tool_name, args=kwargs)
+            message_sink.append_item("function_call", call_id=call.step_id, name=tool_name, arguments=json.dumps(kwargs, ensure_ascii=False))
 
             # === 执行前批次写入（1 次替代原来的 4 次 update_run_state） ===
             updated_run = self.store.update_run_state(
@@ -2596,6 +2597,12 @@ class GeoAgentRuntime:
                 structured_content=result.payload,
                 artifact_id=result.artifact.artifact_id if result.artifact is not None else None,
                 value_refs=getattr(result, "value_refs", []) or [],
+            )
+            message_sink.append_item(
+                "function_call_output",
+                call_id=call.step_id,
+                output=_validated_message,
+                is_error=False,
                 metadata={"resultId": result.result_id, "source": result.source},
             )
             self._append_event(run_id, thread_id, EventType.TOOL_COMPLETED, _validated_message, payload={**tool_event_meta, "args": kwargs, "stepId": call.step_id, "status": "completed", "artifactId": result.artifact.artifact_id if result.artifact is not None else None, "result": result.payload, "valueRefs": serialize_value_refs_for_model(getattr(result, "value_refs", []) or []), "loopPhase": LOOP_PHASES["observe_result"], "loopIteration": iteration})

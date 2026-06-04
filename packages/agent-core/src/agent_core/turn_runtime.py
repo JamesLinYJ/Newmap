@@ -211,6 +211,28 @@ class MessageLedgerSink:
             metadata={"terminal": True},
         )
 
+    def append_item(self, item_type: str, *, call_id: str | None = None,
+                    name: str | None = None, arguments: str | None = None,
+                    output: str | None = None, is_error: bool = False) -> None:
+        """写入 Codex 风格的 ConversationItem。"""
+        from shared_types.schemas import ConversationItem
+        from datetime import datetime as dt_datetime
+        item = ConversationItem(
+            item_type=item_type,
+            run_id=self._run_id,
+            thread_id=self._thread_id,
+            call_id=call_id,
+            name=name,
+            arguments=arguments,
+            output=output,
+            is_error=is_error,
+            timestamp=dt_datetime.utcnow(),
+        )
+        try:
+            self.store.append_response_item(item)
+        except AttributeError:
+            pass  # store 还不支持 response_item，静默跳过
+
 
 class TurnRunner:
     # TurnRunner
