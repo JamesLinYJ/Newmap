@@ -21,7 +21,6 @@ import type {
   LayerDescriptor,
   RunEvent,
   UserIntent,
-  WeatherDatasetRecord,
 } from '@geo-agent-platform/shared-types'
 import type { DataReferenceSummary } from '../shared/constants'
 import type { PanelMode, PrimaryNav, UploadReference } from './types'
@@ -107,8 +106,6 @@ export function mergeThreadRuns(currentRuns: AnalysisRun[], incomingRun: Analysi
 }
 
 export function classifyUploadFile(file: File): UploadReference['kind'] | undefined {
-  if (isWeatherFile(file)) {
-    return 'weather'
   }
   if (isLayerFile(file)) {
     return 'layer'
@@ -121,7 +118,6 @@ export function isLayerFile(file: File) {
   return [...LAYER_FILE_SUFFIXES].some((suffix) => name.endsWith(suffix))
 }
 
-export function isWeatherFile(file: File) {
   const name = file.name.toLowerCase()
   return [...WEATHER_FILE_SUFFIXES].some((suffix) => name.endsWith(suffix))
 }
@@ -140,7 +136,6 @@ export function upsertUploadReference(current: UploadReference[], incoming: Uplo
   return [incoming, ...next].slice(0, 80)
 }
 
-export function mergeWeatherDataset(current: WeatherDatasetRecord[], incoming: WeatherDatasetRecord) {
   const byId = new Map(current.map((item) => [item.datasetId, item]))
   byId.set(incoming.datasetId, incoming)
   return [...byId.values()].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
@@ -148,14 +143,12 @@ export function mergeWeatherDataset(current: WeatherDatasetRecord[], incoming: W
 
 export function buildDataReferences({
   layers,
-  weatherDatasets,
   uploadReferences,
   artifacts,
   threadRuns,
   currentThreadId,
 }: {
   layers: LayerDescriptor[]
-  weatherDatasets: WeatherDatasetRecord[]
   uploadReferences: UploadReference[]
   artifacts: ArtifactRef[]
   threadRuns: ReadonlyArray<AnalysisRun>
@@ -168,7 +161,6 @@ export function buildDataReferences({
   // 避免新建对话时看到旧 thread 的上传数据。
   const result: DataReferenceSummary[] = []
   const seen = new Set<string>()
-  const weatherByName = new Map(weatherDatasets.map((dataset) => [dataset.filename, dataset]))
   const layerByName = new Map(layers.map((layer) => [layer.name, layer]))
   const threadArtifactIds = new Set(
     threadRuns.flatMap((item) => item.state.artifacts.map((artifact) => artifact.artifactId)),
@@ -178,14 +170,11 @@ export function buildDataReferences({
     const key = `${item.kind}:${item.relativePath ?? item.name}`
     seen.add(key)
     seen.add(`${item.kind}:${item.name}`)
-    const matchedWeather = item.kind === 'weather' ? weatherByName.get(item.name) : undefined
     const matchedLayer = item.kind === 'layer' ? layerByName.get(item.name) : undefined
     result.push({
       id: `upload:${item.id}`,
       kind: item.kind,
       name: item.name,
-      status: matchedWeather ? formatWeatherStatusLabel(matchedWeather.status) : matchedLayer ? (matchedLayer.status === 'active' ? '可用' : matchedLayer.status) : uploadStatusLabel(item.status),
-      detail: matchedWeather ? formatWeatherReferenceDetail(matchedWeather) : matchedLayer ? `${matchedLayer.featureCount ?? 0} 个对象 · ${matchedLayer.geometryType || '图层'}` : item.detail ?? formatReferenceKind(item.kind),
       relativePath: item.relativePath,
     })
   }
@@ -193,18 +182,12 @@ export function buildDataReferences({
   // session 级图层和气象数据只在有活跃 thread 上下文时才展示；
   // 没有 thread 上下文时跳过，避免新建对话看到旧 thread 的数据。
   if (currentThreadId) {
-    for (const dataset of weatherDatasets) {
-      const key = `weather:${dataset.filename}`
       if (seen.has(key)) {
         continue
       }
       seen.add(key)
       result.push({
-        id: `weather:${dataset.datasetId}`,
-        kind: 'weather',
         name: dataset.filename,
-        status: formatWeatherStatusLabel(dataset.status),
-        detail: formatWeatherReferenceDetail(dataset),
       })
     }
 
@@ -248,7 +231,6 @@ export function buildDataReferences({
   return result.slice(0, 80)
 }
 
-export function formatWeatherReferenceDetail(dataset: WeatherDatasetRecord) {
   const variables = Array.isArray(dataset.metadata.variables) ? dataset.metadata.variables : []
   if (!variables.length && dataset.status === 'uploaded') {
     return '开始分析时解析'
@@ -265,24 +247,19 @@ export function formatWeatherReferenceDetail(dataset: WeatherDatasetRecord) {
 }
 
 export function formatReferenceKind(kind: UploadReference['kind']) {
-  return kind === 'weather' ? '气象/雷达数据' : '空间图层'
 }
 
 export function uploadStatusLabel(status: string) {
   if (status === 'pending') return '等待上传'
   if (status === 'uploading') return '上传中'
   if (status === 'ready') return '可用'
-  return formatWeatherStatusLabel(status)
 }
 
-export function formatWeatherUploadDetail(status: string) {
   if (status === 'uploaded') {
     return '已上传，开始分析时解析'
   }
-  return formatWeatherStatusLabel(status)
 }
 
-export function formatWeatherStatusLabel(status: string) {
   if (status === 'uploaded') return '已上传'
   if (status === 'completed') return '解析完成'
   if (status === 'failed') return '失败'

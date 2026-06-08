@@ -21,7 +21,6 @@ import type {
   LayerDescriptor,
   ToolDescriptor,
   ToolParameterDescriptor,
-  WeatherDatasetRecord,
 } from '@geo-agent-platform/shared-types'
 import { StatusPill } from '../../../shared/components/StatusPill'
 
@@ -29,7 +28,6 @@ interface ToolWorkbenchProps {
   tools: ToolDescriptor[]
   artifacts: ArtifactRef[]
   layers: LayerDescriptor[]
-  weatherDatasets: WeatherDatasetRecord[]
   toolRunResult?: Record<string, unknown> | null
   toolCatalogEntries: Array<Record<string, unknown>>
   isToolSubmitting: boolean
@@ -44,7 +42,6 @@ export function ToolWorkbench({
   tools,
   artifacts,
   layers,
-  weatherDatasets,
   toolRunResult,
   toolCatalogEntries,
   isToolSubmitting,
@@ -57,7 +54,6 @@ export function ToolWorkbench({
   const [selectedToolName, setSelectedToolName] = useState('')
   const [toolFormsByName, setToolFormsByName] = useState<Record<string, Record<string, string>>>({})
   const collectionOptions = useMemo(() => buildCollectionOptions({ artifacts, layers }), [artifacts, layers])
-  const weatherDatasetOptions = useMemo(() => buildWeatherDatasetOptions(weatherDatasets), [weatherDatasets])
   const groupedTools = useMemo(() => groupTools(tools), [tools])
   const selectedTool =
     tools.find((tool) => tool.name === selectedToolName) ??
@@ -121,7 +117,6 @@ export function ToolWorkbench({
                   collectionOptions={collectionOptions}
                   artifacts={artifacts}
                   layers={layers}
-                  weatherDatasetOptions={weatherDatasetOptions}
                   onChange={(value) => {
                     setToolFormsByName((current) => ({
                       ...current,
@@ -275,7 +270,6 @@ function ToolParameterField({
   collectionOptions,
   artifacts,
   layers,
-  weatherDatasetOptions,
   onChange,
 }: {
   parameter: ToolParameterDescriptor
@@ -283,7 +277,6 @@ function ToolParameterField({
   collectionOptions: Array<{ label: string; value: string }>
   artifacts: ArtifactRef[]
   layers: LayerDescriptor[]
-  weatherDatasetOptions: Array<{ label: string; value: string }>
   onChange: (value: string) => void
 }) {
   if (parameter.options.length) {
@@ -363,13 +356,11 @@ function ToolParameterField({
     )
   }
 
-  if (parameter.source === 'weather-dataset') {
     return (
       <label className="tool-field">
         <span className="composer__label">{parameter.label}</span>
         <select className="composer__select" value={value} onChange={(event) => onChange(event.target.value)}>
           <option value="">请选择气象数据集</option>
-          {weatherDatasetOptions.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -437,14 +428,11 @@ function buildCollectionOptions({
   return [...artifactOptions, ...layerOptions]
 }
 
-function buildWeatherDatasetOptions(datasets: WeatherDatasetRecord[]) {
   return datasets.map((dataset) => ({
-    label: `${dataset.filename} · ${formatWeatherDatasetCapability(dataset)} · ${shortId(dataset.datasetId)}`,
     value: dataset.datasetId,
   }))
 }
 
-function formatWeatherDatasetCapability(dataset: WeatherDatasetRecord) {
   if (dataset.status !== 'completed') {
     return formatRunStatus(dataset.status)
   }

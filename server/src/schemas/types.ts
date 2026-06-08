@@ -532,7 +532,7 @@ export const toolDescriptorSchema = z.object({
 export const weatherDatasetRecordSchema = z.object({
   datasetId: z.string(),
   sessionId: z.string(),
-  threadId: z.string(),
+  threadId: z.string().nullable().default(null),
   filename: z.string(),
   status: z.string().default('uploaded'),
   storageRelativePath: z.string(),
@@ -544,7 +544,7 @@ export const weatherDatasetRecordSchema = z.object({
 export const weatherJobRecordSchema = z.object({
   jobId: z.string(),
   datasetId: z.string(),
-  threadId: z.string(),
+  threadId: z.string().nullable().default(null),
   jobType: z.string().default('parse'),
   status: z.string().default('queued'),
   payload: z.record(z.unknown()).default({}),

@@ -357,7 +357,6 @@ function TaskPanel({ tasks, entryVariants }: {
 }
 
 function formatReferenceKind(kind: DataReferenceSummary['kind']) {
-  if (kind === 'weather') return '气象'
   if (kind === 'artifact') return '结果'
   return '图层'
 }

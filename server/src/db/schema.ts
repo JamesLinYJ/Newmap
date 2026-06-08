@@ -8,7 +8,7 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
-import { pgTable, text, timestamp, jsonb, index } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, jsonb, index, integer } from 'drizzle-orm/pg-core'
 
 export const platformSessions = pgTable('platform_sessions', {
   sessionId: text('session_id').primaryKey(),
@@ -63,3 +63,10 @@ export const platformWeatherJobs = pgTable('platform_weather_jobs', {
 }, (table) => ({
   statusUpdatedIdx: index('idx_weather_jobs_status_updated').on(table.status, table.updatedAt),
 }))
+
+export const toolCatalogEntries = pgTable('tool_catalog_entries', {
+  toolName: text('tool_name').notNull(),
+  toolKind: text('tool_kind').notNull(),
+  payloadJson: jsonb('payload_json').notNull().$type<Record<string, unknown>>(),
+  sortOrder: integer('sort_order').notNull().default(0),
+})

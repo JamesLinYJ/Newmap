@@ -1,0 +1,74 @@
+{
+  "id": "geo-platform-meteorology",
+  "name": "气象数据分析",
+  "version": "1.0.0",
+  "author": "geo-agent-platform",
+  "language": "typescript",
+  "description": "气象数据探查、栅格渲染、统计分析、阈值分析、等值线、报告生成、降水短临预报",
+  "requires": { "WORKER_URL": "required" },
+  "tools": [
+    {
+      "name": "meteorological_inspect",
+      "label": "气象数据探查",
+      "description": "检查 NetCDF/GRIB/GeoTIFF/HDF5 数据集的结构（变量、维度、时间范围、空间范围）",
+      "group": "气象",
+      "tags": ["meteorology", "inspect", "read"],
+      "isReadOnly": true,
+      "isDestructive": false
+    },
+    {
+      "name": "meteorological_render",
+      "label": "气象栅格渲染",
+      "description": "将气象栅格数据渲染为热力图 PNG",
+      "group": "气象",
+      "tags": ["meteorology", "render", "visualization"],
+      "isReadOnly": true,
+      "isDestructive": false
+    },
+    {
+      "name": "meteorological_stats",
+      "label": "气象统计分析",
+      "description": "对气象数据集进行统计分析（均值、极值、标准差、分位数）",
+      "group": "气象",
+      "tags": ["meteorology", "statistics"],
+      "isReadOnly": true,
+      "isDestructive": false
+    },
+    {
+      "name": "meteorological_threshold",
+      "label": "气象阈值分析",
+      "description": "计算气象要素超过/低于阈值的区域面积和分布",
+      "group": "气象",
+      "tags": ["meteorology", "threshold"],
+      "isReadOnly": true,
+      "isDestructive": false
+    },
+    {
+      "name": "meteorological_contour",
+      "label": "气象等值线",
+      "description": "生成气象要素的等值线（等高线/等温线/等压线）",
+      "group": "气象",
+      "tags": ["meteorology", "contour"],
+      "isReadOnly": true,
+      "isDestructive": false
+    },
+    {
+      "name": "meteorological_report",
+      "label": "气象报告生成",
+      "description": "根据 LLM 解读内容生成 DOCX 格式气象分析报告",
+      "group": "气象",
+      "tags": ["meteorology", "report", "docx"],
+      "isReadOnly": false,
+      "isDestructive": false
+    },
+    {
+      "name": "precipitation_nowcast",
+      "label": "降水短临预报",
+      "description": "基于雷达回波外推的降水短临预报分析",
+      "group": "气象",
+      "tags": ["meteorology", "precipitation", "nowcast"],
+      "isReadOnly": true,
+      "isDestructive": false
+    }
+  ]
+}

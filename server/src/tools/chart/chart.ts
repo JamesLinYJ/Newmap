@@ -1,11 +1,11 @@
 // 图表工具
-import type { ToolDef } from '../../tools.js'
+import type { ToolDef } from '../../framework/types.js'
 import { makeId } from '../../utils/ids.js'
 
 export const chartTool: ToolDef = {
   name: 'create_chart', label: '生成图表', description: '根据数据生成统计图表（柱状图、折线图、饼图等）。',
-  group: '可视化', toolKind: 'registry', tags: ['chart', 'visualization'],
-  isReadOnly: true, isDestructive: false, isConcurrencySafe: true,
+  group: '可视化',  tags: ['chart', 'visualization'],
+  isReadOnly: true, isDestructive: false, 
 
   jsonSchema: {
     type: 'object',

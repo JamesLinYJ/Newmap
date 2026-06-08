@@ -9,7 +9,7 @@
 // --------------------------------------------------------------------------
 
 import type { ModelProviderDescriptor } from '../schemas/types.js'
-import type { Env } from '../env.js'
+import type { Env } from '../framework/env.js'
 import { createOpenAIAdapter } from './providers/openaiCompatible.js'
 import { createAnthropicAdapter } from './providers/anthropic.js'
 import { createGeminiAdapter } from './providers/gemini.js'
@@ -31,6 +31,12 @@ export function makeCapabilities(overrides: Partial<AgentsSdkCapabilities> = {})
   }
 }
 
+export interface ChatStreamDelta {
+  content?: string
+  toolCalls?: Array<{ id: string; index: number; name: string; arguments: string }>
+  finishReason?: string
+}
+
 export interface ModelAdapter {
   readonly provider: string
   readonly displayName: string
@@ -41,6 +47,7 @@ export interface ModelAdapter {
   capabilities(): string[]
   agentsSdkCapabilities(modelName?: string | null): AgentsSdkCapabilities
   chat(prompt: string, kwargs?: Record<string, unknown>): Promise<Record<string, unknown>>
+  chatStream?(messages: Array<{ role: string; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>; tool_call_id?: string }>, opts?: { model?: string; reasoning?: boolean; tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> }): AsyncIterable<ChatStreamDelta>
 }
 
 // --- Registry ---
@@ -51,35 +58,31 @@ export class ModelAdapterRegistry {
   readonly defaultModelName: string | null
 
   constructor(env: Env) {
-    this.defaultProvider = env.DEFAULT_MODEL_PROVIDER
-    this.defaultModelName = env.DEFAULT_MODEL_NAME || null
+    this.defaultProvider = env.DEFAULT_MODEL_PROVIDER ?? ''
+    this.defaultModelName = env.DEFAULT_MODEL_NAME ?? null
 
-    const defaultModelFor = (provider: string) =>
-      env.DEFAULT_MODEL_PROVIDER === provider ? env.DEFAULT_MODEL_NAME : ''
+    const dmf = (p: string) => env.DEFAULT_MODEL_PROVIDER === p ? (env.DEFAULT_MODEL_NAME ?? '') : ''
 
     this.register(createOpenAIAdapter({
-      baseUrl: env.OPENAI_BASE_URL,
-      apiKey: env.OPENAI_API_KEY,
-      defaultModel: env.OPENAI_MODEL || defaultModelFor('openai_compatible'),
-      subagentModel: env.OPENAI_SUBAGENT_MODEL || undefined,
+      baseUrl: env.OPENAI_BASE_URL ?? '',
+      apiKey: env.OPENAI_API_KEY ?? '',
+      defaultModel: (env.OPENAI_MODEL ?? dmf('openai_compatible')),
+      subagentModel: env.OPENAI_SUBAGENT_MODEL ?? undefined,
     }))
-
     this.register(createAnthropicAdapter({
-      baseUrl: env.ANTHROPIC_BASE_URL,
-      apiKey: env.ANTHROPIC_API_KEY,
-      defaultModel: env.ANTHROPIC_MODEL || defaultModelFor('anthropic'),
-      version: env.ANTHROPIC_VERSION,
+      baseUrl: env.ANTHROPIC_BASE_URL ?? '',
+      apiKey: env.ANTHROPIC_API_KEY ?? '',
+      defaultModel: (env.ANTHROPIC_MODEL ?? dmf('anthropic')),
+      version: env.ANTHROPIC_VERSION ?? '',
     }))
-
     this.register(createGeminiAdapter({
-      baseUrl: env.GEMINI_BASE_URL,
-      apiKey: env.GEMINI_API_KEY,
-      defaultModel: env.GEMINI_MODEL || defaultModelFor('gemini'),
+      baseUrl: env.GEMINI_BASE_URL ?? '',
+      apiKey: env.GEMINI_API_KEY ?? '',
+      defaultModel: (env.GEMINI_MODEL ?? dmf('gemini')),
     }))
-
     this.register(createOllamaAdapter({
-      baseUrl: env.OLLAMA_BASE_URL,
-      defaultModel: env.OLLAMA_MODEL || defaultModelFor('ollama'),
+      baseUrl: env.OLLAMA_BASE_URL ?? '',
+      defaultModel: (env.OLLAMA_MODEL ?? dmf('ollama')),
     }))
   }
 

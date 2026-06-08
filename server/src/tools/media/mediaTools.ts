@@ -1,14 +1,13 @@
 // 媒体工具 → Python sidecar HTTP 代理
-import type { ToolDef } from '../../tools.js'
+import { getEnv } from '../../framework/env.js'
+import type { ToolDef } from '../../framework/types.js'
 import { makeId } from '../../utils/ids.js'
-
-const WORKER_URL = process.env.WORKER_URL ?? 'http://localhost:8012'
 
 export const ttsTool: ToolDef = {
   name: 'text_to_speech', label: '文本转语音',
   description: '将文本合成为语音音频文件。',
-  group: '媒体', toolKind: 'registry', tags: ['media', 'tts'],
-  isReadOnly: true, isDestructive: false, isConcurrencySafe: true,
+  group: '媒体',  tags: ['media', 'tts'],
+  isReadOnly: true, isDestructive: false, 
 
   jsonSchema: {
     type: 'object',
@@ -21,7 +20,8 @@ export const ttsTool: ToolDef = {
 
   async handler(args, _runtime) {
     const text = args.text as string
-    const res = await fetch(`${WORKER_URL}/media/tts`, {
+    const workerUrl = getEnv().WORKER_URL
+    const res = await fetch(`${workerUrl}/media/tts`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, voice: args.voice }), signal: AbortSignal.timeout(60_000),
     })
@@ -38,8 +38,8 @@ export const ttsTool: ToolDef = {
 export const digitalHumanTool: ToolDef = {
   name: 'generate_digital_human', label: '生成数字人视频',
   description: '用音频驱动数字形象生成说话视频。',
-  group: '媒体', toolKind: 'registry', tags: ['media', 'avatar'],
-  isReadOnly: false, isDestructive: true, isConcurrencySafe: false,
+  group: '媒体',  tags: ['media', 'avatar'],
+  isReadOnly: false, isDestructive: true, 
 
   jsonSchema: {
     type: 'object',
@@ -51,7 +51,8 @@ export const digitalHumanTool: ToolDef = {
   },
 
   async handler(args, _runtime) {
-    const res = await fetch(`${WORKER_URL}/media/avatar`, {
+    const workerUrl = getEnv().WORKER_URL
+    const res = await fetch(`${workerUrl}/media/avatar`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(args), signal: AbortSignal.timeout(300_000),
     })

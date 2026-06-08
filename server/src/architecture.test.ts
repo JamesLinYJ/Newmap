@@ -36,7 +36,7 @@ describe('conversation architecture', () => {
   it('replays completed conversation items from the session log', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'geo-items-'))
     try {
-      const db = {} as Database
+      const db = noOpDb()
       const store = new PostgresPlatformStore(db, dir)
       await store.initialize()
       const session = await store.createSession()
@@ -81,6 +81,12 @@ async function collect(dir: string, files: string[]): Promise<void> {
       files.push(fullPath)
     }
   }
+}
+
+function noOpDb(): Database {
+  return {
+    execute: async () => ({ rows: [] }),
+  } as Database
 }
 
 function item(overrides: Partial<ConversationItem>): ConversationItem {

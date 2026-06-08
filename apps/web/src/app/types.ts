@@ -30,7 +30,6 @@ export interface MapRenderLayer {
 
 export interface UploadReference {
   id: string
-  kind: 'layer' | 'weather'
   name: string
   relativePath?: string
   status: 'pending' | 'uploading' | 'queued' | 'running' | 'completed' | 'failed' | 'ready' | string

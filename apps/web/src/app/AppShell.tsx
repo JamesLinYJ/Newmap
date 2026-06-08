@@ -28,8 +28,6 @@ import type {
   SessionRecord,
   SystemComponentsStatus,
   ToolDescriptor,
-  WeatherDatasetRecord,
-  WeatherJobRecord,
 } from '@geo-agent-platform/shared-types'
 
 import {
@@ -47,7 +45,6 @@ import {
   getSession,
   getSystemComponents,
   getThread,
-  getWeatherJob,
   importManagedLayer,
   listBasemaps,
   listLayers,
@@ -55,7 +52,6 @@ import {
   listSessionThreads,
   listTools,
   listToolCatalogEntries,
-  listWeatherDatasets,
   listSessionRuns,
   replaceManagedLayer,
   resolveApproval,
@@ -67,7 +63,6 @@ import {
   upsertToolCatalogEntry,
   updateRuntimeConfig,
   uploadLayer,
-  uploadWeatherDataset,
   uploadAnyFile,
   listAllFiles,
   deleteAnyFile,
@@ -108,11 +103,9 @@ import {
   formatPanelMode,
   formatPrimaryNav,
   formatTopBarRunStatus,
-  formatWeatherUploadDetail,
   getUploadRelativePath,
   makeUploadReferenceId,
   mergeThreadRuns,
-  mergeWeatherDataset,
   parseRasterCoordinates,
   upsertUploadReference,
 } from './derivedState'
@@ -146,8 +139,6 @@ function AppShell() {
   const [query, setQuery] = useState('')
   const [session, setSession] = useState<SessionRecord>()
   const [layers, setLayers] = useState<LayerDescriptor[]>([])
-  const [weatherDatasets, setWeatherDatasets] = useState<WeatherDatasetRecord[]>([])
-  const [weatherJobs, setWeatherJobs] = useState<Record<string, WeatherJobRecord>>({})
   const [basemaps, setBasemaps] = useState<BasemapDescriptor[]>([DEFAULT_BASEMAP])
   const [providers, setProviders] = useState<ModelProviderDescriptor[]>([])
   const [systemComponents, setSystemComponents] = useState<SystemComponentsStatus>()
@@ -311,8 +302,6 @@ function AppShell() {
   )
 
   const dataReferences = useMemo(
-    () => buildDataReferences({ layers, weatherDatasets, uploadReferences, artifacts, threadRuns, currentThreadId }),
-    [artifacts, layers, uploadReferences, weatherDatasets, threadRuns, currentThreadId],
   )
   const selectedBasemap = useMemo(
     () => basemaps.find((item) => item.basemapKey === selectedBasemapKey) ?? basemaps[0] ?? DEFAULT_BASEMAP,
@@ -398,10 +387,7 @@ function AppShell() {
     })
   }, [])
 
-  const refreshWeatherDatasets = useCallback(async (sessionId: string, threadId?: string | null) => {
-    const datasets = await listWeatherDatasets(sessionId, threadId)
     startTransition(() => {
-      setWeatherDatasets(datasets ?? [])
     })
     return datasets
   }, [])
@@ -601,7 +587,6 @@ function AppShell() {
         })
 
         void refreshSessionHistory(sessionRecord.id).catch((error) => reportNonBlockingError('refreshSessionHistory:bootstrap', error))
-        void refreshWeatherDatasets(sessionRecord.id, hintedThreadId).catch((error) => reportNonBlockingError('refreshWeatherDatasets:bootstrap', error))
 
         // 恢复 UI 选中提示的 thread/run。
         //
@@ -677,7 +662,6 @@ function AppShell() {
       .catch((error) => {
         setUiError(formatUiError(error, '图层目录暂时加载不了，请稍后重试。'))
       })
-  }, [clearActiveRunState, hydrateRunState, refreshSessionHistory, refreshWeatherDatasets, setUiError])
 
   useEffect(() => {
     // 模型提供方初始化
@@ -777,15 +761,12 @@ function AppShell() {
     //
     // 兼容手动创建的后台解析 job；普通上传现在只登记 uploaded，
     // 等用户开始分析或工具消费数据时再解析。
-    const activeJobs = Object.values(weatherJobs).filter((job) => job.status === 'queued' || job.status === 'running')
     if (!activeJobs.length || !session?.id) {
       return
     }
     const timer = window.setInterval(() => {
-      void Promise.all(activeJobs.map((job) => getWeatherJob(job.jobId)))
         .then((jobs) => {
           startTransition(() => {
-            setWeatherJobs((current) => {
               const next = { ...current }
               for (const job of jobs) {
                 next[job.jobId] = job
@@ -794,24 +775,18 @@ function AppShell() {
             })
           })
           if (jobs.some((job) => job.status === 'completed' || job.status === 'failed')) {
-            void refreshWeatherDatasets(session.id).catch((error) => reportNonBlockingError('refreshWeatherDatasets:poll', error))
           }
         })
-        .catch((error) => reportNonBlockingError('weatherJobPoll', error))
     }, 2500)
     return () => window.clearInterval(timer)
-  }, [refreshWeatherDatasets, session?.id, weatherJobs])
 
   useEffect(() => {
-    const hasPendingDataset = weatherDatasets.some((dataset) => dataset.status === 'queued' || dataset.status === 'running')
     if (!hasPendingDataset || !session?.id) {
       return
     }
     const timer = window.setInterval(() => {
-      void refreshWeatherDatasets(session.id).catch((error) => reportNonBlockingError('refreshWeatherDatasets:datasetPoll', error))
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [refreshWeatherDatasets, session?.id, weatherDatasets])
 
   const refreshToolingState = useCallback(async () => {
     // 调试页和 compute 面板共用这一条刷新路径，避免各自拉一套不同快照。
@@ -1007,19 +982,14 @@ function AppShell() {
       setUploadReferences((current) => upsertUploadReference(current, baseReference))
 
       try {
-        if (kind === 'weather') {
-          const { dataset, job } = await uploadWeatherDataset(session.id, file, threadId)
           startTransition(() => {
             setUploadedLayerName(dataset.filename)
-            setWeatherDatasets((current) => mergeWeatherDataset(current, dataset))
             if (job) {
-              setWeatherJobs((current) => ({ ...current, [job.jobId]: job }))
             }
             setUploadReferences((current) => upsertUploadReference(current, {
               ...baseReference,
               id: referenceId,
               status: dataset.status,
-              detail: `${formatFileSize(file.size)} · ${formatWeatherUploadDetail(dataset.status)}`,
             }))
           })
           return { kind, name: dataset.filename }
@@ -1100,13 +1070,11 @@ function AppShell() {
       setActiveSidebarItem('sources')
 
       let layerUploaded = false
-      let weatherUploaded = false
       const failures: string[] = []
       for (const file of uploadable) {
         try {
           const result = await uploadOneFile(file, resolvedThreadId)
           layerUploaded ||= result.kind === 'layer'
-          weatherUploaded ||= result.kind === 'weather'
         } catch (error) {
           failures.push(`${getUploadRelativePath(file)}：${formatUiError(error, '上传失败')}`)
         }
@@ -1123,8 +1091,6 @@ function AppShell() {
           }),
         )
       }
-      if (weatherUploaded) {
-        refreshes.push(refreshWeatherDatasets(session.id, resolvedThreadId))
       }
       try {
         await Promise.all(refreshes)
@@ -1139,7 +1105,6 @@ function AppShell() {
         setUiError(`已上传 ${uploadable.length} 个文件，跳过 ${skippedCount} 个不支持的文件。`)
       }
     },
-    [ensureUploadThread, refreshWeatherDatasets, session, setUiError, uploadOneFile],
   )
 
   const handleUpload = useCallback(
@@ -1676,7 +1641,6 @@ function AppShell() {
                     artifactData={artifactData}
                     mapLayers={mapLayers}
                     layers={layers}
-                    weatherDatasets={weatherDatasets}
                     events={deferredEvents}
                     sessionRuns={sessionRuns}
                     progressItems={progressItems}
@@ -1759,7 +1723,6 @@ function AppShell() {
                 providers={providers}
                 sessionRuns={sessionRuns}
                 layers={layers}
-                weatherDatasets={weatherDatasets}
                 events={deferredEvents}
                 items={deferredItems}
                 intent={intent}

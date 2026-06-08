@@ -124,3 +124,13 @@ export const platformWeatherJobs = pgTable(
 // =========================================================================
 // 图层目录由 PostGIS 扩展管理（geometry 列等），不在 Drizzle schema 中定义。
 // 运行时通过原始 SQL / PostGIS 函数访问。
+
+// =========================================================================
+// tool_catalog_entries — 工具目录展示配置
+// =========================================================================
+export const toolCatalogEntries = pgTable('tool_catalog_entries', {
+  toolName: text('tool_name').notNull(),
+  toolKind: text('tool_kind').notNull(),
+  payloadJson: jsonb('payload_json').notNull().$type<Record<string, unknown>>(),
+  sortOrder: integer('sort_order').notNull().default(0),
+})

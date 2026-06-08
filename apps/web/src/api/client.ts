@@ -25,8 +25,6 @@ import type {
   SessionRecord,
   SystemComponentsStatus,
   ToolDescriptor,
-  WeatherDatasetRecord,
-  WeatherJobRecord,
 } from '@geo-agent-platform/shared-types'
 
 // API 地址解析
@@ -361,52 +359,9 @@ export async function uploadLayer(sessionId: string, file: File, threadId?: stri
   return requestFormJson<LayerDescriptor>('/api/v1/layers/register', formData, '图层上传请求失败')
 }
 
-export async function uploadWeatherDataset(sessionId: string, file: File, threadId?: string | null) {
-  // 气象数据文件可能很大，后端会流式落盘并创建后台解析任务。
-  const formData = new FormData()
-  formData.append('sessionId', sessionId)
-  if (threadId) {
-    formData.append('threadId', threadId)
-  }
-  formData.append('file', file)
 
-  return requestFormJson<{ dataset: WeatherDatasetRecord; job?: WeatherJobRecord | null }>(
-    '/api/v1/weather/datasets',
-    formData,
-    '气象数据上传请求失败',
-    600_000,
-  )
-}
 
-export function listWeatherDatasets(sessionId?: string, threadId?: string | null) {
-  const params = new URLSearchParams()
-  if (sessionId) params.set('sessionId', sessionId)
-  if (threadId) params.set('threadId', threadId)
-  const query = params.toString()
-  return requestJson<WeatherDatasetRecord[]>(`/api/v1/weather/datasets${query ? '?' + query : ''}`)
-}
 
-export function getWeatherJob(jobId: string) {
-  return requestJson<WeatherJobRecord>(`/api/v1/weather/jobs/${encodeURIComponent(jobId)}`)
-}
-
-export function generateWeatherDatasetReport(
-  datasetId: string,
-  payload: {
-    llmInterpretation: string
-    runId?: string | null
-    resultName?: string | null
-  },
-) {
-  return requestJson<{ artifact: ArtifactRef; payload: Record<string, unknown> }>(
-    `/api/v1/weather/datasets/${encodeURIComponent(datasetId)}/report`,
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    },
-    120_000,
-  )
-}
 
 export async function importManagedLayer(
   file: File,

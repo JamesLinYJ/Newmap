@@ -24,7 +24,6 @@ import type {
   ModelProviderDescriptor,
   RunEvent,
   SystemComponentsStatus,
-  WeatherDatasetRecord,
 } from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../../api/client'
@@ -63,7 +62,6 @@ interface DetailPanelProps {
     geometrySummary: string
   }>
   layers: LayerDescriptor[]
-  weatherDatasets: WeatherDatasetRecord[]
   events: RunEvent[]
   sessionRuns: AnalysisRun[]
   progressItems: ReadonlyArray<ProgressItem>
@@ -125,7 +123,6 @@ export const DetailPanel = memo(function DetailPanel({
   artifactData,
   mapLayers,
   layers,
-  weatherDatasets,
   events,
   sessionRuns,
   progressItems,
@@ -213,7 +210,6 @@ export const DetailPanel = memo(function DetailPanel({
     () => layers.filter((layer) => layer.sourceType.startsWith('session_') || layer.sourceType === 'upload'),
     [layers],
   )
-  void weatherDatasets
   void uploadedLayerName
   void selectedBasemapName
   void onImportManagedLayer

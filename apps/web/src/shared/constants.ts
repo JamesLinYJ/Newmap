@@ -16,7 +16,6 @@ import type { BasemapDescriptor } from '@geo-agent-platform/shared-types'
 
 export interface DataReferenceSummary {
   id: string
-  kind: 'layer' | 'weather' | 'artifact'
   name: string
   status: string
   detail: string

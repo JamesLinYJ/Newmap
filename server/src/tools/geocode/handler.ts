@@ -8,7 +8,7 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
-import type { ToolDef } from '../../tools.js'
+import type { ToolDef } from '../../framework/types.js'
 import { makeId } from '../../utils/ids.js'
 
 export const geocodePlaceTool: ToolDef = {
@@ -16,11 +16,11 @@ export const geocodePlaceTool: ToolDef = {
   label: '地点地理编码',
   description: '根据地名查询经纬度和边界框。支持城市、区县、POI 等地点类型。',
   group: '地理',
-  toolKind: 'registry',
+  
   tags: ['geo', 'search'],
   isReadOnly: true,
   isDestructive: false,
-  isConcurrencySafe: true,
+  
 
   jsonSchema: {
     type: 'object',

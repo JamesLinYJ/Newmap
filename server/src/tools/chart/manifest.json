@@ -1,0 +1,13 @@
+{
+  "id": "geo-platform-chart",
+  "name": "图表",
+  "version": "1.0.0",
+  "author": "geo-agent-platform",
+  "language": "typescript",
+  "description": "数据可视化图表生成",
+  "tools": [{
+    "name": "create_chart", "label": "生成图表",
+    "description": "根据数据生成统计图表", "group": "可视化",
+    "tags": ["chart"], "isReadOnly": true, "isDestructive": false
+  }]
+}

@@ -11,7 +11,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import * as schema from './schema.js'
-import { getEnv } from '../env.js'
+import { getEnv } from '../framework/env.js'
 
 export type Database = ReturnType<typeof createDb>
 

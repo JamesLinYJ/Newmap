@@ -30,7 +30,6 @@ import type {
   SystemComponentsStatus,
   ToolDescriptor,
   UserIntent,
-  WeatherDatasetRecord,
 } from '@geo-agent-platform/shared-types'
 
 import { apiBaseUrl } from '../../api/client'
@@ -75,7 +74,6 @@ interface DebugPageProps {
   providers: ModelProviderDescriptor[]
   sessionRuns: AnalysisRun[]
   layers: LayerDescriptor[]
-  weatherDatasets: WeatherDatasetRecord[]
   events: RunEvent[]
   items: ConversationItem[]
   intent?: UserIntent
@@ -125,7 +123,6 @@ export function DebugPage({
   providers,
   sessionRuns,
   layers,
-  weatherDatasets,
   events,
   items,
   intent,
@@ -486,7 +483,6 @@ export function DebugPage({
             tools={tools}
             artifacts={artifacts}
             layers={layers}
-            weatherDatasets={weatherDatasets}
             toolRunResult={toolRunResult}
             toolCatalogEntries={toolCatalogEntries}
             isToolSubmitting={isToolSubmitting}

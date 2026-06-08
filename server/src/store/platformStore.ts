@@ -14,9 +14,17 @@ import { makeId, nowUtc, makeShareToken } from '../utils/ids.js'
 import { InMemoryEventBus } from './eventBus.js'
 import { SessionLogStore } from './sessionLog.js'
 import { summarizeAssistantText } from '../conversation/items.js'
+import { sql } from 'drizzle-orm'
 
 export class StoreNotFoundError extends Error {
   constructor(message: string) { super(message); this.name = 'StoreNotFoundError' }
+}
+
+export interface ToolCatalogEntry {
+  toolKind: string
+  toolName: string
+  payload: Record<string, unknown>
+  sortOrder: number
 }
 
 export class PostgresPlatformStore {
@@ -55,6 +63,7 @@ export class PostgresPlatformStore {
     for (const item of this.sessionLog.allItems()) {
       this.itemBus.publish(item.runId, item)
     }
+    await Promise.all([...this.sessions.values()].map(session => this.persistSession(session)))
   }
 
   async createSession(): Promise<SessionRecord> {
@@ -64,6 +73,7 @@ export class PostgresPlatformStore {
     }
     this.sessions.set(session.id, session)
     await this.sessionLog.appendSession(session)
+    await this.persistSession(session)
     return session
   }
 
@@ -76,6 +86,7 @@ export class PostgresPlatformStore {
       }
       this.sessions.set(session.id, session)
       await this.sessionLog.appendSession(session)
+      await this.persistSession(session)
       return session
     }
   }
@@ -86,10 +97,58 @@ export class PostgresPlatformStore {
     return s
   }
 
-  updateSession(sessionId: string, fields: Partial<SessionRecord>): SessionRecord {
+  async updateSession(sessionId: string, fields: Partial<SessionRecord>): Promise<SessionRecord> {
     const s = this.getSession(sessionId)
     Object.assign(s, fields)
+    await this.persistSession(s)
     return s
+  }
+
+  async getRuntimeConfig(configKey: string): Promise<Record<string, unknown> | null> {
+    const result = await this.db.execute(sql`
+      SELECT payload_json
+      FROM platform_runtime_config
+      WHERE config_key = ${configKey}
+    `)
+    const row = result.rows[0] as Record<string, unknown> | undefined
+    return isRecord(row?.payload_json) ? row.payload_json : null
+  }
+
+  async upsertRuntimeConfig(configKey: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const updatedAt = new Date()
+    await this.db.execute(sql`
+      INSERT INTO platform_runtime_config (config_key, updated_at, payload_json)
+      VALUES (${configKey}, ${updatedAt}, ${JSON.stringify(payload)}::jsonb)
+      ON CONFLICT (config_key)
+      DO UPDATE SET updated_at = EXCLUDED.updated_at, payload_json = EXCLUDED.payload_json
+    `)
+    return payload
+  }
+
+  async listToolCatalogEntries(): Promise<ToolCatalogEntry[]> {
+    const result = await this.db.execute(sql`
+      SELECT tool_kind, tool_name, payload_json, sort_order
+      FROM tool_catalog_entries
+      ORDER BY sort_order ASC, tool_kind ASC, tool_name ASC
+    `)
+    return result.rows.map(row => mapToolCatalogRow(row as Record<string, unknown>))
+  }
+
+  async upsertToolCatalogEntry(entry: ToolCatalogEntry): Promise<ToolCatalogEntry> {
+    await this.db.execute(sql`
+      INSERT INTO tool_catalog_entries (tool_kind, tool_name, payload_json, sort_order)
+      VALUES (${entry.toolKind}, ${entry.toolName}, ${JSON.stringify(entry.payload)}::jsonb, ${entry.sortOrder})
+      ON CONFLICT (tool_name, tool_kind)
+      DO UPDATE SET payload_json = EXCLUDED.payload_json, sort_order = EXCLUDED.sort_order
+    `)
+    return entry
+  }
+
+  async deleteToolCatalogEntry(toolKind: string, toolName: string): Promise<void> {
+    await this.db.execute(sql`
+      DELETE FROM tool_catalog_entries
+      WHERE tool_kind = ${toolKind} AND tool_name = ${toolName}
+    `)
   }
 
   // --- Threads ---
@@ -110,7 +169,7 @@ export class PostgresPlatformStore {
     }
     this.threads.set(thread.id, thread)
     await this.sessionLog.appendThread(thread)
-    this.updateSession(sessionId, { latestThreadId: thread.id })
+    await this.updateSession(sessionId, { latestThreadId: thread.id })
     return thread
   }
 
@@ -259,4 +318,28 @@ export class PostgresPlatformStore {
     thread.updatedAt = nowUtc()
     this.sessionLog.appendThread(thread)
   }
+
+  private async persistSession(session: SessionRecord): Promise<void> {
+    const createdAt = new Date(session.createdAt)
+    const updatedAt = new Date()
+    await this.db.execute(sql`
+      INSERT INTO platform_sessions (session_id, created_at, updated_at, payload_json)
+      VALUES (${session.id}, ${Number.isNaN(createdAt.getTime()) ? updatedAt : createdAt}, ${updatedAt}, ${JSON.stringify(session)}::jsonb)
+      ON CONFLICT (session_id)
+      DO UPDATE SET updated_at = EXCLUDED.updated_at, payload_json = EXCLUDED.payload_json
+    `)
+  }
+}
+
+function mapToolCatalogRow(row: Record<string, unknown>): ToolCatalogEntry {
+  return {
+    toolKind: String(row.tool_kind ?? ''),
+    toolName: String(row.tool_name ?? ''),
+    payload: isRecord(row.payload_json) ? row.payload_json : {},
+    sortOrder: Number(row.sort_order ?? 0),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
