@@ -3,19 +3,26 @@
   "private": true,
   "version": "0.1.0",
   "workspaces": [
+    "server",
     "apps/web",
+    "packages/db",
     "packages/shared-types"
   ],
+  "//": "Python sidecar deps: packages/gis-weather, packages/media-tts, packages/media-avatar — 保留为 Python 微服务依赖",
   "scripts": {
-    "dev:web": "npm --workspace apps/web run dev --",
+    "dev": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:worker": ".venv/bin/python3 -m uvicorn worker_app.sidecar:app --host 0.0.0.0 --port 8012 --reload",
+    "build": "npm run build --workspace server && npm run build --workspace apps/web",
+    "build:server": "npm run build --workspace server",
     "build:web": "npm run build --workspace apps/web",
-    "lint:web": "npm run lint --workspace apps/web",
+    "test": "npm run test --workspace server && npm run test --workspace apps/web",
+    "test:server": "npm run test --workspace server",
     "test:web": "npm run test --workspace apps/web",
-    "dev:api": ".venv/bin/python3 -m api_app.dev_server",
-    "test:api": ".venv/bin/pytest",
-    "test": "npm run test:api && npm run test:web"
+    "lint:web": "npm run lint --workspace apps/web"
   },
   "dependencies": {
+    "@openai/agents": "^0.11.6",
     "remark-gfm": "^4.0.1"
   }
 }

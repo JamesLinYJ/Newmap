@@ -1,0 +1,4 @@
+{"ts": "2026-06-01 06:59:03.864859+00:00", "type": "user_input", "run_id": "run_4f44c68b65a1", "thread_id": "thread_9eae65200690", "content": "规划一下北京到上海的路线"}
+{"ts": "2026-06-01 06:59:03.864859+00:00", "type": "tool_result", "run_id": "run_4f44c68b65a1", "thread_id": "thread_9eae65200690", "tool": "geocode_place", "result": "已解析地点 “北京”。", "error": ""}
+{"ts": "2026-06-01 06:59:03.864859+00:00", "type": "tool_result", "run_id": "run_4f44c68b65a1", "thread_id": "thread_9eae65200690", "tool": "route_plan", "result": "工具执行出错（步骤 route_plan，工具 route_plan）: ReadTimeout: ", "error": "工具执行出错（步骤 route_plan，工具 route_plan）: ReadTimeout: "}
+{"ts": "2026-06-01 06:59:03.864859+00:00", "type": "assistant", "run_id": "run_4f44c68b65a1", "thread_id": "thread_9eae65200690", "content": "抱歉，这次分析没能完成。"}

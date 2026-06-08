@@ -15,13 +15,13 @@
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
-import App from './App.tsx'
-import { ErrorBoundary } from './components/ErrorBoundary.tsx'
+import AppShell from './app/AppShell.tsx'
+import { ErrorBoundary } from './shared/components/ErrorBoundary.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>
     <BrowserRouter>
-      <App />
+      <AppShell />
     </BrowserRouter>
   </ErrorBoundary>,
 )

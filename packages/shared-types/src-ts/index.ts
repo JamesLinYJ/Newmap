@@ -1,20 +1,13 @@
 // +-------------------------------------------------------------------------
 //
-//   地理智能平台 - 前端共享类型定义
+//   地理智能平台 - 前端/服务端共享 TypeScript 契约
 //
 //   文件:       index.ts
 //
-//   日期:       2026年04月14日
-//   作者:       JamesLinYJ
+//   日期:       2026年06月08日
+//   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
-// 模块职责
-//
-// 定义前端消费的共享类型，保持与 Python schemas 语义一致。
-
-// 共享前端类型定义
-//
-// 与 Python 侧 shared_types.schemas 保持语义一致，供 Web 端直接消费接口数据。
 export type EventType =
   | 'intent.parsed'
   | 'plan.ready'
@@ -23,8 +16,6 @@ export type EventType =
   | 'artifact.created'
   | 'subagent.created'
   | 'subagent.updated'
-  | 'message.delta'
-  | 'thinking.delta'
   | 'loop.updated'
   | 'todo.updated'
   | 'tool.started'
@@ -34,6 +25,10 @@ export type EventType =
   | 'warning.raised'
   | 'run.completed'
   | 'run.failed'
+
+export type RunStatus = 'queued' | 'running' | 'clarification_needed' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled'
+export type TodoStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+export type ConversationItemType = 'message' | 'reasoning' | 'function_call' | 'function_call_output' | 'result' | 'error'
 
 export interface ClarificationOption {
   optionId?: string | null
@@ -65,7 +60,7 @@ export interface PlaceSearchCandidate {
 }
 
 export interface PlaceResolution {
-  status: 'unresolved' | 'resolved' | 'ambiguous' | 'not_found' | 'failed'
+  status: string
   query?: string | null
   provider?: string | null
   selected?: PlaceSearchCandidate | null
@@ -76,7 +71,7 @@ export interface PlaceResolution {
 export interface UserIntent {
   area?: string | null
   placeQuery?: string | null
-  anchorType: 'admin_area' | 'poi' | 'uploaded_layer' | 'unknown'
+  anchorType: string
   taskType?: string | null
   distanceM?: number | null
   publishRequested: boolean
@@ -118,9 +113,9 @@ export interface ToolCall {
   stepId: string
   tool: string
   args: Record<string, unknown>
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: string
   message: string
-  startedAt?: string
+  startedAt?: string | null
   completedAt?: string | null
   resultId?: string | null
   source?: string | null
@@ -157,31 +152,8 @@ export interface ContextResolution {
   candidates: ContextReference[]
 }
 
-export interface ContextEntryRecord {
-  contextEntryId: string
-  sessionId: string
-  threadId: string
-  sourceRunId?: string | null
-  kind: string
-  label: string
-  summary: string
-  reference?: ContextReference | null
-  searchText: string
-  createdAt: string
-  updatedAt: string
-}
-
-export interface ThreadContextRecord {
-  threadId: string
-  sessionId: string
-  summaryText: string
-  entryCount: number
-  payload: Record<string, unknown>
-  updatedAt: string
-}
-
 export interface RunLifecycle {
-  status: 'created' | 'running' | 'waiting_clarification' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled' | string
+  status: string
   reason?: string | null
   updatedAt?: string | null
 }
@@ -189,18 +161,28 @@ export interface RunLifecycle {
 export interface TodoItem {
   todoId: string
   title: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+  status: TodoStatus
   description?: string | null
   activeForm?: string | null
   ownerAgentId?: string | null
   stepId?: string | null
 }
 
+export interface TaskRecord {
+  taskId: string
+  agentType: string
+  prompt: string
+  status: 'pending' | 'in_progress' | 'completed' | 'failed'
+  createdAt: string
+  updatedAt?: string | null
+  resultSummary?: string | null
+}
+
 export interface SubAgentState {
   agentId: string
   name: string
   role: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+  status: string
   summary: string
   stepIds: string[]
   tools: string[]
@@ -213,7 +195,7 @@ export interface ApprovalRequest {
   action: string
   title: string
   description: string
-  status: 'pending' | 'approved' | 'rejected'
+  status: string
   artifactId?: string | null
   payload: Record<string, unknown>
   createdAt: string
@@ -230,28 +212,132 @@ export interface ArtifactRef {
   isIntermediate?: boolean
 }
 
-export interface WeatherDatasetRecord {
-  datasetId: string
-  sessionId: string
-  threadId?: string | null
-  filename: string
-  status: 'uploaded' | 'queued' | 'running' | 'completed' | 'failed' | string
-  storageRelativePath: string
-  metadata: Record<string, unknown>
-  createdAt: string
-  updatedAt: string
+export interface LoopTraceEntry {
+  iteration: number
+  phase: string
+  title: string
+  description: string
+  status: string
+  timestamp: string
+  agentId?: string | null
+  toolName?: string | null
+  stepId?: string | null
 }
 
-export interface WeatherJobRecord {
-  jobId: string
-  datasetId: string
-  jobType: string
-  status: 'queued' | 'running' | 'completed' | 'failed' | string
-  payload: Record<string, unknown>
-  result: Record<string, unknown>
-  error?: string | null
+export interface AgentState {
+  sessionId: string
+  threadId?: string | null
+  userQuery: string
+  modelProvider?: string | null
+  modelName?: string | null
+  parsedIntent?: UserIntent | null
+  clarification?: ClarificationState | null
+  placeResolution?: PlaceResolution | null
+  contextReferences?: ContextReference[]
+  contextResolution?: ContextResolution | null
+  runLifecycle?: RunLifecycle
+  executionPlan?: ExecutionPlan | null
+  currentStep: number
+  loopIteration: number
+  loopPhase: string
+  loopTrace: LoopTraceEntry[]
+  todos: TodoItem[]
+  tasks?: TaskRecord[]
+  planMode?: boolean
+  subAgents: SubAgentState[]
+  approvals: ApprovalRequest[]
+  toolResults: ToolCall[]
+  toolValueRefs?: ToolValueRef[]
+  artifacts: ArtifactRef[]
+  selectedDataSources: string[]
+  planRepairAttempts: number
+  textOnlyDelivery: boolean
+  warnings: string[]
+  errors: string[]
+  failedStepId?: string | null
+  failedTool?: string | null
+  denialCounts?: Record<string, number>
+  runtimeStats?: Record<string, number>
+}
+
+export interface RunEvent {
+  eventId: string
+  runId: string
+  threadId?: string | null
+  type: EventType
+  message: string
+  timestamp: string
+  payload?: Record<string, unknown>
+}
+
+export interface ConversationItem {
+  itemId: string
+  itemType: ConversationItemType
+  runId: string
+  threadId?: string | null
+  turnId?: string | null
+  callId?: string | null
+  role?: string | null
+  body?: string | null
+  name?: string | null
+  arguments?: string | null
+  output?: string | null
+  isError: boolean
+  phase?: string | null
+  status?: string | null
+  metadata?: Record<string, unknown>
+  timestamp: string
+}
+
+export interface SessionRecord {
+  id: string
+  createdAt: string
+  status: string
+  shareToken: string
+  latestThreadId?: string | null
+  latestRunId?: string | null
+  latestUploadedLayerKey?: string | null
+  latestWeatherDatasetId?: string | null
+}
+
+export interface AgentThreadRecord {
+  id: string
+  sessionId: string
+  title: string
+  status: string
   createdAt: string
   updatedAt: string
+  latestRunId?: string | null
+  latestUserQuery?: string | null
+  latestAssistantSummary?: string | null
+  latestRunStatus?: string | null
+  latestArtifactId?: string | null
+  latestArtifactName?: string | null
+  historyPreview?: string | null
+  runCount: number
+  sessionLogPath?: string | null
+}
+
+export interface AnalysisRun {
+  id: string
+  threadId?: string | null
+  sessionId: string
+  userQuery: string
+  modelProvider?: string | null
+  modelName?: string | null
+  status: RunStatus
+  createdAt: string
+  updatedAt: string
+  state: AgentState
+  sessionLogPath?: string | null
+  runtimeConfigSnapshot?: AgentRuntimeConfig | null
+}
+
+export interface PermissionRuleEntry {
+  toolPattern: string
+  decision: 'always_allow' | 'always_deny' | 'always_ask'
+  priority: number
+  description: string
 }
 
 export interface RuntimeSubAgentConfig {
@@ -267,6 +353,7 @@ export interface SupervisorRuntimeConfig {
   name: string
   systemPrompt: string
   approvalInterruptTools: string[]
+  permissionRules?: PermissionRuleEntry[]
 }
 
 export interface RuntimeUiConfig {
@@ -290,12 +377,8 @@ export interface RuntimeContextConfig {
   promptMaxChars: number
   contextEntryWindow: number
   memoryFileCharLimit: number
-}
-
-export interface AgentSessionLogRecord {
-  timestamp: string
-  type: string
-  payload: Record<string, unknown>
+  memoryEnabled: boolean
+  memoryBaseDir: string
 }
 
 export interface RuntimeGeosearchConfig {
@@ -332,8 +415,19 @@ export interface RuntimePlanningConfig {
   externalSourcePriority: string[]
 }
 
+export interface HookConfigEntry {
+  eventType: string
+  commandType: string
+  command: string
+  matcher: Record<string, string>
+  priority: number
+  description: string
+  timeoutSeconds: number
+}
+
 export interface AgentRuntimeConfig {
   loopTraceLimit: number
+  maxTurns: number
   supervisor: SupervisorRuntimeConfig
   subAgents: RuntimeSubAgentConfig[]
   ui: RuntimeUiConfig
@@ -343,107 +437,7 @@ export interface AgentRuntimeConfig {
   geosearch: RuntimeGeosearchConfig
   externalPoi: RuntimePoiConfig
   nowcast: RuntimeNowcastConfig
-}
-
-export interface LoopTraceEntry {
-  iteration: number
-  phase: string
-  title: string
-  description: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
-  timestamp: string
-  agentId?: string | null
-  toolName?: string | null
-  stepId?: string | null
-}
-
-export interface RunEvent {
-  eventId: string
-  runId: string
-  threadId?: string | null
-  type: EventType
-  message: string
-  timestamp: string
-  payload?: Record<string, unknown>
-}
-
-export type AgentMessageType = 'user' | 'assistant' | 'system' | 'progress' | 'result' | string
-export type AgentMessageStatus = 'streaming' | 'completed' | 'failed' | 'waiting' | string
-export type AgentContentBlockType = 'text' | 'thinking' | 'tool_use' | 'tool_result' | string
-export type AgentMessageFrameOp =
-  | 'message_start'
-  | 'message_append'
-  | 'block_start'
-  | 'block_delta'
-  | 'block_stop'
-  | 'message_stop'
-  | 'result'
-  | string
-
-export interface AgentContentBlock {
-  blockId: string
-  type: AgentContentBlockType
-  text?: string | null
-  thinking?: string | null
-  id?: string | null
-  toolUseId?: string | null
-  name?: string | null
-  input?: Record<string, unknown>
-  content?: string | null
-  isError?: boolean
-  structuredContent?: unknown
-  artifactId?: string | null
-  valueRefs?: ToolValueRef[]
-  metadata?: Record<string, unknown>
-}
-
-export interface AgentMessage {
-  messageId: string
-  runId: string
-  threadId?: string | null
-  type: AgentMessageType
-  role?: 'user' | 'assistant' | null | string
-  timestamp: string
-  status: AgentMessageStatus
-  content: AgentContentBlock[]
-  parentToolUseId?: string | null
-  metadata?: Record<string, unknown>
-}
-
-export interface AgentMessageFrame {
-  frameId: string
-  runId: string
-  threadId?: string | null
-  timestamp: string
-  op: AgentMessageFrameOp
-  messageId?: string | null
-  blockId?: string | null
-  blockIndex?: number | null
-  message?: AgentMessage | null
-  block?: AgentContentBlock | null
-  delta?: Record<string, unknown>
-  result?: Record<string, unknown>
-  metadata?: Record<string, unknown>
-}
-
-export type ConversationItemType = 'message' | 'reasoning' | 'function_call' | 'function_call_output' | 'error'
-
-export interface ConversationItem {
-  itemType: ConversationItemType
-  runId: string
-  threadId?: string | null
-  turnId?: string | null
-  callId?: string | null
-  role?: string | null
-  body?: string | null
-  name?: string | null
-  arguments?: string | null
-  output?: string | null
-  isError: boolean
-  phase?: string | null
-  status?: string | null
-  metadata?: Record<string, unknown>
-  timestamp: string
+  hookConfigs?: HookConfigEntry[]
 }
 
 export interface LayerPropertyDescriptor {
@@ -460,7 +454,7 @@ export interface LayerDescriptor {
   geometryType: string
   srid: number
   description: string
-  featureCount?: number
+  featureCount?: number | null
   bounds?: [number, number, number, number] | null
   propertySchema: LayerPropertyDescriptor[]
   category: string
@@ -484,85 +478,6 @@ export interface BasemapDescriptor {
   labelTileUrls: string[]
   available: boolean
   isDefault: boolean
-}
-
-export interface AgentState {
-  sessionId: string
-  threadId?: string | null
-  userQuery: string
-  modelProvider?: string | null
-  modelName?: string | null
-  parsedIntent?: UserIntent
-  clarification?: ClarificationState | null
-  placeResolution?: PlaceResolution | null
-  contextReferences?: ContextReference[]
-  contextResolution?: ContextResolution | null
-  runLifecycle?: RunLifecycle
-  executionPlan?: ExecutionPlan
-  currentStep: number
-  loopIteration: number
-  loopPhase: string
-  loopTrace: LoopTraceEntry[]
-  todos: TodoItem[]
-  subAgents: SubAgentState[]
-  approvals: ApprovalRequest[]
-  toolResults: ToolCall[]
-  toolValueRefs?: ToolValueRef[]
-  artifacts: ArtifactRef[]
-  selectedDataSources: string[]
-  planRepairAttempts: number
-  textOnlyDelivery: boolean
-  warnings: string[]
-  errors: string[]
-  failedStepId?: string | null
-  failedTool?: string | null
-  finalResponse?: {
-    summary: string
-    limitations: string[]
-    nextActions: string[]
-  }
-}
-
-export interface SessionRecord {
-  id: string
-  createdAt: string
-  status: string
-  shareToken: string
-  latestThreadId?: string | null
-  latestRunId?: string | null
-  latestUploadedLayerKey?: string | null
-}
-
-export interface AgentThreadRecord {
-  id: string
-  sessionId: string
-  title: string
-  status: string
-  createdAt: string
-  updatedAt: string
-  latestRunId?: string | null
-  latestUserQuery?: string | null
-  latestAssistantSummary?: string | null
-  latestRunStatus?: string | null
-  latestArtifactId?: string | null
-  latestArtifactName?: string | null
-  historyPreview?: string | null
-  runCount: number
-  sessionLogPath?: string | null
-}
-
-export interface AnalysisRun {
-  id: string
-  threadId?: string | null
-  sessionId: string
-  userQuery: string
-  modelProvider?: string | null
-  modelName?: string | null
-  status: 'queued' | 'running' | 'clarification_needed' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled'
-  createdAt: string
-  updatedAt: string
-  state: AgentState
-  sessionLogPath?: string | null
 }
 
 export interface ModelProviderDescriptor {
@@ -603,9 +518,35 @@ export interface ToolDescriptor {
   meta: Record<string, unknown>
 }
 
+export interface WeatherDatasetRecord {
+  datasetId: string
+  sessionId: string
+  threadId?: string | null
+  filename: string
+  status: string
+  storageRelativePath: string
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WeatherJobRecord {
+  jobId: string
+  datasetId: string
+  threadId?: string | null
+  jobType: string
+  status: string
+  payload: Record<string, unknown>
+  result: Record<string, unknown>
+  error?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface SystemComponentsStatus {
   catalogBackend: string
   postgisEnabled: boolean
+  sidecarBackend?: string | null
   sessionLogRoot?: string | null
   providers: ModelProviderDescriptor[]
 }

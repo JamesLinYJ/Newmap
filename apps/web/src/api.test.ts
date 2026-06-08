@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { deriveApiBaseUrl } from './api'
+import { deriveApiBaseUrl } from './api/client'
 
 describe('deriveApiBaseUrl', () => {
   it('uses same-origin relative requests when no explicit API base URL is configured', () => {

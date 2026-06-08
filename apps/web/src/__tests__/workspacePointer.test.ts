@@ -11,7 +11,7 @@
 // 测试 localStorage 指针仅在 UI 选中提示角色下工作，
 // 不承担会话归属或历史数据源职责。
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   readWorkspacePointer,
   normalizeWorkspacePointer,
@@ -19,8 +19,8 @@ import {
   syncCleanWorkspaceUrl,
   buildWorkspaceShareUrl,
   WORKSPACE_POINTER_STORAGE_KEY,
-} from '../workspacePointer'
-import type { WorkspacePointer } from '../workspacePointer'
+} from '../shared/workspacePointer'
+import type { WorkspacePointer } from '../shared/workspacePointer'
 
 // 与 workspacePointer.ts 内 WorkspaceBrowserHost 一致的测试 mock 接口。
 interface TestBrowserHost {
@@ -81,15 +81,8 @@ describe('normalizeWorkspacePointer', () => {
 
   it('丢弃空白字段', () => {
     expect(
-      normalizeWorkspacePointer({ sessionId: '  ', activeThreadId: '', activeRunId: 'run-1' }),
+      normalizeWorkspacePointer({ activeThreadId: '', activeRunId: 'run-1' }),
     ).toEqual({ activeRunId: 'run-1' })
-  })
-
-  it('保留 sessionId 字段用于兼容旧数据读取', () => {
-    // sessionId 仍可被读取（兼容旧 localStorage），但前端不再用它选择会话。
-    expect(normalizeWorkspacePointer({ sessionId: 'old-session' })).toEqual({
-      sessionId: 'old-session',
-    })
   })
 })
 
@@ -155,7 +148,7 @@ describe('rememberWorkspacePointer', () => {
 
     const raw = storage[WORKSPACE_POINTER_STORAGE_KEY]
     const parsed = JSON.parse(raw!) as WorkspacePointer
-    expect(parsed.sessionId).toBeUndefined()
+    expect('sessionId' in parsed).toBe(false)
     expect(parsed.activeThreadId).toBe('th-5')
     expect(parsed.activeRunId).toBe('run-9')
   })
@@ -207,7 +200,7 @@ describe('syncCleanWorkspaceUrl', () => {
     const raw = storage[WORKSPACE_POINTER_STORAGE_KEY]
     expect(raw).toBeDefined()
     const parsed = JSON.parse(raw!) as WorkspacePointer
-    expect(parsed.sessionId).toBeUndefined()
+    expect('sessionId' in parsed).toBe(false)
     expect(parsed.activeThreadId).toBe('th-1')
     expect(parsed.activeRunId).toBe('run-1')
   })
@@ -218,10 +211,7 @@ describe('syncCleanWorkspaceUrl', () => {
 // ---------------------------------------------------------------------------
 
 describe('session 归属策略', () => {
-  it('localStorage 中的 sessionId 不影响会话选择', () => {
-    // 即使旧 localStorage 存有 sessionId，前端也不应使用它。
-    // 该测试验证 readWorkspacePointer 能读取旧数据，
-    // 但上游 App.tsx 必须忽略该字段并走服务端默认会话路径。
+  it('localStorage 中的 sessionId 会被丢弃', () => {
     const storage: Record<string, string> = {
       [WORKSPACE_POINTER_STORAGE_KEY]: JSON.stringify({
         sessionId: 'old-browser-local-session',
@@ -231,10 +221,7 @@ describe('session 归属策略', () => {
     const host = makeMockHost({ storage })
     const pointer = readWorkspacePointer(host)
 
-    // 确认旧 sessionId 仍可被读取（兼容性）。
-    expect(pointer.sessionId).toBe('old-browser-local-session')
-    // 但上游 App.tsx 应忽略 pointer.sessionId，
-    // 直接调用 getDefaultSession() 从服务端获取真正的会话。
+    expect('sessionId' in pointer).toBe(false)
     expect(pointer.activeThreadId).toBe('th-old')
   })
 })

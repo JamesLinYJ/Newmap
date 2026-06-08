@@ -1,27 +1,43 @@
-.PHONY: install install-py install-web dev-api dev-web test build-web deploy-prod deploy-remote
+.PHONY: install install-web dev dev-server dev-web test build build-server build-web deploy
 
-install: install-py install-web
-
-install-py:
-	python3 -m pip install -e ".[dev]"
+install: install-web
+	npm install
 
 install-web:
 	npm install
 
-dev-api:
-	npm run dev:api
+# Development
+dev: dev-server
+
+dev-server:
+	npm run dev --workspace server
 
 dev-web:
 	npm run dev --workspace apps/web
 
+dev-worker:
+	.venv/bin/python3 -m uvicorn worker_app.sidecar:app --host 0.0.0.0 --port 8012 --reload
+
+# Testing
 test:
-	pytest -q
+	npm run test --workspace server
+	npm run test --workspace apps/web
+
+test-server:
+	npm run test --workspace server
+
+# Build
+build: build-server build-web
+
+build-server:
+	npm run build --workspace server
 
 build-web:
 	npm run build --workspace apps/web
 
-deploy-prod:
-	bash deploy.sh
+# Docker
+docker-up:
+	docker compose -f infra/compose/docker-compose.yml up -d
 
-deploy-remote:
-	bash deploy.sh
+docker-down:
+	docker compose -f infra/compose/docker-compose.yml down
