@@ -61,7 +61,7 @@ describe('tool management model', () => {
       catalogBackend: 'postgres',
       postgisEnabled: true,
       postgisError: null,
-      sessionLogRoot: 'runtime/sessions',
+      conversationStoreRoot: 'runtime/conversations',
       providers: [],
       toolProviders: [
         {

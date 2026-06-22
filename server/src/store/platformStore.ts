@@ -9,10 +9,16 @@
 // --------------------------------------------------------------------------
 
 import type { Database } from '../db/connection.js'
-import type { SessionRecord, AgentThreadRecord, AnalysisRun, RunSummary, AgentState, RunEvent, ConversationItem, AgentRuntimeConfig, ArtifactRef } from '../schemas/types.js'
+import type {
+  SessionRecord, AgentThreadRecord, AnalysisRun, RunSummary, AgentState,
+  RunEvent, ConversationItem, AgentRuntimeConfig, ArtifactRef,
+  TranscriptEntry, TranscriptEntryKind, ThreadManifest, ThreadMemoryDocument,
+  CompactionRecord,
+} from '../schemas/types.js'
 import { makeId, nowUtc, makeShareToken } from '../utils/ids.js'
 import { InMemoryEventBus } from './eventBus.js'
-import { SessionLogStore } from './sessionLog.js'
+import { FileConversationStore, type TrashEntry } from './fileConversationStore.js'
+import { RuntimeFileStore } from './fileStore.js'
 import { summarizeAssistantText } from '../conversation/items.js'
 import { sql } from 'drizzle-orm'
 import path from 'node:path'
@@ -34,8 +40,12 @@ export class PostgresPlatformStore {
   readonly eventBus = new InMemoryEventBus<RunEvent>()
   readonly itemBus = new InMemoryEventBus<ConversationItem>()
   readonly runBus = new InMemoryEventBus<AnalysisRun>()
-  readonly sessionLog: SessionLogStore
-  readonly sessionLogRoot: string
+  readonly threadEntryBus = new InMemoryEventBus<TranscriptEntry>()
+  readonly threadUpdateBus = new InMemoryEventBus<{ thread: AgentThreadRecord; manifest: ThreadManifest }>()
+  readonly threadCompactionBus = new InMemoryEventBus<CompactionRecord>()
+  readonly threadMemoryBus = new InMemoryEventBus<ThreadMemoryDocument>()
+  readonly conversationStore: FileConversationStore
+  readonly conversationStoreRoot: string
   readonly runtimeRoot: string
 
   // In-memory indexes (populated from JSONL on startup)
@@ -47,42 +57,37 @@ export class PostgresPlatformStore {
   private runIdsByThreadId = new Map<string, Set<string>>()
 
   constructor(private db: Database, storageRoot: string) {
-    this.sessionLogRoot = storageRoot
-    this.runtimeRoot = path.basename(storageRoot) === 'sessions' ? path.dirname(storageRoot) : storageRoot
-    this.sessionLog = new SessionLogStore(storageRoot)
+    this.conversationStoreRoot = storageRoot
+    this.runtimeRoot = ['sessions', 'conversations'].includes(path.basename(storageRoot))
+      ? path.dirname(storageRoot)
+      : storageRoot
+    this.conversationStore = new FileConversationStore(storageRoot)
   }
 
   // --- Sessions ---
 
   async initialize(): Promise<void> {
-    // Load sessions and threads from JSONL into memory
-    await this.sessionLog.initialize()
-    for (const s of this.sessionLog.allSessions()) {
+    // manifest 是轻量索引；消息、事件和工具结果按 thread/run 文件延迟读取。
+    const snapshot = await this.conversationStore.initialize()
+    for (const s of snapshot.sessions) {
       this.sessions.set(s.id, s)
     }
-    for (const t of this.sessionLog.allThreads()) {
+    for (const t of snapshot.threads) {
       this.threads.set(t.id, t)
     }
-    for (const r of this.sessionLog.allRuns()) {
+    for (const r of snapshot.runs) {
       this.runs.set(r.id, r)
-    }
-    for (const event of this.sessionLog.allEvents()) {
-      this.eventBus.publish(event.runId, event)
-    }
-    for (const item of this.sessionLog.allItems()) {
-      this.itemBus.publish(item.runId, item)
-    }
-    for (const threadId of this.sessionLog.allDeletedThreadIds()) {
-      this.threads.delete(threadId)
+      for (const artifact of await this.conversationStore.listArtifacts(r.id)) {
+        await this.indexArtifact(artifact)
+      }
     }
     this.rebuildDerivedIndexes()
     for (const session of this.sessions.values()) {
       if (session.latestThreadId && !this.threads.has(session.latestThreadId)) {
         session.latestThreadId = this.listThreadsForSession(session.id)[0]?.id ?? null
-        this.sessionLog.appendSession(session)
+        await this.conversationStore.saveSession(session)
       }
     }
-    await Promise.all([...this.sessions.values()].map(session => this.persistSession(session)))
   }
 
   async createSession(): Promise<SessionRecord> {
@@ -91,8 +96,7 @@ export class PostgresPlatformStore {
       latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null,
     }
     this.sessions.set(session.id, session)
-    await this.sessionLog.appendSession(session)
-    await this.persistSession(session)
+    await this.conversationStore.saveSession(session)
     return session
   }
 
@@ -104,8 +108,7 @@ export class PostgresPlatformStore {
         latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null,
       }
       this.sessions.set(session.id, session)
-      await this.sessionLog.appendSession(session)
-      await this.persistSession(session)
+      await this.conversationStore.saveSession(session)
       return session
     }
   }
@@ -119,8 +122,7 @@ export class PostgresPlatformStore {
   async updateSession(sessionId: string, fields: Partial<SessionRecord>): Promise<SessionRecord> {
     const s = this.getSession(sessionId)
     Object.assign(s, fields)
-    this.sessionLog.appendSession(s)
-    await this.persistSession(s)
+    await this.conversationStore.saveSession(s)
     return s
   }
 
@@ -174,6 +176,14 @@ export class PostgresPlatformStore {
   async persistArtifact(artifact: ArtifactRef): Promise<void> {
     const relativePath = typeof artifact.metadata.relativePath === 'string' ? artifact.metadata.relativePath : ''
     if (!relativePath) throw new Error(`Artifact "${artifact.artifactId}" 缺少 relativePath`)
+    await this.conversationStore.appendArtifact(artifact.runId, artifact)
+    await this.indexArtifact(artifact)
+  }
+
+  // Postgres 只承载下载查询索引；删除该表后可从每个 run 的 artifacts.jsonl 重建。
+  private async indexArtifact(artifact: ArtifactRef): Promise<void> {
+    const relativePath = typeof artifact.metadata.relativePath === 'string' ? artifact.metadata.relativePath : ''
+    if (!relativePath) throw new Error(`Artifact "${artifact.artifactId}" 缺少 relativePath`)
     await this.db.execute(sql`
       INSERT INTO platform_artifacts (
         artifact_id, run_id, artifact_type, name, uri, metadata_json, geojson_relative_path, created_at
@@ -204,11 +214,12 @@ export class PostgresPlatformStore {
       status: 'active', createdAt: now, updatedAt: now, runCount: 0,
       latestRunId: null, latestUserQuery: null, latestAssistantSummary: null,
       latestRunStatus: null, latestArtifactId: null, latestArtifactName: null,
-      historyPreview: null, sessionLogPath: null,
+      historyPreview: null, conversationPath: null,
     }
     this.threads.set(thread.id, thread)
     this.addToIndex(this.threadIdsBySessionId, sessionId, thread.id)
-    await this.sessionLog.appendThread(thread)
+    const manifest = await this.conversationStore.createThread(thread)
+    this.threadUpdateBus.publish(thread.id, { thread: structuredClone(thread), manifest })
     await this.updateSession(sessionId, { latestThreadId: thread.id })
     return thread
   }
@@ -227,14 +238,16 @@ export class PostgresPlatformStore {
       this.removeFromIndex(this.threadIdsBySessionId, previousSessionId, threadId)
       if (t.status !== 'deleted') this.addToIndex(this.threadIdsBySessionId, t.sessionId, threadId)
     }
-    await this.sessionLog.appendThread(t)
+    const manifest = await this.conversationStore.saveThread(t)
+    this.threadUpdateBus.publish(threadId, { thread: structuredClone(t), manifest })
     return t
   }
 
   async deleteThread(threadId: string): Promise<void> {
     const t = this.getThread(threadId)
     t.status = 'deleted'
-    await this.sessionLog.appendThreadDeleted(threadId)
+    await this.conversationStore.saveThread(t)
+    await this.conversationStore.moveThreadToTrash(threadId)
     this.threads.delete(threadId)
     this.removeFromIndex(this.threadIdsBySessionId, t.sessionId, threadId)
     const threadRunIds = this.runIdsByThreadId.get(threadId)
@@ -295,10 +308,10 @@ export class PostgresPlatformStore {
     return r
   }
 
-  createRun(sessionId: string, query: string, opts?: {
+  async createRun(sessionId: string, query: string, opts?: {
     threadId?: string | null; modelProvider?: string | null; modelName?: string | null
     runtimeConfigSnapshot?: AgentRuntimeConfig | null
-  }): AnalysisRun {
+  }): Promise<AnalysisRun> {
     const session = this.getSession(sessionId)
     const thread = opts?.threadId ? this.getThread(opts.threadId) : null
     if (thread && thread.sessionId !== sessionId) throw new Error('run 的 thread 不属于当前 session')
@@ -311,7 +324,8 @@ export class PostgresPlatformStore {
       modelProvider: opts?.modelProvider ?? null,
       modelName: opts?.modelName ?? null,
       status: 'queued',
-      createdAt: now, updatedAt: now, sessionLogPath: null,
+      createdAt: now, updatedAt: now,
+      conversationPath: opts?.threadId ? `conversations/sessions/${sessionId}/threads/${opts.threadId}/runs` : null,
       runtimeConfigSnapshot: opts?.runtimeConfigSnapshot ?? null,
       state: {
         sessionId, threadId: opts?.threadId ?? null, userQuery: query,
@@ -329,7 +343,7 @@ export class PostgresPlatformStore {
     }
     this.runs.set(run.id, run)
     this.indexRun(run)
-    this.sessionLog.appendRun(run)
+    await this.conversationStore.createRun(run)
     this.runBus.publish(run.id, structuredClone(run))
     session.latestRunId = run.id
     if (thread) {
@@ -339,23 +353,22 @@ export class PostgresPlatformStore {
       thread.latestRunStatus = run.status
       thread.runCount += 1
       thread.updatedAt = now
-      this.sessionLog.appendThread(thread)
+      await this.conversationStore.saveThread(thread)
     }
-    this.sessionLog.appendSession(session)
-    void this.persistSession(session)
+    await this.conversationStore.saveSession(session)
     return run
   }
 
-  updateRunState(runId: string, updates: Partial<AgentState>): AnalysisRun {
+  async updateRunState(runId: string, updates: Partial<AgentState>): Promise<AnalysisRun> {
     const r = this.getRun(runId)
     Object.assign(r.state, updates)
     r.updatedAt = nowUtc()
-    this.sessionLog.appendRun(r)
+    await this.conversationStore.saveRun(r)
     this.runBus.publish(runId, structuredClone(r))
     return r
   }
 
-  updateRunStatus(runId: string, status: AnalysisRun['status']): AnalysisRun {
+  async updateRunStatus(runId: string, status: AnalysisRun['status']): Promise<AnalysisRun> {
     const run = this.getRun(runId)
     run.status = status
     run.updatedAt = nowUtc()
@@ -364,10 +377,12 @@ export class PostgresPlatformStore {
       if (thread) {
         thread.latestRunStatus = status
         thread.updatedAt = run.updatedAt
-        this.sessionLog.appendThread(thread)
+        await this.conversationStore.saveThread(thread)
       }
     }
-    this.sessionLog.appendRun(run)
+    await this.conversationStore.saveRun(run, {
+      recoveryStatus: status === 'interrupted' ? 'interrupted' : status === 'requires_action' ? 'requires_action' : 'clean',
+    })
     this.runBus.publish(runId, structuredClone(run))
     return run
   }
@@ -413,7 +428,7 @@ export class PostgresPlatformStore {
     return values
   }
 
-  completeRun(runId: string, status: string): AnalysisRun {
+  async completeRun(runId: string, status: string): Promise<AnalysisRun> {
     const r = this.getRun(runId)
     r.status = status as AnalysisRun['status']
     r.updatedAt = nowUtc()
@@ -422,10 +437,15 @@ export class PostgresPlatformStore {
       if (thread) {
         thread.latestRunStatus = r.status
         thread.updatedAt = r.updatedAt
-        this.sessionLog.appendThread(thread)
+        await this.conversationStore.saveThread(thread)
       }
     }
-    this.sessionLog.appendRun(r)
+    await this.conversationStore.saveRun(r, {
+      recoveryStatus: r.status === 'waiting_approval' || r.status === 'requires_action'
+        ? 'requires_action'
+        : 'clean',
+    })
+    await this.conversationStore.flush()
     this.runBus.publish(runId, structuredClone(r))
     return r
   }
@@ -434,24 +454,27 @@ export class PostgresPlatformStore {
 
   appendEvent(runId: string, event: RunEvent): void {
     this.eventBus.publish(runId, event)
-    this.sessionLog.appendEvent(event)
+    this.conversationStore.appendEvent(event)
   }
 
-  listEvents(runId: string): RunEvent[] {
-    return this.eventBus.list(runId)
+  async listEvents(runId: string): Promise<RunEvent[]> {
+    const persisted = await this.conversationStore.listEvents(runId)
+    const current = this.eventBus.list(runId)
+    return dedupeById([...persisted, ...current], event => event.eventId)
   }
 
   appendItem(item: ConversationItem): void {
     this.itemBus.publish(item.runId, item)
     if (item.status !== 'running') {
-      this.sessionLog.appendItem(item)
+      this.conversationStore.appendItem(item)
       this.updateThreadProjectionFromItem(item)
     }
   }
 
-  listItems(runId: string): ConversationItem[] {
+  async listItems(runId: string): Promise<ConversationItem[]> {
+    const persisted = await this.conversationStore.listItems(runId)
     const byItemId = new Map<string, ConversationItem>()
-    for (const item of this.itemBus.list(runId)) {
+    for (const item of [...persisted, ...this.itemBus.list(runId)]) {
       byItemId.set(item.itemId, item)
     }
     return [...byItemId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
@@ -480,18 +503,137 @@ export class PostgresPlatformStore {
 
     if (!changed) return
     thread.updatedAt = nowUtc()
-    this.sessionLog.appendThread(thread)
+    void this.conversationStore.saveThread(thread)
   }
 
-  private async persistSession(session: SessionRecord): Promise<void> {
-    const createdAt = new Date(session.createdAt)
-    const updatedAt = new Date()
-    await this.db.execute(sql`
-      INSERT INTO platform_sessions (session_id, created_at, updated_at, payload_json)
-      VALUES (${session.id}, ${Number.isNaN(createdAt.getTime()) ? updatedAt : createdAt}, ${updatedAt}, ${JSON.stringify(session)}::jsonb)
-      ON CONFLICT (session_id)
-      DO UPDATE SET updated_at = EXCLUDED.updated_at, payload_json = EXCLUDED.payload_json
-    `)
+  async getThreadManifest(threadId: string): Promise<ThreadManifest> {
+    this.getThread(threadId)
+    return this.conversationStore.getThreadManifest(threadId)
+  }
+
+  async listThreadHistory(threadId: string, cursor?: string | null, limit?: number) {
+    this.getThread(threadId)
+    return this.conversationStore.readHistory(threadId, cursor, limit)
+  }
+
+  async activeTranscript(threadId: string, leafEntryId?: string | null): Promise<TranscriptEntry[]> {
+    this.getThread(threadId)
+    return this.conversationStore.readActiveChain(threadId, leafEntryId)
+  }
+
+  async appendTranscript(input: {
+    threadId: string
+    runId?: string | null
+    turnId?: string | null
+    kind: TranscriptEntryKind
+    payload?: Record<string, unknown>
+    parentEntryId?: string | null
+    logicalParentEntryId?: string | null
+    entryId?: string
+  }): Promise<TranscriptEntry> {
+    this.getThread(input.threadId)
+    const entry = await this.conversationStore.appendTranscript(input)
+    this.threadEntryBus.publish(input.threadId, entry)
+    return entry
+  }
+
+  async forkThread(sourceThreadId: string, sourceEntryId: string, title?: string | null): Promise<AgentThreadRecord> {
+    const source = this.getThread(sourceThreadId)
+    const target = await this.createThread(source.sessionId, title ?? `${source.title} · 分支`)
+    const targetManifest = await this.conversationStore.getThreadManifest(target.id)
+    targetManifest.forkedFrom = { threadId: sourceThreadId, entryId: sourceEntryId }
+    await this.conversationStore.saveThread(target, targetManifest)
+    await this.conversationStore.forkTranscript(sourceThreadId, target.id, sourceEntryId)
+    await new RuntimeFileStore(this.runtimeRoot).cloneThreadFiles(sourceThreadId, target.id)
+    return target
+  }
+
+  async getThreadMemory(threadId: string): Promise<ThreadMemoryDocument> {
+    this.getThread(threadId)
+    return this.conversationStore.getMemory(threadId)
+  }
+
+  async updateThreadMemory(
+    threadId: string,
+    content: string,
+    expectedVersion?: number,
+    source: ThreadMemoryDocument['source'] = 'user',
+    basedOnEntryId: string | null = null,
+  ): Promise<ThreadMemoryDocument> {
+    this.getThread(threadId)
+    const { generatedContent, pinnedContent } = splitMemoryContent(content)
+    const document = await this.conversationStore.saveMemory(threadId, {
+      content,
+      generatedContent,
+      pinnedContent,
+      source,
+      basedOnEntryId,
+    }, expectedVersion)
+    this.threadMemoryBus.publish(threadId, document)
+    return document
+  }
+
+  async appendCompaction(record: CompactionRecord): Promise<void> {
+    this.getThread(record.threadId)
+    await this.conversationStore.appendCompaction(record)
+    this.threadCompactionBus.publish(record.threadId, record)
+  }
+
+  async listCompactions(threadId: string): Promise<CompactionRecord[]> {
+    this.getThread(threadId)
+    return this.conversationStore.listCompactions(threadId)
+  }
+
+  async listTrash(sessionId: string): Promise<TrashEntry[]> {
+    this.getSession(sessionId)
+    return this.conversationStore.listTrash(sessionId)
+  }
+
+  async restoreThread(threadId: string): Promise<AgentThreadRecord> {
+    const restored = await this.conversationStore.restoreThread(threadId)
+    restored.thread.status = 'active'
+    restored.thread.updatedAt = nowUtc()
+    this.threads.set(threadId, restored.thread)
+    this.addToIndex(this.threadIdsBySessionId, restored.thread.sessionId, threadId)
+    for (const run of this.runs.values()) {
+      if (run.threadId === threadId) this.indexRun(run)
+    }
+    await this.conversationStore.saveThread(restored.thread, restored.manifest)
+    this.threadUpdateBus.publish(threadId, { thread: structuredClone(restored.thread), manifest: restored.manifest })
+    return restored.thread
+  }
+
+  async purgeThread(threadId: string): Promise<void> {
+    for (const [runId, run] of this.runs) {
+      if (run.threadId === threadId) this.runs.delete(runId)
+    }
+    await this.conversationStore.purgeThread(threadId)
+    await this.conversationStore.garbageCollectObjects()
+  }
+
+  async recordAttachment(threadId: string, input: {
+    id: string
+    name: string
+    contentHash: string
+    mediaType: string
+    sizeBytes: number
+    relativePath: string
+  }, action: 'attached' | 'deleted' = 'attached'): Promise<void> {
+    this.getThread(threadId)
+    await this.conversationStore.appendAttachment(threadId, {
+      attachmentId: input.id,
+      action,
+      name: input.name,
+      threadId,
+      contentRef: action === 'attached' ? {
+        algorithm: 'sha256',
+        hash: input.contentHash,
+        mediaType: input.mediaType,
+        sizeBytes: input.sizeBytes,
+        relativePath: input.relativePath,
+      } : null,
+      createdAt: nowUtc(),
+    })
   }
 }
 
@@ -553,4 +695,20 @@ function toRunSummary(run: AnalysisRun): RunSummary {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function dedupeById<T>(values: T[], key: (value: T) => string): T[] {
+  return [...new Map(values.map(value => [key(value), value])).values()]
+}
+
+function splitMemoryContent(content: string): { generatedContent: string; pinnedContent: string } {
+  const start = '<!-- user-notes:start -->'
+  const end = '<!-- user-notes:end -->'
+  const startIndex = content.indexOf(start)
+  const endIndex = content.indexOf(end)
+  if (startIndex < 0 || endIndex < startIndex) return { generatedContent: content, pinnedContent: '' }
+  return {
+    generatedContent: `${content.slice(0, startIndex)}${content.slice(endIndex + end.length)}`.trim(),
+    pinnedContent: content.slice(startIndex + start.length, endIndex).trim(),
+  }
 }

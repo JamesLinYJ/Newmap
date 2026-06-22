@@ -22,7 +22,7 @@ export const eventTypeSchema = z.enum([
 
 export const runStatusSchema = z.enum([
   'queued', 'running', 'clarification_needed', 'waiting_approval',
-  'completed', 'failed', 'cancelled',
+  'completed', 'failed', 'cancelled', 'interrupted', 'requires_action',
 ])
 
 export const todoStatusSchema = z.enum(['pending', 'running', 'completed', 'failed', 'blocked'])
@@ -292,6 +292,104 @@ export const conversationItemSchema = z.object({
   timestamp: z.string(),
 })
 
+// --- File conversation kernel ---
+
+export const transcriptEntryKindSchema = z.enum([
+  'message', 'tool_call', 'tool_result',
+  'compact_boundary', 'compact_summary', 'checkpoint',
+])
+
+export const contentRefSchema = z.object({
+  algorithm: z.literal('sha256').default('sha256'),
+  hash: z.string(),
+  mediaType: z.string().default('application/octet-stream'),
+  sizeBytes: z.number().int().nonnegative(),
+  relativePath: z.string(),
+})
+
+export const transcriptEntrySchema = z.object({
+  schemaVersion: z.literal(1).default(1),
+  seq: z.number().int().positive(),
+  entryId: z.string(),
+  parentEntryId: z.string().nullable().default(null),
+  logicalParentEntryId: z.string().nullable().default(null),
+  threadId: z.string(),
+  runId: z.string().nullable().default(null),
+  turnId: z.string().nullable().default(null),
+  kind: transcriptEntryKindSchema,
+  timestamp: z.string(),
+  payload: z.record(z.unknown()).default({}),
+})
+
+export const threadManifestSchema = z.object({
+  schemaVersion: z.literal(1).default(1),
+  threadId: z.string(),
+  sessionId: z.string(),
+  activeLeafEntryId: z.string().nullable().default(null),
+  lastSequence: z.number().int().nonnegative().default(0),
+  transcriptEntryCount: z.number().int().nonnegative().default(0),
+  estimatedContextTokens: z.number().int().nonnegative().default(0),
+  latestCompactionId: z.string().nullable().default(null),
+  memoryVersion: z.number().int().nonnegative().default(0),
+  memoryBasedOnTokens: z.number().int().nonnegative().default(0),
+  forkedFrom: z.object({ threadId: z.string(), entryId: z.string() }).nullable().default(null),
+  quarantined: z.boolean().default(false),
+  quarantineReason: z.string().nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+export const runCheckpointSchema = z.object({
+  schemaVersion: z.literal(1).default(1),
+  run: z.lazy(() => analysisRunSchema),
+  activeEntryId: z.string().nullable().default(null),
+  pendingToolCallIds: z.array(z.string()).default([]),
+  lastPersistedAt: z.string(),
+  recoveryStatus: z.enum(['clean', 'interrupted', 'requires_action']).default('clean'),
+})
+
+export const compactionRecordSchema = z.object({
+  schemaVersion: z.literal(1).default(1),
+  compactionId: z.string(),
+  threadId: z.string(),
+  boundaryEntryId: z.string(),
+  summaryEntryId: z.string(),
+  firstCompactedEntryId: z.string(),
+  lastCompactedEntryId: z.string(),
+  preservedFromEntryId: z.string().nullable().default(null),
+  summary: z.string(),
+  strategy: z.enum(['model', 'extractive_fallback']),
+  preTokens: z.number().int().nonnegative(),
+  postTokens: z.number().int().nonnegative(),
+  createdAt: z.string(),
+})
+
+export const threadMemoryDocumentSchema = z.object({
+  threadId: z.string(),
+  version: z.number().int().nonnegative(),
+  content: z.string(),
+  generatedContent: z.string().default(''),
+  pinnedContent: z.string().default(''),
+  source: z.enum(['system', 'user', 'fork']).default('system'),
+  basedOnEntryId: z.string().nullable().default(null),
+  estimatedTokens: z.number().int().nonnegative().default(0),
+  updatedAt: z.string(),
+})
+
+export const contextAssemblyReportSchema = z.object({
+  threadId: z.string(),
+  activeLeafEntryId: z.string().nullable().default(null),
+  contextWindowTokens: z.number().int().positive(),
+  estimatedTokens: z.number().int().nonnegative(),
+  usageRatio: z.number().nonnegative(),
+  compactionRecommended: z.boolean(),
+  hardLimitReached: z.boolean(),
+  includedEntryIds: z.array(z.string()).default([]),
+  omittedEntryCount: z.number().int().nonnegative().default(0),
+  latestCompactionId: z.string().nullable().default(null),
+  sections: z.array(z.object({ name: z.string(), estimatedTokens: z.number().int().nonnegative() })).default([]),
+})
+
 // --- Session / Thread / Run ---
 
 export const sessionRecordSchema = z.object({
@@ -319,7 +417,7 @@ export const agentThreadRecordSchema = z.object({
   latestArtifactName: z.string().nullable().default(null),
   historyPreview: z.string().nullable().default(null),
   runCount: z.number().default(0),
-  sessionLogPath: z.string().nullable().default(null),
+  conversationPath: z.string().nullable().default(null),
 })
 
 export const analysisRunSchema = z.object({
@@ -333,7 +431,7 @@ export const analysisRunSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   state: agentStateSchema,
-  sessionLogPath: z.string().nullable().default(null),
+  conversationPath: z.string().nullable().default(null),
   runtimeConfigSnapshot: z.custom<AgentRuntimeConfig>().nullable().default(null),
 })
 
@@ -411,6 +509,16 @@ export const runtimeContextConfigSchema = z.object({
   memoryFileCharLimit: z.number().default(4000),
   memoryEnabled: z.boolean().default(true),
   memoryBaseDir: z.string().default('.geoagent/memory'),
+  contextWindowTokens: z.number().int().positive().default(128000),
+  warningRatio: z.number().min(0.1).max(0.95).default(0.7),
+  compactRatio: z.number().min(0.2).max(0.98).default(0.8),
+  hardLimitRatio: z.number().min(0.3).max(0.99).default(0.9),
+  preserveRecentTurns: z.number().int().positive().default(6),
+  inlineToolResultMaxChars: z.number().int().positive().default(12000),
+  memoryInitTokens: z.number().int().positive().default(12000),
+  memoryUpdateTokens: z.number().int().positive().default(8000),
+  summaryProvider: z.string().nullable().default(null),
+  summaryModel: z.string().nullable().default(null),
 })
 
 export const runtimeGeosearchConfigSchema = z.object({
@@ -510,6 +618,7 @@ export const modelProviderDescriptorSchema = z.object({
   configured: z.boolean(),
   defaultModel: z.string().nullable().default(null),
   capabilities: z.array(z.string()).default([]),
+  contextWindowTokens: z.number().int().positive().default(128000),
 })
 
 export const toolParameterOptionSchema = z.object({
@@ -570,6 +679,14 @@ export type LoopTraceEntry = z.infer<typeof loopTraceEntrySchema>
 export type AgentState = z.infer<typeof agentStateSchema>
 export type RunEvent = z.infer<typeof runEventSchema>
 export type ConversationItem = z.infer<typeof conversationItemSchema>
+export type TranscriptEntryKind = z.infer<typeof transcriptEntryKindSchema>
+export type ContentRef = z.infer<typeof contentRefSchema>
+export type TranscriptEntry = z.infer<typeof transcriptEntrySchema>
+export type ThreadManifest = z.infer<typeof threadManifestSchema>
+export type RunCheckpoint = z.infer<typeof runCheckpointSchema>
+export type CompactionRecord = z.infer<typeof compactionRecordSchema>
+export type ThreadMemoryDocument = z.infer<typeof threadMemoryDocumentSchema>
+export type ContextAssemblyReport = z.infer<typeof contextAssemblyReportSchema>
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
 export type AgentThreadRecord = z.infer<typeof agentThreadRecordSchema>
 export type AnalysisRun = z.infer<typeof analysisRunSchema>

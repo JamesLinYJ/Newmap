@@ -14,7 +14,11 @@ export const clientMsgType = z.enum([
   'workspace:bootstrap',
   'session:get-default', 'session:get',
   'thread:list', 'thread:get', 'thread:create', 'thread:update', 'thread:delete',
-  'run:list', 'run:start', 'run:get', 'run:cancel', 'run:resolve-approval', 'run:subscribe', 'run:unsubscribe',
+  'thread:history', 'thread:fork', 'thread:compact', 'thread:context',
+  'thread:subscribe', 'thread:unsubscribe',
+  'thread:memory:get', 'thread:memory:update', 'thread:memory:rebuild',
+  'thread:trash:list', 'thread:trash:restore', 'thread:trash:purge',
+  'run:list', 'run:start', 'run:get', 'run:cancel', 'run:resume', 'run:resolve-approval', 'run:subscribe', 'run:unsubscribe',
   'tool:list', 'tool:run',
   'tool-catalog:list', 'tool-catalog:upsert', 'tool-catalog:delete',
   'runtime-config:get', 'runtime-config:update',
@@ -43,7 +47,12 @@ export function failure(id: string | null, code: string, message: string): strin
   return format({ type: 'response', id, payload: { ok: false, error: { code, message } } })
 }
 
-export function push(type: 'run.item' | 'run.event' | 'run.snapshot' | 'keepalive', data: unknown): string {
+export function push(
+  type: 'run.item' | 'run.event' | 'run.snapshot'
+    | 'thread.entry' | 'thread.updated' | 'thread.compacted' | 'thread.memory.updated'
+    | 'keepalive',
+  data: unknown,
+): string {
   return format({ type, id: null, payload: { data } })
 }
 

@@ -22,6 +22,8 @@ import { PostgresPlatformStore, StoreNotFoundError } from '../store/platformStor
 import { makeId, nowUtc } from '../utils/ids.js'
 import { failure, parseMessage, push, success, type ClientMsg } from './protocol.js'
 import { persistToolExecutionResult, resolveRuntimeValueRef } from '../tools/resultPersistence.js'
+import { assembleThreadContext, compactThreadIfNeeded, rebuildThreadMemory } from '../agent/contextManager.js'
+import { buildSystemPrompt } from '../agent/prompts.js'
 
 interface WsDependencies {
   store: PostgresPlatformStore
@@ -102,7 +104,12 @@ async function handleMessage(
     case 'thread:get': {
       const threadId = requiredString(payload, 'threadId')
       const runs = store.listRunsForThread(threadId)
-      return { thread: store.getThread(threadId), runs, latestRun: runs[0] ?? null }
+      return {
+        thread: store.getThread(threadId),
+        manifest: await store.getThreadManifest(threadId),
+        runs,
+        latestRun: runs[0] ?? null,
+      }
     }
     case 'thread:create':
       return store.createThread(requiredString(payload, 'sessionId'), optionalString(payload.title))
@@ -112,6 +119,76 @@ async function handleMessage(
       const threadId = requiredString(payload, 'threadId')
       await store.deleteThread(threadId)
       return { deleted: true, threadId }
+    }
+    case 'thread:history':
+      return store.listThreadHistory(
+        requiredString(payload, 'threadId'),
+        optionalString(payload.cursor),
+        optionalPositiveInteger(payload.limit, 'limit'),
+      )
+    case 'thread:fork':
+      return store.forkThread(
+        requiredString(payload, 'threadId'),
+        requiredString(payload, 'entryId'),
+        optionalString(payload.title),
+      )
+    case 'thread:context': {
+      const threadId = requiredString(payload, 'threadId')
+      const config = await resolveRuntimeConfig(store)
+      const tools = toolRegistry.list().map(tool => `- ${tool.name}: ${tool.description}`).join('\n')
+      const systemPrompt = buildSystemPrompt(config, null, tools, '', '')
+      return (await assembleThreadContext(store, threadId, config.context, systemPrompt)).report
+    }
+    case 'thread:compact': {
+      const threadId = requiredString(payload, 'threadId')
+      const config = await resolveRuntimeConfig(store)
+      return compactThreadIfNeeded(
+        store,
+        threadId,
+        config.context,
+        makeSummarizer(modelRegistry, config, optionalString(payload.provider), optionalString(payload.modelName)),
+        true,
+      )
+    }
+    case 'thread:memory:get':
+      return store.getThreadMemory(requiredString(payload, 'threadId'))
+    case 'thread:memory:update':
+      return store.updateThreadMemory(
+        requiredString(payload, 'threadId'),
+        requiredString(payload, 'content'),
+        optionalNonNegativeInteger(payload.expectedVersion, 'expectedVersion'),
+      )
+    case 'thread:memory:rebuild': {
+      const threadId = requiredString(payload, 'threadId')
+      const config = await resolveRuntimeConfig(store)
+      return rebuildThreadMemory(
+        store,
+        threadId,
+        config.context,
+        makeSummarizer(modelRegistry, config, optionalString(payload.provider), optionalString(payload.modelName)),
+        true,
+      )
+    }
+    case 'thread:trash:list':
+      return store.listTrash(requiredString(payload, 'sessionId'))
+    case 'thread:trash:restore':
+      return store.restoreThread(requiredString(payload, 'threadId'))
+    case 'thread:trash:purge': {
+      const threadId = requiredString(payload, 'threadId')
+      await store.purgeThread(threadId)
+      return { purged: true, threadId }
+    }
+    case 'thread:subscribe': {
+      const threadId = requiredString(payload, 'threadId')
+      subscribeToThread(ws, threadId, store, subscriptions)
+      return { thread: store.getThread(threadId), manifest: await store.getThreadManifest(threadId) }
+    }
+    case 'thread:unsubscribe': {
+      const threadId = requiredString(payload, 'threadId')
+      const key = `thread:${threadId}`
+      subscriptions.get(key)?.()
+      subscriptions.delete(key)
+      return { unsubscribed: true, threadId }
     }
     case 'run:list':
       return store.listRunSummaries({
@@ -127,7 +204,7 @@ async function handleMessage(
       if (!sessionId) throw new Error('sessionId 不能为空')
       if (!threadId) threadId = (await store.createThread(sessionId, query.slice(0, 32))).id
       const config = await resolveRuntimeConfig(store)
-      const run = store.createRun(sessionId, query, {
+      const run = await store.createRun(sessionId, query, {
         threadId,
         modelProvider: optionalString(payload.provider) ?? optionalString(payload.modelProvider),
         modelName: optionalString(payload.modelName),
@@ -144,13 +221,35 @@ async function handleMessage(
         runtimeConfig: config,
         executionMode: payload.executionMode === 'plan' ? 'plan' : 'auto',
         reasoning: payload.reasoning !== false,
-      }).then(() => sendSnapshot(ws, run.id, store))
+      }).then(() => void sendSnapshot(ws, run.id, store))
       return run
     }
     case 'run:get':
       return snapshot(requiredString(payload, 'runId'), store)
     case 'run:cancel':
       return runtime.cancel(requiredString(payload, 'runId'))
+    case 'run:resume': {
+      const runId = requiredString(payload, 'runId')
+      const run = store.getRun(runId)
+      const checkpoint = await store.conversationStore.getRunCheckpoint(runId)
+      if (checkpoint.pendingToolCallIds.length) {
+        await store.updateRunStatus(runId, 'requires_action')
+        throw new Error(`运行包含状态未知的工具调用，禁止自动重放：${checkpoint.pendingToolCallIds.join(', ')}`)
+      }
+      if (!run.runtimeConfigSnapshot) throw new Error(`运行 '${runId}' 缺少 runtimeConfigSnapshot`)
+      subscribeToRun(ws, runId, store, subscriptions)
+      void runtime.run({
+        runId,
+        threadId: run.threadId,
+        sessionId: run.sessionId,
+        query: run.userQuery,
+        provider: run.modelProvider ?? modelRegistry.defaultProvider,
+        modelName: run.modelName,
+        runtimeConfig: run.runtimeConfigSnapshot,
+        resume: true,
+      }).then(() => void sendSnapshot(ws, runId, store))
+      return store.getRun(runId)
+    }
     case 'run:resolve-approval':
       return runtime.resolveApproval(
         requiredString(payload, 'runId'),
@@ -199,7 +298,7 @@ async function handleMessage(
         catalogBackend: 'typescript',
         postgisEnabled: postgisStatus.available,
         postgisError: postgisStatus.error,
-        sessionLogRoot: store.sessionLogRoot,
+        conversationStoreRoot: store.conversationStoreRoot,
         providers: modelRegistry.descriptors(),
         toolProviders: toolRegistry.providerStatuses(),
       }
@@ -210,8 +309,11 @@ async function handleMessage(
     }
     case 'file:delete': {
       const fileId = requiredString(payload, 'fileId')
-      const deleted = await files.delete(fileId, optionalString(payload.threadId))
+      const threadId = optionalString(payload.threadId)
+      const existing = (await files.list(threadId)).find(file => file.id === fileId)
+      const deleted = await files.delete(fileId, threadId)
       if (!deleted) throw new StoreNotFoundError(`文件 '${fileId}' 不存在`)
+      if (threadId && existing) await store.recordAttachment(threadId, existing, 'deleted')
       return { deleted: true, id: fileId }
     }
     case 'layer:list':
@@ -239,14 +341,14 @@ async function executeTool(
     const sessionId = requiredString(payload, 'sessionId')
     let threadId = optionalString(payload.threadId)
     if (!threadId) threadId = (await store.createThread(sessionId, `工具：${requiredString(payload, 'toolName')}`)).id
-    const created = store.createRun(sessionId, `执行工具 ${requiredString(payload, 'toolName')}`, {
+    const created = await store.createRun(sessionId, `执行工具 ${requiredString(payload, 'toolName')}`, {
       threadId,
       modelProvider: modelRegistry.defaultProvider || null,
       runtimeConfigSnapshot: await resolveRuntimeConfig(store),
     })
     runId = created.id
     directRun = true
-    store.updateRunStatus(runId, 'running')
+    await store.updateRunStatus(runId, 'running')
   }
   const run = store.getRun(runId)
   const values = new Map(run.state.toolValueRefs.map(ref => [ref.refId, ref]))
@@ -277,14 +379,14 @@ async function executeTool(
   try {
     const result = await registry.execute(toolName, args, context)
     await persistToolExecutionResult(store, runId, toolName, args, result)
-    if (directRun) store.completeRun(runId, 'completed')
+    if (directRun) await store.completeRun(runId, 'completed')
     return { result, run: store.getRun(runId) }
   } catch (error) {
     if (directRun) {
       const message = formatError(error)
       const current = store.getRun(runId)
-      store.updateRunState(runId, { errors: [...current.state.errors, message], failedTool: toolName })
-      store.completeRun(runId, 'failed')
+      await store.updateRunState(runId, { errors: [...current.state.errors, message], failedTool: toolName })
+      await store.completeRun(runId, 'failed')
     }
     throw error
   }
@@ -300,7 +402,7 @@ function subscribeToRun(
   if (subscriptions.has(runId)) return
   const unsubscribeItem = store.itemBus.subscribe(runId, item => send(ws, push('run.item', item)))
   const unsubscribeEvent = store.eventBus.subscribe(runId, event => send(ws, push('run.event', event)))
-  const unsubscribeRun = store.runBus.subscribe(runId, () => sendSnapshot(ws, runId, store))
+  const unsubscribeRun = store.runBus.subscribe(runId, () => void sendSnapshot(ws, runId, store))
   subscriptions.set(runId, () => {
     unsubscribeItem()
     unsubscribeEvent()
@@ -308,12 +410,34 @@ function subscribeToRun(
   })
 }
 
-function snapshot(runId: string, store: PostgresPlatformStore) {
-  return { run: store.getRun(runId), items: store.listItems(runId), events: store.listEvents(runId) }
+function subscribeToThread(
+  ws: WebSocket,
+  threadId: string,
+  store: PostgresPlatformStore,
+  subscriptions: Map<string, () => void>,
+): void {
+  store.getThread(threadId)
+  const key = `thread:${threadId}`
+  if (subscriptions.has(key)) return
+  const unsubscribeEntry = store.threadEntryBus.subscribe(threadId, entry => send(ws, push('thread.entry', entry)))
+  const unsubscribeUpdate = store.threadUpdateBus.subscribe(threadId, update => send(ws, push('thread.updated', update)))
+  const unsubscribeCompact = store.threadCompactionBus.subscribe(threadId, record => send(ws, push('thread.compacted', record)))
+  const unsubscribeMemory = store.threadMemoryBus.subscribe(threadId, memory => send(ws, push('thread.memory.updated', memory)))
+  subscriptions.set(key, () => {
+    unsubscribeEntry()
+    unsubscribeUpdate()
+    unsubscribeCompact()
+    unsubscribeMemory()
+  })
 }
 
-function sendSnapshot(ws: WebSocket, runId: string, store: PostgresPlatformStore): void {
-  send(ws, push('run.snapshot', snapshot(runId, store)))
+async function snapshot(runId: string, store: PostgresPlatformStore) {
+  const [items, events] = await Promise.all([store.listItems(runId), store.listEvents(runId)])
+  return { run: store.getRun(runId), items, events }
+}
+
+async function sendSnapshot(ws: WebSocket, runId: string, store: PostgresPlatformStore): Promise<void> {
+  send(ws, push('run.snapshot', await snapshot(runId, store)))
 }
 
 function send(ws: WebSocket, message: string): void {
@@ -323,6 +447,23 @@ function send(ws: WebSocket, message: string): void {
 async function resolveRuntimeConfig(store: PostgresPlatformStore): Promise<AgentRuntimeConfig> {
   const stored = await store.getRuntimeConfig('agent-runtime')
   return stored ? stored as AgentRuntimeConfig : defaultRuntimeConfig()
+}
+
+function makeSummarizer(
+  registry: ModelAdapterRegistry,
+  config: AgentRuntimeConfig,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+) {
+  return async (prompt: string): Promise<string> => {
+    const adapter = registry.resolveProvider(requestedProvider ?? config.context.summaryProvider)
+    const response = await adapter.chat(prompt, {
+      model: requestedModel ?? config.context.summaryModel ?? adapter.subagentModel ?? adapter.defaultModel,
+      reasoning: false,
+    })
+    if (typeof response.content !== 'string' || !response.content.trim()) throw new Error('摘要模型未返回文本')
+    return response.content.trim()
+  }
 }
 
 function requiredString(payload: Record<string, unknown>, key: string): string {
@@ -344,6 +485,14 @@ function optionalPositiveInteger(value: unknown, key: string): number | undefine
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     throw new Error(`${key} 必须为正整数`)
+  }
+  return value
+}
+
+function optionalNonNegativeInteger(value: unknown, key: string): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${key} 必须为非负整数`)
   }
   return value
 }

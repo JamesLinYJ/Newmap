@@ -26,6 +26,11 @@ import type {
   SessionRecord,
   SystemComponentsStatus,
   ToolDescriptor,
+  ThreadDetailSnapshot,
+  ThreadHistoryPage,
+  ThreadMemoryDocument,
+  ContextAssemblyReport,
+  CompactionRecord,
   WsControlCommand,
   WorkspaceBootstrapSnapshot,
 } from '@geo-agent-platform/shared-types'
@@ -183,7 +188,7 @@ export function createThread(sessionId: string, title?: string) {
 }
 
 export function getThread(threadId: string) {
-  return requestControl<{ thread: AgentThreadRecord; runs: AnalysisRun[]; latestRun?: AnalysisRun | null }>('thread:get', { threadId })
+  return requestControl<ThreadDetailSnapshot>('thread:get', { threadId })
 }
 
 export function updateThread(threadId: string, title: string) {
@@ -199,6 +204,46 @@ export function listRunSummaries(
   options: { threadId?: string | null; cursor?: string | null; limit?: number } = {},
 ) {
   return requestControl<RunSummaryPage>('run:list', { sessionId, ...options })
+}
+
+export function getThreadHistory(threadId: string, cursor?: string | null, limit = 100) {
+  return requestControl<ThreadHistoryPage>('thread:history', { threadId, cursor, limit })
+}
+
+export function forkThread(threadId: string, entryId: string, title?: string) {
+  return requestControl<AgentThreadRecord>('thread:fork', { threadId, entryId, title })
+}
+
+export function compactThread(threadId: string) {
+  return requestControl<CompactionRecord | null>('thread:compact', { threadId })
+}
+
+export function getThreadContext(threadId: string) {
+  return requestControl<ContextAssemblyReport>('thread:context', { threadId })
+}
+
+export function getThreadMemory(threadId: string) {
+  return requestControl<ThreadMemoryDocument>('thread:memory:get', { threadId })
+}
+
+export function updateThreadMemory(threadId: string, content: string, expectedVersion: number) {
+  return requestControl<ThreadMemoryDocument>('thread:memory:update', { threadId, content, expectedVersion })
+}
+
+export function rebuildThreadMemory(threadId: string) {
+  return requestControl<ThreadMemoryDocument>('thread:memory:rebuild', { threadId })
+}
+
+export function listTrashedThreads(sessionId: string) {
+  return requestControl<Array<{ thread: AgentThreadRecord; deletedAt: string; purgeAfter: string }>>('thread:trash:list', { sessionId })
+}
+
+export function restoreThread(threadId: string) {
+  return requestControl<AgentThreadRecord>('thread:trash:restore', { threadId })
+}
+
+export function purgeThread(threadId: string) {
+  return requestControl<{ purged: boolean; threadId: string }>('thread:trash:purge', { threadId })
 }
 
 export function listLayers(sessionId?: string | null, threadId?: string | null) {
@@ -373,6 +418,10 @@ export interface FileEntry {
   uploadedAt: string; status: string
   threadId?: string | null
   relativePath?: string
+}
+
+export function resumeRun(runId: string) {
+  return requestControl<AnalysisRun>('run:resume', { runId })
 }
 
 export interface FileListResponse {

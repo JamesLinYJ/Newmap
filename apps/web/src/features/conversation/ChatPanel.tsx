@@ -17,7 +17,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'framer-motion'
-import { Maximize2, Minimize2, Pencil, Trash2 } from 'lucide-react'
+import { BrainCircuit, Maximize2, Minimize2, Pencil, RefreshCw, Save, Trash2 } from 'lucide-react'
 import type { AgentThreadRecord } from '@geo-agent-platform/shared-types'
 import { SAMPLES } from '../../shared/constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants } from '../../shared/motion'
@@ -71,7 +71,18 @@ export function ChatPanel(props: ChatPanelProps) {
     onRenameTask,
     onDeleteTask,
     onResolveApproval,
+    onForkMessage,
     dataReferences,
+    threadContext,
+    threadMemory,
+    onLoadThreadContext,
+    onCompactThread,
+    onSaveThreadMemory,
+    onRebuildThreadMemory,
+    trashedThreads = [],
+    onLoadTrash,
+    onRestoreThread,
+    onPurgeThread,
     memories,
     onRefreshMemories,
     tokenBudget,
@@ -96,6 +107,9 @@ export function ChatPanel(props: ChatPanelProps) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const [composerMode, setComposerMode] = useState<ComposerMode>('auto')
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
+  const [memoryEdit, setMemoryEdit] = useState<{ threadId: string; version: number; draft: string } | null>(null)
+  const [showTrash, setShowTrash] = useState(false)
   const triggerRef = useRef<HTMLElement | null>(null)
   const firstClarificationOptionRef = useRef<HTMLButtonElement | null>(null)
   const composerInputRef = useRef<HTMLInputElement | null>(null)
@@ -122,6 +136,15 @@ export function ChatPanel(props: ChatPanelProps) {
   const displayCurrentThreadTitle = currentThread
     ? formatThreadDisplayTitle(currentThread)
     : deriveThreadTitleFromText(currentThreadTitle)
+  // memory 默认直接派生自服务端版本；只有用户编辑后才保存版本绑定的本地草稿。
+  const matchingMemoryEdit = memoryEdit
+    && memoryEdit.threadId === currentThreadId
+    && memoryEdit.version === (threadMemory?.version ?? 0)
+    ? memoryEdit
+    : null
+  const memoryDraft = matchingMemoryEdit
+    ? matchingMemoryEdit.draft
+    : threadMemory?.content ?? ''
 
   useEffect(() => {
     if (!isSubmitting) {
@@ -237,6 +260,20 @@ export function ChatPanel(props: ChatPanelProps) {
               <small>{formatStatusLine(runStatus, providerLabel, artifactCount, uploadedLayerName)}</small>
             </div>
             <div className="cc-header-actions">
+              {currentThreadId && (
+                <button
+                  className={`cc-icon-button ${contextOpen ? 'cc-icon-button--active' : ''}`}
+                  aria-label="上下文管理"
+                  onClick={() => {
+                    const next = !contextOpen
+                    setContextOpen(next)
+                    if (next) onLoadThreadContext?.()
+                  }}
+                >
+                  <BrainCircuit size={14} />
+                  <span>上下文</span>
+                </button>
+              )}
               {sessionThreads.length > 0 && (
                 <button
                   className="cc-icon-button"
@@ -263,6 +300,41 @@ export function ChatPanel(props: ChatPanelProps) {
             </div>
           </header>
 
+          {contextOpen && currentThreadId && (
+            <section className="cc-context-drawer" aria-label="线程上下文管理">
+              <div className="cc-context-metrics">
+                <span><strong>{threadContext?.estimatedTokens.toLocaleString() ?? '--'}</strong> token</span>
+                <span><strong>{threadContext ? `${Math.round(threadContext.usageRatio * 100)}%` : '--'}</strong> 使用率</span>
+                <span><strong>{threadContext?.includedEntryIds.length ?? '--'}</strong> 条上下文</span>
+                <span title={threadContext?.activeLeafEntryId ?? ''}><strong>{threadContext?.activeLeafEntryId?.slice(-8) ?? '--'}</strong> 活动叶</span>
+              </div>
+              <div className="cc-context-actions">
+                <button type="button" onClick={onCompactThread}>压缩历史</button>
+                <button type="button" onClick={onRebuildThreadMemory}><RefreshCw size={13} />重建记忆</button>
+              </div>
+              <label className="cc-memory-editor">
+                <span>线程记忆 <small>v{threadMemory?.version ?? 0}</small></span>
+                <textarea
+                  value={memoryDraft}
+                  onChange={(event) => currentThreadId && setMemoryEdit({
+                    threadId: currentThreadId,
+                    version: threadMemory?.version ?? 0,
+                    draft: event.target.value,
+                  })}
+                  placeholder="线程目标、约束、确认事实和用户固定记忆"
+                />
+              </label>
+              <button
+                className="cc-memory-save"
+                type="button"
+                disabled={!onSaveThreadMemory || memoryDraft === (threadMemory?.content ?? '')}
+                onClick={() => onSaveThreadMemory?.(memoryDraft)}
+              >
+                <Save size={13} />保存记忆
+              </button>
+            </section>
+          )}
+
           {/* 历史视图和聊天视图是互斥业务状态，不能由 presence 保留退出副本。
               两个面板各自保留进入动画，切换时始终只挂载当前事实视图。 */}
           <>
@@ -274,11 +346,33 @@ export function ChatPanel(props: ChatPanelProps) {
                     返回
                   </button>
                   <strong>历史会话</strong>
-                  <span>{sessionThreads.length} 个</span>
+                  <button
+                    className="cc-trash-toggle"
+                    type="button"
+                    onClick={() => {
+                      const next = !showTrash
+                      setShowTrash(next)
+                      if (next) onLoadTrash?.()
+                    }}
+                  >
+                    {showTrash ? '返回会话' : `回收站 ${trashedThreads.length || ''}`}
+                  </button>
                 </div>
-                <input className="cc-task-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索会话..." />
+                {!showTrash && <input className="cc-task-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索会话..." />}
                 <m.div className="cc-task-list" variants={feedVariants} initial="hidden" animate="visible" layout>
-                  {filteredTasks.length ? (
+                  {showTrash ? (
+                    trashedThreads.length ? trashedThreads.map(({ thread, deletedAt, purgeAfter }) => (
+                      <div key={thread.id} className="cc-task-row-wrap cc-task-row-wrap--trash">
+                        <div className="cc-task-row cc-task-row--trash">
+                          <span className="cc-task-row__main"><strong>{formatThreadDisplayTitle(thread)}</strong><small>删除于 {formatSessionDate(deletedAt)} · 保留至 {formatSessionDate(purgeAfter)}</small></span>
+                        </div>
+                        <div className="cc-task-actions">
+                          <button aria-label="恢复" onClick={() => onRestoreThread?.(thread.id)}><RefreshCw size={13} /></button>
+                          <button aria-label="永久删除" onClick={() => onPurgeThread?.(thread.id)}><Trash2 size={13} /></button>
+                        </div>
+                      </div>
+                    )) : <div className="cc-empty">回收站为空</div>
+                  ) : filteredTasks.length ? (
                     filteredTasks.map((task) => (
                       <div key={task.id} className="cc-task-row-wrap">
                         <button
@@ -335,6 +429,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   onEditPlan={onEditPlan}
                   onSelectArtifact={onSelectArtifact}
                   onResolveApproval={onResolveApproval}
+                  onForkMessage={onForkMessage}
                   onRetry={() => onSubmit(composerMode)}
                   onFocusClarification={focusClarification}
                   feedVariants={feedVariants}

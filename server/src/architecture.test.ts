@@ -43,7 +43,7 @@ describe('conversation architecture', () => {
     }
   })
 
-  it('replays completed conversation items from the session log', async () => {
+  it('replays completed conversation items from per-run files', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'geo-items-'))
     try {
       const db = noOpDb()
@@ -51,16 +51,16 @@ describe('conversation architecture', () => {
       await store.initialize()
       const session = await store.createSession()
       const thread = await store.createThread(session.id, '测试')
-      const run = store.createRun(session.id, '查询杭州', { threadId: thread.id })
+      const run = await store.createRun(session.id, '查询杭州', { threadId: thread.id })
 
       store.appendItem(item({ runId: run.id, threadId: thread.id, role: 'user', body: '查询杭州' }))
       store.appendItem(item({ runId: run.id, threadId: thread.id, role: 'assistant', body: '杭州有雨。' }))
       store.appendItem(item({ runId: run.id, threadId: thread.id, itemType: 'result', role: null, body: null, metadata: { resultType: 'success' } }))
-      await store.sessionLog.flush()
+      await store.conversationStore.flush()
 
       const restored = new PostgresPlatformStore(db, dir)
       await restored.initialize()
-      const restoredItems = restored.listItems(run.id)
+      const restoredItems = await restored.listItems(run.id)
 
       expect(restoredItems.map((entry) => entry.itemType)).toEqual(['message', 'message', 'result'])
       expect(restoredItems[1].body).toBe('杭州有雨。')
@@ -81,7 +81,7 @@ describe('conversation architecture', () => {
       const first = await store.createThread(session.id, '保留线程')
       const deleted = await store.createThread(session.id, '删除线程')
       await store.deleteThread(deleted.id)
-      await store.sessionLog.flush()
+      await store.conversationStore.flush()
 
       const restored = new PostgresPlatformStore(db, dir)
       await restored.initialize()
@@ -105,7 +105,7 @@ describe('conversation architecture', () => {
       for (let index = 0; index < 28; index += 1) {
         const thread = await store.createThread(session.id, `线程 ${index + 1}`)
         threadIds.push(thread.id)
-        store.createRun(session.id, `查询 ${index + 1}`, { threadId: thread.id })
+        await store.createRun(session.id, `查询 ${index + 1}`, { threadId: thread.id })
       }
 
       const first = store.listRunSummaries({ sessionId: session.id, limit: 20 })
@@ -117,7 +117,7 @@ describe('conversation architecture', () => {
 
       await store.deleteThread(threadIds[0])
       expect(store.listRunSummaries({ sessionId: session.id, limit: 100 }).items).toHaveLength(27)
-      await store.sessionLog.flush()
+      await store.conversationStore.flush()
 
       const restored = new PostgresPlatformStore(db, dir)
       await restored.initialize()

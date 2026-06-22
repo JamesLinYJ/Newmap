@@ -159,7 +159,7 @@ export function DebugPage({
   // 调试页的目标不是做漂亮摘要，而是把一次运行里最关键的对象
   // 统一摆在同一页上：输入、状态、事件、数据资产、工具和目录配置。
   const selectedArtifact = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) ?? artifacts[0]
-  const sessionLogPath = currentRun?.sessionLogPath
+  const conversationPath = currentRun?.conversationPath
   const selectedMetadata = selectedArtifact ? artifactMetadata[selectedArtifact.artifactId] : undefined
   const latestRuns = sessionRuns.slice(0, 5)
   const latestEvent = events.at(-1)
@@ -249,10 +249,10 @@ export function DebugPage({
       tone: events.length ? 'success' : 'neutral',
     },
     {
-      label: '会话日志',
-      value: sessionLogPath ? '已绑定' : '未绑定',
-      meta: sessionLogPath ? compactPath(sessionLogPath) : compactPath(systemComponents?.sessionLogRoot),
-      tone: sessionLogPath ? 'success' : 'neutral',
+      label: '会话存储',
+      value: conversationPath ? '已绑定' : '未绑定',
+      meta: conversationPath ? compactPath(conversationPath) : compactPath(systemComponents?.conversationStoreRoot),
+      tone: conversationPath ? 'success' : 'neutral',
     },
     {
       label: '工具工作台',
@@ -399,9 +399,9 @@ export function DebugPage({
                   <p>{latestRuns.length} 条运行记录</p>
                 </div>
                 <div className="inventory-card">
-                  <span>会话日志</span>
-                  <strong>{sessionLogPath ? 'JSONL' : '--'}</strong>
-                  <p>{sessionLogPath ? compactPath(sessionLogPath) : compactPath(systemComponents?.sessionLogRoot)}</p>
+                  <span>会话事实源</span>
+                  <strong>{conversationPath ? '分片文件' : '--'}</strong>
+                  <p>{conversationPath ? compactPath(conversationPath) : compactPath(systemComponents?.conversationStoreRoot)}</p>
                 </div>
                 <div className="inventory-card">
                   <span>当前结果</span>
@@ -469,8 +469,8 @@ export function DebugPage({
             <div className="panel__section">
               <div className="intent-block">
                 <div className="intent-row">
-                  <span>会话日志目录</span>
-                  <strong>{compactPath(systemComponents?.sessionLogRoot)}</strong>
+                  <span>会话存储目录</span>
+                  <strong>{compactPath(systemComponents?.conversationStoreRoot)}</strong>
                 </div>
                 <div className="intent-row">
                   <span>最新事件</span>
@@ -523,8 +523,8 @@ export function DebugPage({
                     </div>
                   ) : null}
                   <div className="intent-row">
-                    <span>会话日志</span>
-                    <strong>{systemComponents.sessionLogRoot ? '已启用' : '未返回'}</strong>
+                    <span>文件会话内核</span>
+                    <strong>{systemComponents.conversationStoreRoot ? '已启用' : '未返回'}</strong>
                   </div>
                   {systemComponents.toolProviders.map((toolProvider) => (
                     <div className="intent-row" key={toolProvider.providerId}>

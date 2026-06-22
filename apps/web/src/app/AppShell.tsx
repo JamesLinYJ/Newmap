@@ -18,6 +18,7 @@ import { useLocation } from 'react-router-dom'
 
 import type {
   AgentExecutionMode,
+  ConversationItem,
   ToolDescriptor,
 } from '@geo-agent-platform/shared-types'
 
@@ -31,7 +32,13 @@ import { WorkspaceLayout, type WorkspaceSidebarItem } from './layout/WorkspaceLa
 import { AppRoutes } from './routes'
 import { supportsAgentSdkLiveSupervisor } from '../shared/providerCapabilities'
 import { MapErrorBoundary } from '../features/map/MapErrorBoundary'
-import { aggregateThreadItems, formatUiError, reportNonBlockingError, retryAsync } from './bootstrap'
+import {
+  formatUiError,
+  mergeConversationItems,
+  reportNonBlockingError,
+  retryAsync,
+  transcriptEntriesToConversationItems,
+} from './bootstrap'
 import {
   useConnectionController,
   useNavigationController,
@@ -97,6 +104,7 @@ function AppShell() {
   // 网络语义和实时订阅分别由控制器与 useRunState 所有。
   const location = useLocation()
   const [isMapActivated, setIsMapActivated] = useState(false)
+  const [canonicalThreadItems, setCanonicalThreadItems] = useState<ConversationItem[]>([])
 
   const {
     run, agentState, intent, executionPlan,
@@ -109,7 +117,6 @@ function AppShell() {
     startRun,
     stopSubmitting,
     setError: setUiError,
-    setItems,
     cancelRun,
     resolveApproval,
     startAnalysis,
@@ -117,25 +124,42 @@ function AppShell() {
   } = useRunController()
   const {
     activeThreadId,
+    compactCurrentThread,
     ensureUploadThread: ensureSessionUploadThread,
     getThread,
+    getThreadHistory,
+    forkFromMessage,
     hasMoreRunHistory,
     isRunHistoryLoading,
     loadRunHistory,
     loadWorkspaceBootstrap,
+    loadThreadContextState,
+    purgeTrashedThread,
+    rebuildCurrentThreadMemory,
+    refreshTrash,
     refreshSessionHistory,
     removeThread,
     renameThread,
+    restoreTrashedThread,
+    saveThreadMemory,
     session,
     sessionRuns,
     sessionThreads,
     setActiveThreadId,
     setSession,
     setThreadRuns,
+    threadContext,
+    threadMemory,
     threadRuns,
+    trashedThreads,
   } = useSessionThreadController()
   const deferredEvents = useDeferredValue(events)
   const deferredItems = useDeferredValue(items)
+  // 当前 run 快照只负责实时变化；完整 thread transcript 由 canonical history 投影补齐。
+  const threadConversationItems = useMemo(
+    () => mergeConversationItems(canonicalThreadItems, deferredItems),
+    [canonicalThreadItems, deferredItems],
+  )
   const reducedMotion = useReducedMotion() ?? false
   const {
     applyProviders,
@@ -250,8 +274,8 @@ function AppShell() {
     events: deferredEvents,
   })
   const transcriptHeadline = useMemo(
-    () => pickConversationHeadline(deferredItems, run?.status),
-    [deferredItems, run?.status],
+    () => pickConversationHeadline(threadConversationItems, run?.status),
+    [threadConversationItems, run?.status],
   )
 
   // 从 compaction.executed 事件中提取压缩级别
@@ -362,6 +386,7 @@ function AppShell() {
   const clearActiveRunState = useCallback(() => {
     clearRun()
     clearArtifacts()
+    setCanonicalThreadItems([])
     startTransition(() => {
       setThreadRuns([])
       setToolRunResult(null)
@@ -445,6 +470,11 @@ function AppShell() {
           const wrongSession = restoredRun.sessionId !== sessionRecord.id
           const wrongThread = Boolean(thread && restoredRun.threadId !== thread.id)
           if (wrongSession || wrongThread) throw new Error('运行记录不属于当前会话或对话。')
+          if (restoredRun.threadId) {
+            const history = await getThreadHistory(restoredRun.threadId, null, 200)
+            if (disposed) return
+            setCanonicalThreadItems(transcriptEntriesToConversationItems(history.entries))
+          }
         } catch (error) {
           if (sharedRunId || sharedThreadId) throw error
           clearActiveRunState()
@@ -460,6 +490,7 @@ function AppShell() {
     applyProviders,
     clearActiveRunState,
     hydrateRunState,
+    getThreadHistory,
     loadWorkspaceBootstrap,
     readWorkspacePointer,
     setActiveThreadId,
@@ -569,6 +600,15 @@ function AppShell() {
         if (forceNewThread) {
           clearArtifacts()
           setToolRunResult(null)
+          setCanonicalThreadItems([])
+        } else if (targetThreadId) {
+          // 新 run 的首个 snapshot 会替换当前 run items，先把已完成协议项固化到 thread 投影。
+          setCanonicalThreadItems(current => mergeConversationItems(
+            current,
+            items.filter(item => item.status !== 'running' && [
+              'message', 'function_call', 'function_call_output',
+            ].includes(item.itemType)),
+          ))
         }
 
         const createdRun = targetThreadId
@@ -597,6 +637,7 @@ function AppShell() {
       provider,
       providers,
       query,
+      items,
       refreshSessionHistory,
       session,
       setActiveNav,
@@ -606,6 +647,7 @@ function AppShell() {
       setPanelMode,
       setProvider,
       setQuery,
+      setCanonicalThreadItems,
       setToolRunResult,
       setThreadRuns,
       setUiError,
@@ -662,6 +704,7 @@ function AppShell() {
       clearActiveRunState()
       clearUploads()
       setThreadRuns([])
+      setCanonicalThreadItems([])
       setActiveThreadId(undefined)
       setActiveNav('analysis')
       setPanelMode('summary')
@@ -704,10 +747,14 @@ function AppShell() {
 
   const handleSelectThread = useCallback(
     async (threadId: string) => {
-      // 主聊天面板按 thread 打开历史任务，聚合所有 run 的 item 以保证连续对话。
+      // 主聊天面板按 thread 打开 canonical transcript；当前 run 项由订阅层另行合并。
       try {
         setUiError(undefined)
-        const threadPayload = await getThread(threadId)
+        const [threadPayload, historyPage] = await Promise.all([
+          getThread(threadId),
+          getThreadHistory(threadId, null, 200),
+        ])
+        const canonicalItems = transcriptEntriesToConversationItems(historyPage.entries)
         const runs = threadPayload.runs ?? []
         startTransition(() => {
           setActiveThreadId(threadPayload.thread.id)
@@ -715,12 +762,7 @@ function AppShell() {
         })
         if (threadPayload.latestRun?.id) {
           await hydrateRunState(threadPayload.latestRun.id)
-          // 聚合 thread 内所有已完成 run 的 item
-          const completedRuns = runs.filter(r => r.status !== 'running')
-          if (completedRuns.length > 1) {
-            const allItems = await aggregateThreadItems(completedRuns)
-            setItems(allItems)
-          }
+          setCanonicalThreadItems(canonicalItems)
           if (session?.id) {
             syncUrl(session.id, threadPayload.latestRun.id, threadPayload.thread.id)
           }
@@ -732,6 +774,7 @@ function AppShell() {
           setThreadRuns(runs)
           setActiveThreadId(threadPayload.thread.id)
         })
+        setCanonicalThreadItems(canonicalItems)
         if (session?.id) {
           syncUrl(session.id, undefined, threadPayload.thread.id)
         }
@@ -739,7 +782,7 @@ function AppShell() {
         setUiError(formatUiError(error, '历史记录加载失败，请稍后重试。'))
       }
     },
-    [clearActiveRunState, getThread, hydrateRunState, session?.id, setActiveThreadId, setItems, setThreadRuns, setUiError, syncUrl],
+    [clearActiveRunState, getThread, getThreadHistory, hydrateRunState, session?.id, setActiveThreadId, setThreadRuns, setUiError, syncUrl],
   )
 
   const handleRenameThread = useCallback(
@@ -781,6 +824,82 @@ function AppShell() {
     [clearActiveRunState, currentThreadId, removeThread, session?.id, setUiError, syncUrl],
   )
 
+  const handleLoadThreadContext = useCallback(async () => {
+    if (!currentThreadId) return
+    try {
+      await loadThreadContextState(currentThreadId)
+    } catch (error) {
+      setUiError(formatUiError(error, '上下文状态加载失败。'))
+    }
+  }, [currentThreadId, loadThreadContextState, setUiError])
+
+  const handleCompactThread = useCallback(async () => {
+    if (!currentThreadId) return
+    try {
+      setUiError(undefined)
+      await compactCurrentThread(currentThreadId)
+      const history = await getThreadHistory(currentThreadId, null, 200)
+      setCanonicalThreadItems(transcriptEntriesToConversationItems(history.entries))
+    } catch (error) {
+      setUiError(formatUiError(error, '线程压缩失败。'))
+    }
+  }, [compactCurrentThread, currentThreadId, getThreadHistory, setUiError])
+
+  const handleSaveThreadMemory = useCallback(async (content: string) => {
+    if (!currentThreadId) return
+    try {
+      setUiError(undefined)
+      await saveThreadMemory(currentThreadId, content)
+      await loadThreadContextState(currentThreadId)
+    } catch (error) {
+      setUiError(formatUiError(error, '线程记忆保存失败。'))
+    }
+  }, [currentThreadId, loadThreadContextState, saveThreadMemory, setUiError])
+
+  const handleRebuildThreadMemory = useCallback(async () => {
+    if (!currentThreadId) return
+    try {
+      setUiError(undefined)
+      await rebuildCurrentThreadMemory(currentThreadId)
+    } catch (error) {
+      setUiError(formatUiError(error, '线程记忆重建失败。'))
+    }
+  }, [currentThreadId, rebuildCurrentThreadMemory, setUiError])
+
+  const handleForkMessage = useCallback(async (entryId: string) => {
+    if (!currentThreadId || !session?.id) return
+    try {
+      setUiError(undefined)
+      const forked = await forkFromMessage(currentThreadId, entryId)
+      const history = await getThreadHistory(forked.id, null, 200)
+      clearActiveRunState()
+      startTransition(() => {
+        setActiveThreadId(forked.id)
+        setThreadRuns([])
+      })
+      setCanonicalThreadItems(transcriptEntriesToConversationItems(history.entries))
+      syncUrl(session.id, undefined, forked.id)
+    } catch (error) {
+      setUiError(formatUiError(error, '消息分支创建失败。'))
+    }
+  }, [clearActiveRunState, currentThreadId, forkFromMessage, getThreadHistory, session?.id, setActiveThreadId, setThreadRuns, setUiError, syncUrl])
+
+  const handleRestoreThread = useCallback(async (threadId: string) => {
+    try {
+      await restoreTrashedThread(threadId)
+    } catch (error) {
+      setUiError(formatUiError(error, '线程恢复失败。'))
+    }
+  }, [restoreTrashedThread, setUiError])
+
+  const handlePurgeThread = useCallback(async (threadId: string) => {
+    try {
+      await purgeTrashedThread(threadId)
+    } catch (error) {
+      setUiError(formatUiError(error, '线程永久删除失败。'))
+    }
+  }, [purgeTrashedThread, setUiError])
+
   // 稳定化 ChatPanel 回调引用，避免每次渲染重建导致子树无效重渲染
   const onSubmitStable = useStableVoid(handleSubmit)
   const onSelectClarificationStable = useStableVoid(handleClarificationSelect)
@@ -788,6 +907,15 @@ function AppShell() {
   const onRenameTaskStable = useStableVoid(handleRenameThread)
   const onDeleteTaskStable = useStableVoid(handleDeleteThread)
   const onResolveApprovalStable = useStableVoid(handleResolveApproval)
+  const onForkMessageStable = useStableVoid(handleForkMessage)
+  const onLoadThreadContextStable = useStableVoid(handleLoadThreadContext)
+  const onCompactThreadStable = useStableVoid(handleCompactThread)
+  const onSaveThreadMemoryStable = useStableVoid(handleSaveThreadMemory)
+  const onRebuildThreadMemoryStable = useStableVoid(handleRebuildThreadMemory)
+  const handleRefreshTrash = useCallback(async () => { await refreshTrash() }, [refreshTrash])
+  const onRefreshTrashStable = useStableVoid(handleRefreshTrash)
+  const onRestoreThreadStable = useStableVoid(handleRestoreThread)
+  const onPurgeThreadStable = useStableVoid(handlePurgeThread)
   const handleLoadMoreHistory = useCallback(() => {
     if (!session?.id || !hasMoreRunHistory || isRunHistoryLoading) return
     void loadRunHistory(session.id, true).catch(error => {
@@ -922,7 +1050,7 @@ function AppShell() {
                         intent={intent}
                         clarification={agentState?.clarification}
                         sessionThreads={sessionThreads}
-                        items={deferredItems}
+                        items={threadConversationItems}
                         runtimeConfig={runtimeConfig}
                         availableTools={availableTools}
                         onQueryChange={setQuery}
@@ -940,7 +1068,18 @@ function AppShell() {
                         onRenameTask={onRenameTaskStable}
                         onDeleteTask={onDeleteTaskStable}
                         onResolveApproval={onResolveApprovalStable}
+                        onForkMessage={onForkMessageStable}
                         dataReferences={dataReferences}
+                        threadContext={threadContext}
+                        threadMemory={threadMemory}
+                        onLoadThreadContext={onLoadThreadContextStable}
+                        onCompactThread={onCompactThreadStable}
+                        onSaveThreadMemory={onSaveThreadMemoryStable}
+                        onRebuildThreadMemory={onRebuildThreadMemoryStable}
+                        trashedThreads={trashedThreads}
+                        onLoadTrash={onRefreshTrashStable}
+                        onRestoreThread={onRestoreThreadStable}
+                        onPurgeThread={onPurgeThreadStable}
                         tokenBudget={tokenBudget}
                         activeSkills={activeSkills}
                         compactionLevel={compactionLevel}

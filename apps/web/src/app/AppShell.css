@@ -3303,6 +3303,124 @@
   }
 }
 
+/* Thread context controls are intentionally compact so the timeline remains the primary surface. */
+.cc-context-drawer {
+  margin: 0 14px 10px;
+  padding: 12px;
+  border: 1px solid rgba(108, 127, 148, 0.18);
+  border-radius: 16px;
+  background: rgba(248, 251, 255, 0.72);
+  backdrop-filter: url("#dc-liquid-glass-panel") blur(16px) saturate(130%);
+  box-shadow: 0 12px 28px rgba(39, 61, 83, 0.08);
+}
+
+.cc-context-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cc-context-metrics span {
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #667587;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-context-metrics strong {
+  display: block;
+  color: #213246;
+  font-size: 13px;
+}
+
+.cc-context-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.cc-context-actions button,
+.cc-memory-save,
+.cc-trash-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(74, 101, 130, 0.16);
+  border-radius: 10px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #34475c;
+  font-size: 12px;
+}
+
+.cc-memory-editor {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: #34475c;
+  font-size: 12px;
+}
+
+.cc-memory-editor textarea {
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid rgba(74, 101, 130, 0.16);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #26384b;
+  font: inherit;
+  line-height: 1.55;
+}
+
+.cc-memory-save {
+  margin-top: 8px;
+}
+
+.cc-memory-save:disabled {
+  opacity: 0.45;
+}
+
+.cc-message-branch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #5d7084;
+  opacity: 0;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.cc-user-prompt:hover .cc-message-branch,
+.cc-timeline-item--answer:hover .cc-message-branch {
+  opacity: 1;
+}
+
+.cc-message-branch--assistant {
+  margin: 7px 0 0;
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+.cc-task-row-wrap--trash .cc-task-row {
+  cursor: default;
+  opacity: 0.78;
+}
+
+@media (max-width: 760px) {
+  .cc-context-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cc-message-branch { opacity: 1; }
+}
+
 /* ======================================================================
  * 2026 liquid glass workspace
  * ====================================================================== */

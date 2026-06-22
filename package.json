@@ -26,7 +26,8 @@
     "test:e2e:headed": "playwright test --headed",
     "lint:web": "npm run lint --workspace apps/web",
     "generate:glass": "node scripts/generate-liquid-glass-maps.mjs",
-    "check:bundle": "node scripts/check-web-bundle-budget.mjs"
+    "check:bundle": "node scripts/check-web-bundle-budget.mjs",
+    "reset:conversations": "node scripts/reset-conversation-store.mjs --confirm"
   },
   "dependencies": {
     "@openai/agents": "^0.11.6",

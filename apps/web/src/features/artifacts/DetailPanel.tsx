@@ -944,7 +944,7 @@ export const DetailPanel = memo(function DetailPanel({
               </div>
               <div className="dc-keyvalue-row">
                 <span>会话日志</span>
-                <strong>{systemComponents?.sessionLogRoot ? '已启用' : '载入中'}</strong>
+                <strong>{systemComponents?.conversationStoreRoot ? '已启用' : '载入中'}</strong>
               </div>
             </div>
           </section>

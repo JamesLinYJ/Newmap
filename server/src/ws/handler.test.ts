@@ -36,7 +36,7 @@ describe('WebSocket run subscriptions', () => {
     const session = await store.createSession()
     for (let index = 0; index < 4; index += 1) {
       const thread = await store.createThread(session.id, `线程 ${index + 1}`)
-      store.createRun(session.id, `查询 ${index + 1}`, { threadId: thread.id })
+      await store.createRun(session.id, `查询 ${index + 1}`, { threadId: thread.id })
     }
 
     const server = createServer((_request, response) => response.end())
@@ -53,7 +53,7 @@ describe('WebSocket run subscriptions', () => {
     cleanups.push(async () => {
       await new Promise<void>(resolve => wss.close(() => resolve()))
       await new Promise<void>(resolve => server.close(() => resolve()))
-      await store.sessionLog.flush()
+      await store.conversationStore.flush()
       await rm(root, { recursive: true, force: true })
     })
 
@@ -76,7 +76,7 @@ describe('WebSocket run subscriptions', () => {
     await store.initialize()
     const session = await store.createSession()
     const thread = await store.createThread(session.id, '订阅测试')
-    const run = store.createRun(session.id, '测试', { threadId: thread.id })
+    const run = await store.createRun(session.id, '测试', { threadId: thread.id })
 
     const server = createServer((_request, response) => response.end())
     const wss = createWsHandler(server, {
@@ -93,7 +93,7 @@ describe('WebSocket run subscriptions', () => {
     cleanups.push(async () => {
       await new Promise<void>(resolve => wss.close(() => resolve()))
       await new Promise<void>(resolve => server.close(() => resolve()))
-      await store.sessionLog.flush()
+      await store.conversationStore.flush()
       await rm(root, { recursive: true, force: true })
     })
 
@@ -104,7 +104,7 @@ describe('WebSocket run subscriptions', () => {
 
     store.appendItem(conversationItem(run.id, thread.id))
     store.appendEvent(run.id, runEvent(run.id, thread.id))
-    store.updateRunStatus(run.id, 'running')
+    await store.updateRunStatus(run.id, 'running')
 
     const second = await connect(url)
     const replay = await request(second, 'run:subscribe', { runId: run.id }, 'second')
@@ -113,6 +113,64 @@ describe('WebSocket run subscriptions', () => {
     expect(snapshotEntries(replay, 'events')).toHaveLength(1)
     expect(snapshotRunStatus(replay)).toBe('running')
     await close(second)
+  })
+
+  it('serves thread history, context, memory, fork and trash commands with correlated envelopes', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-ws-thread-kernel-'))
+    const store = new PostgresPlatformStore(noOpDb(), root)
+    await store.initialize()
+    const session = await store.createSession()
+    const thread = await store.createThread(session.id, '连续上下文契约')
+    await store.appendTranscript({ threadId: thread.id, kind: 'message', payload: { role: 'user', content: '项目代号是西湖。' } })
+    const answer = await store.appendTranscript({ threadId: thread.id, kind: 'message', payload: { role: 'assistant', content: '已记住。' } })
+
+    const server = createServer((_request, response) => response.end())
+    const wss = createWsHandler(server, {
+      store,
+      toolRegistry: new ToolRegistry(),
+      modelRegistry: new ModelAdapterRegistry(testEnv()),
+      postgis: {} as unknown as PostGisRepository,
+      runtimeRoot: root,
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('测试服务未监听 TCP 地址')
+    cleanups.push(async () => {
+      await new Promise<void>(resolve => wss.close(() => resolve()))
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await store.conversationStore.flush()
+      await rm(root, { recursive: true, force: true })
+    })
+
+    const ws = await connect(`ws://127.0.0.1:${address.port}/ws`)
+    const history = payloadData(await request(ws, 'thread:history', { threadId: thread.id }, 'history'))
+    expect(isRecord(history) && Array.isArray(history.entries) ? history.entries : []).toHaveLength(2)
+    const context = payloadData(await request(ws, 'thread:context', { threadId: thread.id }, 'context'))
+    expect(isRecord(context) ? context.activeLeafEntryId : null).toBe(answer.entryId)
+
+    const memory = payloadData(await request(ws, 'thread:memory:update', {
+      threadId: thread.id,
+      content: '## 用户固定记忆\n- 使用中文',
+      expectedVersion: 0,
+    }, 'memory'))
+    expect(isRecord(memory) ? memory.version : null).toBe(1)
+
+    const forked = payloadData(await request(ws, 'thread:fork', {
+      threadId: thread.id,
+      entryId: answer.entryId,
+      title: '西湖分支',
+    }, 'fork'))
+    expect(isRecord(forked) ? forked.title : null).toBe('西湖分支')
+
+    await request(ws, 'thread:delete', { threadId: thread.id }, 'delete')
+    const trash = payloadData(await request(ws, 'thread:trash:list', { sessionId: session.id }, 'trash'))
+    expect(Array.isArray(trash) ? trash : []).toHaveLength(1)
+    const restored = payloadData(await request(ws, 'thread:trash:restore', { threadId: thread.id }, 'restore'))
+    expect(isRecord(restored) ? restored.status : null).toBe('active')
+
+    const failed = await request(ws, 'thread:history', {}, 'correlated_error')
+    expect(failed.ok).toBe(false)
+    await close(ws)
   })
 })
 
