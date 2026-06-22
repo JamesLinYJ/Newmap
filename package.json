@@ -1,0 +1,39 @@
+{
+  "name": "geo-agent-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "server",
+    "apps/web",
+    "packages/shared-types"
+  ],
+  "//": "Python worker only hosts packages/gis-weather scientific execution.",
+  "scripts": {
+    "dev": "bash ./dev.sh",
+    "dev:windows": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./dev.ps1 start",
+    "dev:windows:status": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./dev.ps1 status",
+    "dev:windows:stop": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./dev.ps1 stop",
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:worker": "python -m uvicorn worker_app.sidecar:app --app-dir apps/worker/src --host 0.0.0.0 --port 8012 --reload",
+    "build": "npm run build --workspace server && npm run build --workspace apps/web",
+    "build:server": "npm run build --workspace server",
+    "build:web": "npm run build --workspace apps/web",
+    "test": "npm run test --workspace server && npm run test --workspace apps/web",
+    "test:server": "npm run test --workspace server",
+    "test:web": "npm run test --workspace apps/web",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "lint:web": "npm run lint --workspace apps/web",
+    "generate:glass": "node scripts/generate-liquid-glass-maps.mjs",
+    "check:bundle": "node scripts/check-web-bundle-budget.mjs"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.11.6",
+    "openai": "^6.42.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
+}

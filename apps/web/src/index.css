@@ -1,0 +1,166 @@
+/* +-------------------------------------------------------------------------
+ *
+ *   地理智能平台 - Web 全局 Tailwind 基础层
+ *
+ *   文件:       index.css
+ *
+ *   日期:       2026年05月11日
+ *   作者:       JamesLinYJ
+ * -------------------------------------------------------------------------- */
+
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', 'SFMono-Regular', ui-monospace, 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --animate-fade-in: fade-in .35s both;
+  --animate-slide-up: slide-up .45s cubic-bezier(.16,1,.3,1) both;
+  --animate-scale-in: scale-in .35s cubic-bezier(.16,1,.3,1) both;
+  --animate-spring: spring .5s cubic-bezier(.16,1,.3,1) both;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply m-0 min-w-80 overflow-x-hidden bg-[#f2f2f7] font-sans text-[#1c1c1e] antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  textarea,
+  input,
+  select {
+    font: inherit;
+  }
+
+  button {
+    touch-action: manipulation;
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  :focus-visible {
+    @apply rounded-lg outline-2 outline-offset-4 outline-[#1c1c1e];
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes spring {
+  0% {
+    opacity: 0;
+    transform: scale(.9) translateY(8px);
+  }
+  60% {
+    transform: scale(1.02) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* AppShell 下载期间的稳定首屏；只使用基础 CSS，不依赖地图、图标或动画库。 */
+.dc-boot {
+  min-height: 100vh;
+  padding: 16px;
+  box-sizing: border-box;
+  background:
+    radial-gradient(circle at 72% 18%, rgb(159 227 239 / 24%), transparent 34%),
+    linear-gradient(145deg, #f7fbfc 0%, #e8f1f4 100%);
+  color: #16323d;
+}
+
+.dc-boot__bar,
+.dc-boot__side,
+.dc-boot__panel,
+.dc-boot__map {
+  border: 1px solid rgb(255 255 255 / 82%);
+  background: rgb(255 255 255 / 54%);
+  box-shadow: 0 18px 50px rgb(54 89 103 / 10%);
+  backdrop-filter: blur(18px) saturate(130%);
+}
+
+.dc-boot__bar {
+  height: 64px;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+}
+
+.dc-boot__bar strong { font-size: 17px; }
+.dc-boot__bar span { color: #5d737c; font-size: 12px; }
+.dc-boot__bar i { margin-left: auto; color: #567079; font-size: 12px; font-style: normal; }
+
+.dc-boot__side {
+  position: fixed;
+  inset: 96px auto 16px 16px;
+  width: 204px;
+  border-radius: 24px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.dc-boot__side span { color: #6b7f87; font-size: 13px; }
+
+.dc-boot__main {
+  margin: 16px 0 0 236px;
+  display: grid;
+  grid-template-columns: minmax(260px, .9fr) minmax(420px, 1.6fr) minmax(260px, .9fr);
+  gap: 16px;
+  min-height: calc(100vh - 112px);
+}
+
+.dc-boot__panel,
+.dc-boot__map {
+  border-radius: 26px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dc-boot__panel span,
+.dc-boot__map span { color: #71868d; font-size: 13px; }
+.dc-boot__map { background: linear-gradient(145deg, rgb(214 233 233 / 72%), rgb(239 247 245 / 60%)); }
+
+@media (max-width: 900px) {
+  .dc-boot__side { display: none; }
+  .dc-boot__main { margin-left: 0; grid-template-columns: 1fr; }
+  .dc-boot__map { min-height: 46vh; }
+}
