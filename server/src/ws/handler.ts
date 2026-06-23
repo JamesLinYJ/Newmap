@@ -16,7 +16,7 @@ import type { ModelAdapterRegistry } from '../model/registry.js'
 import type { ToolRegistry } from '../framework/registry.js'
 import type { ToolContext } from '../framework/types.js'
 import { defaultRuntimeConfig } from '../agent/defaultRuntimeConfig.js'
-import { GeoAgentRuntime } from '../agent/runtime.js'
+import { OpenAIAgentsRuntime } from '../agent/runtime.js'
 import { RuntimeFileStore } from '../store/fileStore.js'
 import { PostgresPlatformStore, StoreNotFoundError } from '../store/platformStore.js'
 import { makeId, nowUtc } from '../utils/ids.js'
@@ -35,7 +35,7 @@ interface WsDependencies {
 
 export function createWsHandler(server: Server, dependencies: WsDependencies) {
   const { store } = dependencies
-  const runtime = new GeoAgentRuntime(store, dependencies.toolRegistry, dependencies.modelRegistry)
+  const runtime = new OpenAIAgentsRuntime(store, dependencies.toolRegistry, dependencies.modelRegistry)
   const files = new RuntimeFileStore(dependencies.runtimeRoot)
   const wss = new WebSocketServer({ server, path: '/ws' })
 
@@ -75,7 +75,7 @@ export function createWsHandler(server: Server, dependencies: WsDependencies) {
 async function handleMessage(
   msg: ClientMsg,
   dependencies: WsDependencies,
-  runtime: GeoAgentRuntime,
+  runtime: OpenAIAgentsRuntime,
   files: RuntimeFileStore,
   ws: WebSocket,
   subscriptions: Map<string, () => void>,
@@ -204,9 +204,13 @@ async function handleMessage(
       if (!sessionId) throw new Error('sessionId 不能为空')
       if (!threadId) threadId = (await store.createThread(sessionId, query.slice(0, 32))).id
       const config = await resolveRuntimeConfig(store)
+      const selectedProvider = optionalString(payload.provider)
+        ?? optionalString(payload.modelProvider)
+        ?? modelRegistry.defaultProvider
+      if (!selectedProvider) throw new Error('必须显式指定模型 provider，或配置 DEFAULT_MODEL_PROVIDER')
       const run = await store.createRun(sessionId, query, {
         threadId,
-        modelProvider: optionalString(payload.provider) ?? optionalString(payload.modelProvider),
+        modelProvider: selectedProvider,
         modelName: optionalString(payload.modelName),
         runtimeConfigSnapshot: config,
       })
@@ -216,7 +220,7 @@ async function handleMessage(
         threadId,
         sessionId,
         query,
-        provider: run.modelProvider ?? modelRegistry.defaultProvider,
+        provider: selectedProvider,
         modelName: run.modelName,
         runtimeConfig: config,
         executionMode: payload.executionMode === 'plan' ? 'plan' : 'auto',
@@ -243,7 +247,7 @@ async function handleMessage(
         threadId: run.threadId,
         sessionId: run.sessionId,
         query: run.userQuery,
-        provider: run.modelProvider ?? modelRegistry.defaultProvider,
+        provider: requiredRunProvider(run.modelProvider),
         modelName: run.modelName,
         runtimeConfig: run.runtimeConfigSnapshot,
         resume: true,
@@ -474,6 +478,11 @@ function requiredString(payload: Record<string, unknown>, key: string): string {
 
 function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function requiredRunProvider(value: string | null): string {
+  if (!value) throw new Error('运行缺少 modelProvider，不能恢复')
+  return value
 }
 
 function requiredBoolean(payload: Record<string, unknown>, key: string): boolean {

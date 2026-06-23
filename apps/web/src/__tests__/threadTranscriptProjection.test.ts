@@ -31,6 +31,24 @@ describe('thread transcript projection', () => {
     expect(merged.filter(item => item.metadata.transcriptEntryId === 'entry_user_2')).toHaveLength(1)
     expect(merged.at(-1)?.metadata.live).toBe(true)
   })
+
+  // assistant 完成事件必须沿用 transcript 身份；页面刷新恢复 canonical 历史时不得重复正文。
+  it('deduplicates a completed assistant item after canonical transcript reload', () => {
+    const canonical = transcriptEntriesToConversationItems([
+      entry(1, 'entry_user_1', 'run_1', 'user', '只回答：运行正常。'),
+      entry(2, 'entry_assistant_1', 'run_1', 'assistant', '运行正常。'),
+    ])
+    const replayed: ConversationItem[] = [{
+      ...canonical[1],
+      itemId: 'item_live_assistant_1',
+      metadata: { transcriptEntryId: 'entry_assistant_1', live: true },
+    }]
+
+    const merged = mergeConversationItems(canonical, replayed)
+    expect(merged.map(item => item.body)).toEqual(['只回答：运行正常。', '运行正常。'])
+    expect(merged.filter(item => item.body === '运行正常。')).toHaveLength(1)
+    expect(merged.at(-1)?.metadata.live).toBe(true)
+  })
 })
 
 function entry(

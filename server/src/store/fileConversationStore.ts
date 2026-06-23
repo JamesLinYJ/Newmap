@@ -8,7 +8,7 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   mkdir,
   open,
@@ -232,6 +232,11 @@ export class FileConversationStore {
       pendingToolCallIds: [],
       lastPersistedAt: nowUtc(),
       recoveryStatus: 'clean',
+      orchestrationEngine: null,
+      agentsSdkVersion: null,
+      runtimeConfigDigest: null,
+      sdkStateSchemaVersion: null,
+      sdkStateUpdatedAt: null,
     }
     await atomicWriteJson(path.join(directory, 'run.json'), checkpoint)
     await atomicWriteJson(path.join(supervisorDirectory, 'agent.json'), {
@@ -255,24 +260,31 @@ export class FileConversationStore {
     fields: Partial<Pick<RunCheckpoint, 'activeEntryId' | 'pendingToolCallIds' | 'recoveryStatus'>> = {},
   ): Promise<void> {
     const location = this.requireRunLocation(run.id)
-    const current = await readJson(path.join(location.directory, 'run.json'), runCheckpointSchema)
-    const checkpoint: RunCheckpoint = {
-      schemaVersion: STORE_SCHEMA_VERSION,
-      run,
-      activeEntryId: fields.activeEntryId ?? current?.activeEntryId ?? null,
-      pendingToolCallIds: fields.pendingToolCallIds ?? current?.pendingToolCallIds ?? [],
-      recoveryStatus: fields.recoveryStatus ?? current?.recoveryStatus ?? 'clean',
-      lastPersistedAt: nowUtc(),
-    }
-    await atomicWriteJson(path.join(location.directory, 'run.json'), checkpoint)
-    await atomicWriteJson(path.join(location.directory, 'agents', 'supervisor', 'agent.json'), {
-      schemaVersion: STORE_SCHEMA_VERSION,
-      agentId: 'supervisor',
-      role: 'supervisor',
-      runId: run.id,
-      status: run.status,
-      createdAt: run.createdAt,
-      updatedAt: run.updatedAt,
+    await this.withThreadLock(location.threadId, async () => {
+      const current = await readJson(path.join(location.directory, 'run.json'), runCheckpointSchema)
+      const checkpoint: RunCheckpoint = {
+        schemaVersion: STORE_SCHEMA_VERSION,
+        run,
+        activeEntryId: fields.activeEntryId ?? current?.activeEntryId ?? null,
+        pendingToolCallIds: fields.pendingToolCallIds ?? current?.pendingToolCallIds ?? [],
+        recoveryStatus: fields.recoveryStatus ?? current?.recoveryStatus ?? 'clean',
+        lastPersistedAt: nowUtc(),
+        orchestrationEngine: current?.orchestrationEngine ?? null,
+        agentsSdkVersion: current?.agentsSdkVersion ?? null,
+        runtimeConfigDigest: current?.runtimeConfigDigest ?? null,
+        sdkStateSchemaVersion: current?.sdkStateSchemaVersion ?? null,
+        sdkStateUpdatedAt: current?.sdkStateUpdatedAt ?? null,
+      }
+      await atomicWriteJson(path.join(location.directory, 'run.json'), checkpoint)
+      await atomicWriteJson(path.join(location.directory, 'agents', 'supervisor', 'agent.json'), {
+        schemaVersion: STORE_SCHEMA_VERSION,
+        agentId: 'supervisor',
+        role: 'supervisor',
+        runId: run.id,
+        status: run.status,
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+      })
     })
   }
 
@@ -283,6 +295,47 @@ export class FileConversationStore {
     return checkpoint
   }
 
+  // saveAgentsSdkState
+  //
+  // SDK RunState 与 run.json 分开原子写入；检查点只保存恢复所需的版本与配置摘要。
+  async saveAgentsSdkState(
+    runId: string,
+    serializedState: string,
+    metadata: { agentsSdkVersion: string; runtimeConfigDigest: string },
+  ): Promise<void> {
+    const location = this.requireRunLocation(runId)
+    await this.withThreadLock(location.threadId, async () => {
+      const statePath = path.join(location.directory, 'agents', 'supervisor', 'sdk-state.json')
+      await atomicWriteText(statePath, `${serializedState.trim()}\n`)
+      const checkpointPath = path.join(location.directory, 'run.json')
+      const checkpoint = await readJson(checkpointPath, runCheckpointSchema)
+      if (!checkpoint) throw new Error(`run '${runId}' 检查点不存在`)
+      const updatedAt = nowUtc()
+      await atomicWriteJson(checkpointPath, {
+        ...checkpoint,
+        orchestrationEngine: 'openai_agents',
+        agentsSdkVersion: metadata.agentsSdkVersion,
+        runtimeConfigDigest: metadata.runtimeConfigDigest,
+        sdkStateSchemaVersion: 1,
+        sdkStateUpdatedAt: updatedAt,
+        lastPersistedAt: updatedAt,
+      } satisfies RunCheckpoint)
+    })
+  }
+
+  async readAgentsSdkState(runId: string): Promise<string> {
+    const location = this.requireRunLocation(runId)
+    const statePath = path.join(location.directory, 'agents', 'supervisor', 'sdk-state.json')
+    try {
+      return await readFile(statePath, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error(`run '${runId}' 缺少 Agents SDK 状态，不能恢复`)
+      }
+      throw error
+    }
+  }
+
   appendItem(item: ConversationItem): void {
     const location = this.requireRunLocation(item.runId)
     this.enqueueAppend(path.join(location.directory, 'items.jsonl'), conversationItemSchema.parse(item))
@@ -291,6 +344,35 @@ export class FileConversationStore {
   appendEvent(event: RunEvent): void {
     const location = this.requireRunLocation(event.runId)
     this.enqueueAppend(path.join(location.directory, 'events.jsonl'), runEventSchema.parse(event))
+  }
+
+  async appendAgentTranscript(
+    runId: string,
+    agentId: string,
+    record: Record<string, unknown>,
+  ): Promise<void> {
+    const location = this.requireRunLocation(runId)
+    const safeAgentId = safeId(agentId, 'agentId')
+    const directory = path.join(location.directory, 'agents', safeAgentId)
+    await mkdir(directory, { recursive: true })
+    const agentPath = path.join(directory, 'agent.json')
+    if (!await readRawJson(agentPath)) {
+      const timestamp = nowUtc()
+      await atomicWriteJson(agentPath, {
+        schemaVersion: STORE_SCHEMA_VERSION,
+        agentId: safeAgentId,
+        role: safeAgentId,
+        runId,
+        status: 'active',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    }
+    this.enqueueAppend(path.join(directory, 'transcript.jsonl'), {
+      schemaVersion: STORE_SCHEMA_VERSION,
+      timestamp: nowUtc(),
+      ...record,
+    })
   }
 
   appendValue(runId: string, value: ToolValueRef): void {
@@ -879,7 +961,7 @@ async function appendJsonLineDurable(filePath: string, value: unknown): Promise<
 
 async function atomicWriteText(filePath: string, value: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true })
-  const temporary = `${filePath}.${process.pid}.${Date.now()}.tmp`
+  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`
   const handle = await open(temporary, 'w', 0o600)
   try {
     await handle.writeFile(value, 'utf8')

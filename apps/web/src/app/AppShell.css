@@ -897,8 +897,25 @@
   }
 
   .cc-user-prompt {
-    @apply ml-auto w-fit max-w-[88%] rounded-[12px] rounded-br-[4px] border border-white/52 bg-[#ddf4ff]/54 px-3.5 py-2.5 text-[15px] leading-6 text-[#24292f];
+    @apply ml-auto rounded-[12px] rounded-br-[4px] border border-white/52 bg-[#ddf4ff]/54 px-3.5 py-2.5 text-[15px] leading-6 text-[#24292f];
+    align-self: flex-end;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: min(92%, 42rem);
+    /* 用户气泡在 flex 时间线内按内容固有高度展开，避免玻璃层裁掉长文本。 */
+    height: max-content;
+    min-height: max-content;
+    white-space: pre-wrap;
     overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .cc-user-prompt > span {
+    display: block;
+    min-width: 0;
+    white-space: inherit;
+    overflow-wrap: inherit;
+    word-break: inherit;
   }
 
   /* ── 时间线条目 ────────────────────────────── */

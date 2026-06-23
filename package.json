@@ -30,7 +30,7 @@
     "reset:conversations": "node scripts/reset-conversation-store.mjs --confirm"
   },
   "dependencies": {
-    "@openai/agents": "^0.11.6",
+    "@openai/agents": "^0.11.8",
     "openai": "^6.42.0",
     "remark-gfm": "^4.0.1"
   },

@@ -346,6 +346,11 @@ export const runCheckpointSchema = z.object({
   pendingToolCallIds: z.array(z.string()).default([]),
   lastPersistedAt: z.string(),
   recoveryStatus: z.enum(['clean', 'interrupted', 'requires_action']).default('clean'),
+  orchestrationEngine: z.literal('openai_agents').nullable().default(null),
+  agentsSdkVersion: z.string().nullable().default(null),
+  runtimeConfigDigest: z.string().nullable().default(null),
+  sdkStateSchemaVersion: z.literal(1).nullable().default(null),
+  sdkStateUpdatedAt: z.string().nullable().default(null),
 })
 
 export const compactionRecordSchema = z.object({
@@ -476,6 +481,7 @@ export const runtimeSubAgentConfigSchema = z.object({
   role: z.string(),
   summary: z.string(),
   systemPrompt: z.string().nullable().default(null),
+  model: z.string().nullable().default(null),
   tools: z.array(z.string()).default([]),
 })
 

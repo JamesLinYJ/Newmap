@@ -1,0 +1,49 @@
+{
+  "id": "geo-platform-plan",
+  "name": "计划模式",
+  "version": "1.0.0",
+  "author": "geo-agent-platform",
+  "language": "typescript",
+  "description": "只读计划模式",
+  "tools": [
+    {
+      "name": "enter_plan_mode",
+      "label": "进入计划模式",
+      "description": "进入只读探索模式，只允许查询和分析操作，不能修改数据。",
+      "group": "系统",
+      "tags": ["plan", "system"],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "进入计划模式的原因"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "exit_plan_mode",
+      "label": "退出计划模式",
+      "description": "退出只读探索模式，恢复完整工具访问权限。",
+      "group": "系统",
+      "tags": ["plan", "system"],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "执行计划"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

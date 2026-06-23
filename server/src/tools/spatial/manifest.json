@@ -1,0 +1,87 @@
+{
+  "id": "geo-platform-spatial",
+  "name": "空间分析",
+  "version": "2.1.0",
+  "author": "geo-agent-platform",
+  "language": "typescript",
+  "description": "PostGIS 查询、Turf.js 空间分析、图层创建与地图导出",
+  "tools": [
+    {
+      "name": "query_layer",
+      "label": "查询图层",
+      "description": "从 PostGIS 图层读取真实要素。",
+      "group": "空间分析",
+      "tags": ["postgis", "query"],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "layerKey": { "type": "string" },
+          "bbox": { "type": "array" },
+          "limit": { "type": "integer" },
+          "properties": { "type": "array" }
+        },
+        "required": ["layerKey"]
+      }
+    },
+    {
+      "name": "spatial_analysis",
+      "label": "空间分析",
+      "description": "执行确定性 GIS 空间分析。支持面积、距离、缓冲、相交、合并、路径插值、方位角等操作。",
+      "group": "空间分析",
+      "tags": ["turf", "analysis", "gis"],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "operation": { "type": "string", "enum": ["area", "length", "distance", "buffer", "centroid", "bbox", "intersects", "contains", "within", "intersect", "union", "difference", "along", "bearing", "destination", "midpoint", "nearest", "points_within_polygon", "great_circle"], "description": "空间分析操作类型" },
+          "sourceGeojson": { "type": "object", "additionalProperties": true, "description": "主 GeoJSON 输入（Feature/FeatureCollection/Geometry）", "x-source": "json" },
+          "targetGeojson": { "type": "object", "additionalProperties": true, "description": "第二 GeoJSON 输入", "x-source": "json" },
+          "radius": { "type": "number", "minimum": 0, "description": "缓冲半径" },
+          "bearing": { "type": "number", "description": "目标方位角（度）" },
+          "units": { "type": "string", "enum": ["kilometers", "meters", "miles"], "default": "kilometers" },
+          "distance": { "type": "number", "minimum": 0, "description": "沿路径或目标距离" },
+          "steps": { "type": "integer", "minimum": 2, "maximum": 1000, "default": 100 }
+        },
+        "required": ["operation", "sourceGeojson"]
+      }
+    },
+    {
+      "name": "map_export",
+      "label": "导出地图数据",
+      "description": "将 GeoJSON 分析结果保存为平台 artifact。",
+      "group": "空间分析",
+      "tags": ["export", "file"],
+      "isReadOnly": false,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "geojson": { "type": "object", "additionalProperties": true, "description": "要导出的 GeoJSON 数据", "x-source": "json" },
+          "filename": { "type": "string", "description": "导出文件名（不含路径）", "default": "export.geojson" }
+        },
+        "required": ["geojson"]
+      }
+    },
+    {
+      "name": "layer_create",
+      "label": "创建分析图层",
+      "description": "从 GeoJSON 创建归属于当前会话和线程的 PostGIS 分析图层。",
+      "group": "空间分析",
+      "tags": ["layer", "postgis", "visualization"],
+      "isReadOnly": false,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "geojson": { "type": "object", "additionalProperties": true, "description": "GeoJSON FeatureCollection、Feature 或 Geometry", "x-source": "json" },
+          "name": { "type": "string", "description": "图层显示名称" },
+          "description": { "type": "string", "description": "图层描述", "default": "" }
+        },
+        "required": ["geojson", "name"]
+      }
+    }
+  ]
+}

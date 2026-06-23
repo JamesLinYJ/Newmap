@@ -10,34 +10,11 @@
 
 import type { ModelProviderDescriptor } from '../schemas/types.js'
 import type { Env } from '../framework/env.js'
+import type { Model } from '@openai/agents'
 import { createOpenAIAdapter } from './providers/openaiCompatible.js'
 import { createAnthropicAdapter } from './providers/anthropic.js'
 import { createGeminiAdapter } from './providers/gemini.js'
 import { createOllamaAdapter } from './providers/ollama.js'
-
-// --- Types ---
-
-export interface AgentsSdkCapabilities {
-  liveSupervisor: boolean
-  structuredOutput: boolean
-  jsonObjectOutput: boolean
-}
-
-export function makeCapabilities(overrides: Partial<AgentsSdkCapabilities> = {}): AgentsSdkCapabilities {
-  return {
-    liveSupervisor: overrides.liveSupervisor ?? false,
-    structuredOutput: overrides.structuredOutput ?? false,
-    jsonObjectOutput: overrides.jsonObjectOutput ?? false,
-  }
-}
-
-export interface ChatStreamDelta {
-  content?: string
-  reasoningContent?: string
-  toolCalls?: Array<{ id: string; index: number; name: string; arguments: string }>
-  finishReason?: string
-  usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
-}
 
 export interface ModelAdapter {
   readonly provider: string
@@ -48,9 +25,8 @@ export interface ModelAdapter {
 
   isConfigured(): boolean
   capabilities(): string[]
-  agentsSdkCapabilities(modelName?: string | null): AgentsSdkCapabilities
+  createAgentModel?(modelName?: string | null): Model
   chat(prompt: string, kwargs?: Record<string, unknown>): Promise<Record<string, unknown>>
-  chatStream?(messages: Array<{ role: string; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>; tool_call_id?: string }>, opts?: { model?: string; reasoning?: boolean; tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> }): AsyncIterable<ChatStreamDelta>
 }
 
 // --- Registry ---
@@ -100,23 +76,12 @@ export class ModelAdapterRegistry {
   }
 
   resolveProvider(provider?: string | null): ModelAdapter {
-    const configured = [...this.adapters.values()].filter(a => a.isConfigured())
     const selected = provider ?? this.defaultProvider
-
-    if (selected && this.adapters.has(selected)) {
-      const a = this.adapters.get(selected)!
-      if (a.isConfigured()) return a
-      throw new Error(`模型 provider '${selected}' 尚未配置`)
-    }
-
-    if (this.defaultProvider && this.adapters.has(this.defaultProvider)) {
-      const a = this.adapters.get(this.defaultProvider)!
-      if (a.isConfigured()) return a
-    }
-
-    if (configured.length > 0) return configured[0]
-
-    throw new Error('当前没有可用的模型 provider')
+    if (!selected) throw new Error('必须显式指定模型 provider，或配置 DEFAULT_MODEL_PROVIDER')
+    const adapter = this.adapters.get(selected)
+    if (!adapter) throw new Error(`未注册的模型 provider: ${selected}`)
+    if (!adapter.isConfigured()) throw new Error(`模型 provider '${selected}' 尚未配置`)
+    return adapter
   }
 
   providers(): string[] {
@@ -125,11 +90,9 @@ export class ModelAdapterRegistry {
 
   descriptors(): ModelProviderDescriptor[] {
     return [...this.adapters.values()].map(a => {
-      const caps = a.agentsSdkCapabilities(a.defaultModel)
-      const labels: string[] = []
-      if (caps.liveSupervisor) labels.push('agents_sdk_live_supervisor')
-      if (caps.structuredOutput) labels.push('agents_sdk_structured_output')
-      if (caps.jsonObjectOutput) labels.push('agents_sdk_json_object_output')
+      const labels = a.createAgentModel
+        ? ['agents_sdk_live_supervisor', 'agents_sdk_chat_completions']
+        : []
 
       return {
         provider: a.provider,

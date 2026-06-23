@@ -1,3 +1,17 @@
+// +-------------------------------------------------------------------------
+//
+//   地理智能平台 - ConversationItem 发布器
+//
+//   文件:       itemSink.ts
+//
+//   日期:       2026年06月23日
+//   作者:       OpenAI Codex
+// --------------------------------------------------------------------------
+
+// ItemSink owns the UI item lifecycle for a single run. ConversationItem.timestamp
+// means "first visible position in the timeline"; body/status/metadata updates must
+// not move an item after later tools or messages.
+
 import type { ConversationItem } from '../schemas/types.js'
 import { makeId, nowUtc } from '../utils/ids.js'
 
@@ -6,6 +20,7 @@ type AppendItem = (item: ConversationItem) => void
 export class ItemSink {
   private textBuffers = new Map<string, string>()
   private itemDrafts = new Map<string, ConversationItem>()
+  private itemSnapshots = new Map<string, ConversationItem>()
 
   constructor(
     private appendItem: AppendItem,
@@ -69,7 +84,6 @@ export class ItemSink {
       body,
       output: draft.itemType === 'function_call_output' ? body : draft.output,
       status: 'running',
-      timestamp: nowUtc(),
     })
   }
 
@@ -82,17 +96,20 @@ export class ItemSink {
     metadata?: Record<string, unknown>
   } = {}): void {
     const draft = this.itemDrafts.get(itemId)
-    const itemType: ConversationItem['itemType'] = draft?.itemType ?? 'message'
-    const body = opts.body ?? this.textBuffers.get(itemId) ?? ''
+    const previous = this.itemSnapshots.get(itemId)
+    const base = draft ?? previous
+    const itemType: ConversationItem['itemType'] = base?.itemType ?? 'message'
+    const body = opts.body ?? this.textBuffers.get(itemId) ?? base?.body ?? ''
     const item: ConversationItem = {
       itemId, itemType,
       runId: this.runId, threadId: this.threadId,
-      role: draft?.role ?? 'assistant', body,
-      name: opts.name ?? draft?.name ?? null, callId: opts.callId ?? draft?.callId ?? null,
-      output: opts.output ?? null, isError: opts.isError ?? false,
-      status: opts.isError ? 'failed' : 'completed', metadata: opts.metadata ?? draft?.metadata ?? {},
-      turnId: draft?.turnId ?? null, arguments: draft?.arguments ?? null, phase: draft?.phase ?? null,
-      timestamp: nowUtc(),
+      role: base?.role ?? 'assistant', body,
+      name: opts.name ?? base?.name ?? null, callId: opts.callId ?? base?.callId ?? null,
+      output: opts.output ?? base?.output ?? null, isError: opts.isError ?? base?.isError ?? false,
+      status: opts.isError ? 'failed' : 'completed',
+      metadata: { ...(base?.metadata ?? {}), ...(opts.metadata ?? {}) },
+      turnId: base?.turnId ?? null, arguments: base?.arguments ?? null, phase: base?.phase ?? null,
+      timestamp: base?.timestamp ?? nowUtc(),
     }
     this.publish(item)
     this.textBuffers.delete(itemId)
@@ -116,6 +133,7 @@ export class ItemSink {
   }
 
   private publish(item: ConversationItem): ConversationItem {
+    this.itemSnapshots.set(item.itemId, item)
     this.appendItem(item)
     return item
   }

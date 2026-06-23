@@ -17,6 +17,7 @@ export function defaultRuntimeConfig(): AgentRuntimeConfig {
         role: 'spatial_analyst',
         summary: '负责地理空间分析和图层查询',
         systemPrompt: '你是一个空间分析专家，可以使用 GIS 工具分析地理数据。',
+        model: null,
         tools: ['geocode_place', 'query_layer', 'spatial_analysis', 'create_chart'],
       },
     ],

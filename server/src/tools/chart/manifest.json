@@ -1,0 +1,37 @@
+{
+  "id": "geo-platform-chart",
+  "name": "图表",
+  "version": "1.0.0",
+  "author": "geo-agent-platform",
+  "language": "typescript",
+  "description": "数据可视化图表生成",
+  "tools": [{
+    "name": "create_chart",
+    "label": "生成图表",
+    "description": "根据数据生成统计图表（柱状图、折线图、饼图等）。",
+    "group": "可视化",
+    "tags": ["chart", "visualization"],
+    "isReadOnly": true,
+    "isDestructive": false,
+    "jsonSchema": {
+      "type": "object",
+      "properties": {
+        "chartType": {
+          "type": "string",
+          "enum": ["bar", "line", "pie", "scatter"],
+          "description": "图表类型"
+        },
+        "title": {
+          "type": "string",
+          "description": "图表标题"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "图表数据 { labels: string[], values: number[] }"
+        }
+      },
+      "required": ["chartType", "data"]
+    }
+  }]
+}
