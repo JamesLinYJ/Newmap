@@ -105,20 +105,20 @@ export class ToolExecutionCoordinator {
           callId,
           name: toolName,
           output: JSON.stringify(result.payload),
-          metadata: { resultId: result.resultId, source: result.source },
+          metadata: { resultId: result.resultId, source: result.source, artifacts: result.artifacts ?? [] },
         })
       }
       const outputItemId = this.options.itemSink.startItem('function_call_output', {
         callId,
         name: toolName,
         role: 'tool',
-        metadata: { resultId: result.resultId, source: result.source },
+        metadata: { resultId: result.resultId, source: result.source, artifacts: result.artifacts ?? [] },
       }).itemId
       this.options.itemSink.completeItem(outputItemId, {
         callId,
         name: toolName,
         output: JSON.stringify(result.payload),
-        metadata: { resultId: result.resultId, source: result.source, valueRefs: result.valueRefs ?? [] },
+        metadata: { resultId: result.resultId, source: result.source, valueRefs: result.valueRefs ?? [], artifacts: result.artifacts ?? [] },
       })
       await this.appendToolResult(callId, toolName, result)
       await this.options.store.conversationStore.saveRun(this.options.store.getRun(this.options.runId), {

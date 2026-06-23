@@ -18,6 +18,8 @@ import { CheckCircle2, ChevronDown, GitBranchPlus, LoaderCircle, ShieldCheck } f
 import { buildFadeMotion, buildFadeUpMotion } from '../../shared/motion'
 import { Markdown } from '../../shared/components/Markdown'
 import { VoiceBar } from './VoiceBar'
+import { ToolMiniAppResult } from '../tools/ToolMiniApp'
+import { miniAppKindForTool } from '../tools/toolMiniAppModel'
 import type { ConversationCommand, ConversationEntry } from './items'
 
 interface ConversationEntryViewProps {
@@ -236,6 +238,8 @@ function ToolCommandCard({
   const isRunning = command.status === 'running'
   const hasInput = Boolean(command.commandText?.trim())
   const hasOutput = isRunning || Boolean(command.body.trim())
+  const miniAppKind = miniAppKindForTool(command.toolName)
+  const artifacts = Array.isArray(command.details?.artifacts) ? command.details.artifacts.filter(isRecord) : []
   const hasDetails = hasInput || hasOutput
 
   return (
@@ -257,6 +261,13 @@ function ToolCommandCard({
       <AnimatePresence initial={false}>
         {expanded && hasDetails && (
           <m.div className="cc-tool-io-card" {...buildFadeUpMotion(false, 0, 4)}>
+            {!isRunning && miniAppKind ? (
+              <ToolMiniAppResult
+                toolName={command.toolName}
+                result={command.details?.result}
+                artifacts={artifacts}
+              />
+            ) : null}
             {hasInput && (
               <div className="cc-tool-io-section">
                 <span className="cc-tool-io-label">输入</span>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+:root {
+  --title-color: #2E72D6;
+  --title-size: 19px;
+  --arrow-color: #8CB4E0;
+  --arrow-size: 15px;
+  --time-color: #2E72D6;
+  --time-size: 14px;
+  --table-width: 430px;
+  --header-bg: #E8F0FA;
+  --header-color: #333333;
+  --header-size: 13px;
+  --data-color: #333333;
+  --data-size: 13px;
+  --rank-color: #2E72D6;
+  --rank-size: 13px;
+  --top3-bg: #FFF2CC;
+  --row-height: 38px;
+  --border-color: #E0E0E0;
+  --border-style: solid;
+  --bg-color: #FFFFFF;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Source Han Sans SC", "Noto Sans SC", "Microsoft YaHei", "SimHei", sans-serif;
+  background: var(--bg-color);
+  width: var(--table-width);
+  -webkit-font-smoothing: antialiased;
+}
+.title-section { text-align: center; padding: 16px 8px 4px; background: var(--bg-color); }
+.title-section .arrow { color: var(--arrow-color); font-size: var(--arrow-size); font-weight: normal; vertical-align: middle; }
+.title-section .title-text { font-size: var(--title-size); font-weight: bold; color: var(--title-color); vertical-align: middle; margin: 0 6px; }
+.time-section { text-align: center; padding: 6px 10px 12px; background: var(--bg-color); }
+.time-section .time-text { font-size: var(--time-size); font-weight: normal; color: var(--time-color); }
+table { width: 100%; border-collapse: collapse; border: 1px var(--border-style) var(--border-color); }
+th { background: var(--header-bg); color: var(--header-color); padding: 0 4px; font-size: var(--header-size); font-weight: bold; text-align: center; height: var(--row-height); line-height: 1.5; border: 1px var(--border-style) var(--border-color); }
+td { padding: 0 4px; text-align: center; font-size: var(--data-size); font-weight: normal; color: var(--data-color); height: var(--row-height); line-height: 1.5; border: 1px var(--border-style) var(--border-color); }
+tr.row-top3 td { background: var(--top3-bg); }
+tr:not(.row-top3) td { background: var(--bg-color); }
+td.col-rank { color: var(--rank-color); font-size: var(--rank-size); font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div class="title-section">
+  <span class="arrow">{{ARROW_LEFT}}</span>
+  <span class="title-text">{{TITLE_TEXT}}</span>
+  <span class="arrow">{{ARROW_RIGHT}}</span>
+</div>
+
+<div class="time-section">
+  <span class="time-text">{{TIME_STR}}</span>
+</div>
+
+<table>
+  <tr>
+    <th style="width:20%">排行</th>
+    <th style="width:20%">区县</th>
+    <th style="width:20%">乡镇</th>
+    <th style="width:20%">站点</th>
+    <th style="width:20%">雨量</th>
+  </tr>
+  {{ROWS}}
+</table>
+
+</body>
+</html>

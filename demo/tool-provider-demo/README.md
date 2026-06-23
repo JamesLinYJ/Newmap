@@ -38,6 +38,51 @@ demo/tool-provider-demo/
 
 第二个工具故意只接收 `observation_ref`，不让模型复制观测值。这是平台工具链的核心规范：工具派生值必须通过 `valueRef` 流转。
 
+## Worker-backed 工具示例
+
+需要调用 Python/外部科学计算 worker 时，Provider 仍然负责解析 valueRef、准备 artifact 目标和保存 provenance。worker 只接受 runtime 相对路径：
+
+```ts
+const artifact = {
+  artifactId: makeId('artifact'),
+  artifactType: 'raster_png',
+  name: '示例栅格图',
+  uri: `/api/v1/results/${artifactId}/file`,
+  relativePath: `artifacts/${ctx.runId}/${artifactId}.png`,
+  metadata: { relativePath: `artifacts/${ctx.runId}/${artifactId}.png` },
+}
+
+const worker = await callWorker('demo_render_grid', {
+  file_relative_path: dataset.relativePath,
+  output_relative_path: artifact.relativePath,
+})
+```
+
+如果 worker `/health` 缺依赖，Provider `onInstall()` 必须失败，并在 DebugPage 显示不可用原因。
+
+## Mini-App Metadata 示例
+
+小工具页面不要 iframe 原系统，也不要开新端口。把 UI 类型作为 metadata 暴露给前端，运行仍走统一 `tool:run`：
+
+```json
+{
+  "x-mini-app": {
+    "type": "rainfall_risk_map_console"
+  }
+}
+```
+
+artifact metadata 可声明预览角色和下载角色：
+
+```json
+{
+  "previewRole": "rainfall_risk_map",
+  "downloadRole": "area_rainfall_table_xlsx",
+  "baseImageArtifactId": "artifact_base",
+  "overlayImageArtifactId": "artifact_overlay"
+}
+```
+
 ## 复制成真实工具
 
 1. 复制目录到正式工具位置，例如：
@@ -94,6 +139,7 @@ npm run build:web
 - manifest 与 runtime `ToolDef` 完全一致。
 - `jsonSchema.type` 必须是 `object`。
 - 参数必须有 `title`、`description` 和合适的 `x-source`。
+- `value_ref` 参数必须声明 `x-value-ref-kinds`。
 - handler 遇到未知 `valueRef`、坏参数、文件写入失败必须抛错。
 - artifact 必须写入 runtime 根目录内真实文件。
 - provenance 必须说明 provider、工具、输入引用和算法版本。

@@ -47,6 +47,7 @@ import {
   buildToolFormState,
   resolveToolDefaults,
 } from './toolFormState'
+import { ToolMiniAppPanel } from './ToolMiniApp'
 import {
   filterTools,
   findToolCatalogEntry,
@@ -257,6 +258,13 @@ export function ToolManagementPage({
                         <span>参数表单</span>
                         <span className="panel__muted">{selectedTool.parameters.length} 个参数</span>
                       </div>
+                      <ToolMiniAppPanel
+                        tool={selectedTool}
+                        formState={formState}
+                        valueRefs={valueRefs}
+                        isSubmitting={isToolSubmitting}
+                        onRunTool={onRunTool}
+                      />
                       <ToolParameterForm
                         tool={selectedTool}
                         values={formState.values}

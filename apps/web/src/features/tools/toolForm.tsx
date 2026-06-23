@@ -287,12 +287,15 @@ function ToolParameterField({
   }
 
   if (parameter.source === 'value_ref') {
+    const selectableRefs = parameter.acceptedValueRefKinds.length
+      ? valueRefs.filter((reference) => parameter.acceptedValueRefKinds.includes(reference.kind))
+      : valueRefs
     return (
       <label className="tool-field">
         <span className="composer__label">{parameter.label}</span>
         <select className="composer__select" value={value} onChange={(event) => onChange(event.target.value)}>
           <option value="">请选择当前运行引用</option>
-          {valueRefs.map((reference) => (
+          {selectableRefs.map((reference) => (
             <option key={reference.refId} value={reference.refId}>
               {reference.label} · {reference.kind}
             </option>

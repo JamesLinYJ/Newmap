@@ -1,0 +1,908 @@
+{
+  "id": "geo-platform-meteorology",
+  "name": "气象科学工具",
+  "version": "2.0.0",
+  "author": "geo-agent-platform",
+  "language": "typescript",
+  "description": "以通用线程文件和 valueRef 驱动的气象分析与短临预报工具链",
+  "requires": {
+    "WORKER_URL": "required"
+  },
+  "tools": [
+    {
+      "name": "list_meteorological_files",
+      "label": "列出气象文件",
+      "description": "列出当前线程可用的通用气象文件",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "inspect_radar_station_collection",
+      "label": "检查雷达站文件集",
+      "description": "检查雷达 bz2 文件的站点和候选时次",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "radar_collection_ref": {
+            "type": "string",
+            "title": "雷达文件集合引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "radar_file_collection"
+            ]
+          }
+        },
+        "required": [
+          "radar_collection_ref"
+        ],
+        "x-mini-app": {
+          "type": "radar_mosaic_console"
+        }
+      }
+    },
+    {
+      "name": "recommend_radar_mosaic_strategy",
+      "label": "推荐雷达拼图策略",
+      "description": "根据业务目标推荐雷达拼图算法策略",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "goal_mode": {
+            "type": "string",
+            "title": "业务目标",
+            "enum": [
+              "quicklook",
+              "quality",
+              "smooth"
+            ],
+            "x-source": "text"
+          },
+          "time_strategy": {
+            "type": "string",
+            "title": "时间策略",
+            "enum": [
+              "nearest",
+              "wide"
+            ],
+            "x-source": "text"
+          }
+        },
+        "required": [],
+        "x-mini-app": {
+          "type": "radar_mosaic_console"
+        }
+      }
+    },
+    {
+      "name": "render_radar_mosaic",
+      "label": "生成雷达拼图",
+      "description": "根据站点集合、时次和策略生成雷达拼图 PNG/NPZ",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "radar_collection_ref": {
+            "type": "string",
+            "title": "雷达文件集合引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "radar_station_collection"
+            ]
+          },
+          "target_time_ref": {
+            "type": "string",
+            "title": "目标时次引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "radar_target_time"
+            ]
+          },
+          "strategy_ref": {
+            "type": "string",
+            "title": "拼图策略引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "radar_mosaic_strategy"
+            ]
+          },
+          "product": {
+            "type": "string",
+            "title": "雷达产品",
+            "enum": [
+              "reflectivity",
+              "velocity",
+              "spectrum_width"
+            ],
+            "x-source": "text"
+          },
+          "level_index": {
+            "type": "number",
+            "title": "层级索引",
+            "x-source": "number"
+          },
+          "tolerance_sec": {
+            "type": "number",
+            "title": "时间容差秒",
+            "x-source": "number"
+          }
+        },
+        "required": [
+          "radar_collection_ref",
+          "target_time_ref",
+          "strategy_ref"
+        ],
+        "x-mini-app": {
+          "type": "radar_mosaic_console"
+        }
+      }
+    },
+    {
+      "name": "compare_radar_mosaic_reference",
+      "label": "对比雷达拼图与 NC 参考",
+      "description": "生成拼图结果与参考 NC 的差异对比图和滑块素材",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "radar_mosaic_result_ref": {
+            "type": "string",
+            "title": "雷达拼图结果引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "radar_mosaic_result"
+            ]
+          },
+          "dataset_ref": {
+            "type": "string",
+            "title": "NC 参考数据引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "meteorological_dataset",
+              "meteorological_file"
+            ]
+          },
+          "target_time_ref": {
+            "type": "string",
+            "title": "目标时次引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "radar_target_time"
+            ]
+          },
+          "level_index": {
+            "type": "number",
+            "title": "层级索引",
+            "x-source": "number"
+          }
+        },
+        "required": [
+          "radar_mosaic_result_ref",
+          "dataset_ref",
+          "target_time_ref"
+        ],
+        "x-mini-app": {
+          "type": "radar_mosaic_console"
+        }
+      }
+    },
+    {
+      "name": "inspect_meteorological_dataset",
+      "label": "检查气象数据集",
+      "description": "检查变量、维度、时间、层级和地图能力",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "气象文件引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "meteorological_file"
+            ]
+          }
+        },
+        "required": [
+          "dataset_ref"
+        ]
+      }
+    },
+    {
+      "name": "interpret_meteorological_dataset",
+      "label": "解读气象数据集",
+      "description": "保存经过结构化校验的模型气象解读",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "数据集引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "dataset_ref"
+        ]
+      }
+    },
+    {
+      "name": "render_meteorological_raster",
+      "label": "渲染气象栅格",
+      "description": "渲染气象变量为地图 PNG",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "数据集引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "variable_ref": {
+            "type": "string",
+            "title": "变量引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "time_index_ref": {
+            "type": "string",
+            "title": "时间索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "level_index_ref": {
+            "type": "string",
+            "title": "层级索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "bbox_ref": {
+            "type": "string",
+            "title": "范围引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "dataset_ref",
+          "variable_ref"
+        ]
+      }
+    },
+    {
+      "name": "meteorological_stats",
+      "label": "气象统计",
+      "description": "计算变量统计值",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "数据集引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "variable_ref": {
+            "type": "string",
+            "title": "变量引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "time_index_ref": {
+            "type": "string",
+            "title": "时间索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "level_index_ref": {
+            "type": "string",
+            "title": "层级索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "bbox_ref": {
+            "type": "string",
+            "title": "范围引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "dataset_ref",
+          "variable_ref"
+        ]
+      }
+    },
+    {
+      "name": "meteorological_threshold_area",
+      "label": "气象阈值区域",
+      "description": "计算超过阈值的区域",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "数据集引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "variable_ref": {
+            "type": "string",
+            "title": "变量引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "threshold_ref": {
+            "type": "string",
+            "title": "阈值引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "time_index_ref": {
+            "type": "string",
+            "title": "时间索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "level_index_ref": {
+            "type": "string",
+            "title": "层级索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "bbox_ref": {
+            "type": "string",
+            "title": "范围引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "operator": {
+            "type": "string",
+            "title": "比较运算符",
+            "x-source": "text"
+          }
+        },
+        "required": [
+          "dataset_ref",
+          "variable_ref",
+          "threshold_ref"
+        ]
+      }
+    },
+    {
+      "name": "meteorological_contours",
+      "label": "气象等值线",
+      "description": "生成气象变量等值线",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "数据集引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "variable_ref": {
+            "type": "string",
+            "title": "变量引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "levels_ref": {
+            "type": "string",
+            "title": "等值线层级引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "time_index_ref": {
+            "type": "string",
+            "title": "时间索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "level_index_ref": {
+            "type": "string",
+            "title": "层级索引引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "bbox_ref": {
+            "type": "string",
+            "title": "范围引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "dataset_ref",
+          "variable_ref"
+        ]
+      }
+    },
+    {
+      "name": "generate_meteorological_report",
+      "label": "生成气象报告",
+      "description": "使用显式模型解读引用生成 DOCX 报告",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": false,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "数据集引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "interpretation_ref": {
+            "type": "string",
+            "title": "模型解读引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "dataset_ref",
+          "interpretation_ref"
+        ]
+      }
+    },
+    {
+      "name": "define_rainfall_risk_thresholds",
+      "label": "定义降雨风险阈值",
+      "description": "保存降雨风险区划图使用的阈值和调色板",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "thresholds": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "title": "阈值调色板 JSON",
+            "x-source": "json"
+          }
+        },
+        "required": [],
+        "x-mini-app": {
+          "type": "rainfall_risk_map_console"
+        }
+      }
+    },
+    {
+      "name": "render_rainfall_risk_map",
+      "label": "生成降雨风险区划图",
+      "description": "使用 NC、变量、边界和阈值生成风险/渐变/对比图",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ref": {
+            "type": "string",
+            "title": "数据集引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "meteorological_dataset"
+            ]
+          },
+          "variable_ref": {
+            "type": "string",
+            "title": "变量引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "meteorological_variable"
+            ]
+          },
+          "boundary_ref": {
+            "type": "string",
+            "title": "边界引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "meteorological_file",
+              "feature_collection",
+              "nowcast_area"
+            ]
+          },
+          "thresholds_ref": {
+            "type": "string",
+            "title": "阈值引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "rainfall_risk_thresholds"
+            ]
+          },
+          "map_mode": {
+            "type": "string",
+            "title": "图件模式",
+            "enum": [
+              "regional",
+              "gradient",
+              "compare"
+            ],
+            "x-source": "text"
+          },
+          "aggregation": {
+            "type": "string",
+            "title": "区划聚合",
+            "enum": [
+              "mean",
+              "max",
+              "sum"
+            ],
+            "x-source": "text"
+          },
+          "label_field": {
+            "type": "string",
+            "title": "区划名称字段",
+            "x-source": "text"
+          },
+          "title": {
+            "type": "string",
+            "title": "图名",
+            "x-source": "text"
+          }
+        },
+        "required": [
+          "dataset_ref",
+          "variable_ref",
+          "boundary_ref",
+          "thresholds_ref"
+        ],
+        "x-mini-app": {
+          "type": "rainfall_risk_map_console"
+        }
+      }
+    },
+    {
+      "name": "generate_area_rainfall_table",
+      "label": "生成面雨量表格",
+      "description": "生成短临面雨量排行 Excel 和 PNG 表格",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "file_collection_ref": {
+            "type": "string",
+            "title": "NC 文件集合或短临序列引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "meteorological_file_collection",
+              "nowcast_sequence"
+            ]
+          },
+          "boundary_ref": {
+            "type": "string",
+            "title": "边界文件引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "meteorological_file",
+              "feature_collection",
+              "nowcast_area"
+            ]
+          },
+          "top_n": {
+            "type": "number",
+            "title": "展示前 N 个区域",
+            "x-source": "number"
+          },
+          "label_field": {
+            "type": "string",
+            "title": "区划名称字段",
+            "x-source": "text"
+          },
+          "style": {
+            "type": "object",
+            "title": "表格样式 JSON",
+            "x-source": "json"
+          }
+        },
+        "required": [
+          "file_collection_ref",
+          "boundary_ref"
+        ],
+        "x-mini-app": {
+          "type": "area_rainfall_table_console"
+        }
+      }
+    },
+    {
+      "name": "create_nowcast_sequence",
+      "label": "创建短临序列",
+      "description": "从当前线程气象文件集合创建短临序列引用",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "file_collection_ref": {
+            "type": "string",
+            "title": "文件集合引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "variable_ref": {
+            "type": "string",
+            "title": "变量引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "file_collection_ref"
+        ]
+      }
+    },
+    {
+      "name": "inspect_nowcast_sequence",
+      "label": "检查短临序列",
+      "description": "检查短临序列每个时次的数据集",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "sequence_ref": {
+            "type": "string",
+            "title": "短临序列引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "sequence_ref"
+        ]
+      }
+    },
+    {
+      "name": "prepare_hangzhou_nowcast_scope",
+      "label": "准备杭州短临范围",
+      "description": "根据问题准备杭州区县边界或地点坐标引用",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "短临问题",
+            "x-source": "text"
+          }
+        },
+        "required": [
+          "question"
+        ]
+      }
+    },
+    {
+      "name": "analyze_nowcast_precipitation",
+      "label": "分析短临降水",
+      "description": "按时次和杭州区划或地点范围计算降水统计事实",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "sequence_ref": {
+            "type": "string",
+            "title": "短临序列引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "variable_ref": {
+            "type": "string",
+            "title": "变量引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "scope_ref": {
+            "type": "string",
+            "title": "杭州区划或地点范围引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "sequence_ref"
+        ]
+      }
+    },
+    {
+      "name": "answer_nowcast_question",
+      "label": "回答短临问题",
+      "description": "根据短临分析事实回答明确问题并生成代表时次地图",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "nowcast_analysis_ref": {
+            "type": "string",
+            "title": "短临分析引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          },
+          "question": {
+            "type": "string",
+            "title": "问题",
+            "x-source": "text"
+          }
+        },
+        "required": [
+          "nowcast_analysis_ref",
+          "question"
+        ]
+      }
+    },
+    {
+      "name": "generate_nowcast_forecast_text",
+      "label": "生成短临预报文本",
+      "description": "保存基于短临分析事实生成并校验的模型文本",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "nowcast_analysis_ref": {
+            "type": "string",
+            "title": "短临分析引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "nowcast_analysis_ref"
+        ]
+      }
+    },
+    {
+      "name": "render_nowcast_raster",
+      "label": "渲染短临栅格",
+      "description": "渲染短临候选时次为地图 PNG",
+      "group": "气象",
+      "tags": [
+        "meteorology"
+      ],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "nowcast_map_candidate_ref": {
+            "type": "string",
+            "title": "短临地图候选引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref"
+          }
+        },
+        "required": [
+          "nowcast_map_candidate_ref"
+        ]
+      }
+    }
+  ]
+}

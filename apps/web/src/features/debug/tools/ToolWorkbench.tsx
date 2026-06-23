@@ -32,6 +32,7 @@ import {
   resolveToolDefaults,
 } from '../../tools/toolFormState'
 import { groupToolsForManagement } from '../../tools/toolManagementModel'
+import { ToolMiniAppPanel } from '../../tools/ToolMiniApp'
 
 interface ToolWorkbenchProps {
   tools: ToolDescriptor[]
@@ -120,6 +121,13 @@ export function ToolWorkbench({
       {selectedTool ? (
         <>
           <div className="panel__section">
+            <ToolMiniAppPanel
+              tool={selectedTool}
+              formState={formState}
+              valueRefs={valueRefs}
+              isSubmitting={isToolSubmitting}
+              onRunTool={onRunTool}
+            />
             <ToolParameterForm
               tool={selectedTool}
               values={formState.values}

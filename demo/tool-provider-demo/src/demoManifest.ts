@@ -51,6 +51,7 @@ export const writeObservationReportSchema = {
       description: '由 demo_collect_observation 返回的 demo_observation valueRef。',
       minLength: 1,
       'x-source': 'value_ref',
+      'x-value-ref-kinds': ['demo_observation'],
     },
     detail_level: {
       type: 'string',

@@ -642,6 +642,7 @@ export const toolParameterDescriptorSchema = z.object({
   placeholder: z.string().nullable().default(null),
   defaultValue: z.unknown().nullable().default(null),
   options: z.array(toolParameterOptionSchema).default([]),
+  acceptedValueRefKinds: z.array(z.string()).default([]),
 })
 
 export const toolDescriptorSchema = z.object({

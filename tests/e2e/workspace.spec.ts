@@ -71,6 +71,23 @@ test.describe('workspace browser acceptance', () => {
     await expect(page.getByText('页面遇到问题')).toHaveCount(0)
     expect(errors).toEqual([])
   })
+
+  test('shows third-party weather mini-app consoles in the debug workbench', async ({ page }) => {
+    const errors = collectUnexpectedErrors(page)
+    await page.goto('/debug')
+    await expect(page.locator('.panel__eyebrow').filter({ hasText: '工具工作台' })).toBeVisible()
+
+    const select = page.locator('#debug-tool-select')
+    await select.selectOption('render_radar_mosaic')
+    await expect(page.getByRole('heading', { name: '雷达拼图控制台' })).toBeVisible()
+
+    await select.selectOption('render_rainfall_risk_map')
+    await expect(page.getByRole('heading', { name: '降雨风险区划图' })).toBeVisible()
+
+    await select.selectOption('generate_area_rainfall_table')
+    await expect(page.getByRole('heading', { name: '面雨量表格' })).toBeVisible()
+    expect(errors).toEqual([])
+  })
 })
 
 function collectUnexpectedErrors(page: Page): string[] {

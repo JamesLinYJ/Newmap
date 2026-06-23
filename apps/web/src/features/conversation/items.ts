@@ -152,7 +152,10 @@ function buildToolEntry(
     ? nowcastAnswerText(toolName, parsedOutput) || outputText || (output.isError ? '工具执行失败。' : '工具执行完成。')
     : '执行中，等待工具返回...'
   const metadata = output?.metadata ?? call?.metadata ?? {}
-  const artifactId = typeof metadata.artifactId === 'string' ? metadata.artifactId : null
+  const artifacts = Array.isArray(metadata.artifacts) ? metadata.artifacts.filter(isRecord) : []
+  const artifactId = typeof metadata.artifactId === 'string'
+    ? metadata.artifactId
+    : typeof artifacts[0]?.artifactId === 'string' ? artifacts[0].artifactId : null
 
   return {
     id: `tool:${callId}`,
@@ -174,6 +177,7 @@ function buildToolEntry(
         resultId: metadata.resultId ?? null,
         source: metadata.source ?? null,
         artifactId,
+        artifacts,
         valueRefs: metadata.valueRefs ?? [],
       },
     }],

@@ -195,6 +195,9 @@ function schemaParameters(schema: Record<string, unknown>) {
       options: Array.isArray(property.enum)
         ? property.enum.map(value => ({ label: String(value), value: String(value) }))
         : [],
+      acceptedValueRefKinds: Array.isArray(property['x-value-ref-kinds'])
+        ? property['x-value-ref-kinds'].map(String)
+        : [],
     }
   })
 }
