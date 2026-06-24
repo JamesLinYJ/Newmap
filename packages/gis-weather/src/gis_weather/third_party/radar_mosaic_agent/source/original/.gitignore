@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 雷达原始数据 (太大，不上传)
+data/
+data_*/
+雷达过程数据*/
+*.bz2
+*.rar
+*.nc
+
+# 运行时输出
+outputs_runtime/
+outputs_*/
+
+# 日志
+*.log
+*.err.log
+
+# 临时文件
+_*/
+tmp_*
+_font_test.png
+*.vbs
+
+# IDE
+.vscode/
+.idea/
+
+# 配置文件 (含本地路径)
+datasets_config.json
+
+# macOS
+.DS_Store

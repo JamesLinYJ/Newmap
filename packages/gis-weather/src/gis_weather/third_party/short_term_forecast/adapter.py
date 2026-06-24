@@ -27,7 +27,7 @@ from gis_weather.third_party.common import choose_label_column, ensure_parent, f
 
 
 DEFAULT_STYLE = {
-    "titleText": "降水全市前10站点",
+    "titleText": "区县面雨量排行",
     "titleColor": "#2E72D6",
     "headerBg": "#E8F0FA",
     "headerColor": "#333333",
@@ -38,13 +38,20 @@ DEFAULT_STYLE = {
 }
 
 
-def _format_time_from_stem(path: Path, part_index: int) -> str:
-    stem = path.stem
+TABLE_HEADERS = ["排行", "区县", "最大雨量(mm)", "面雨量(mm)", "覆盖格点数"]
+
+
+def _format_time_from_name(filename: str, part_index: int) -> str:
+    stem = Path(filename).stem
     parts = stem.split("_")
     token = parts[part_index] if len(parts) > part_index else parts[0]
     if len(token) >= 12 and token[:12].isdigit():
         return f"{token[0:4]}年{token[4:6]}月{token[6:8]}日{token[8:10]}时{token[10:12]}分"
     return token
+
+
+def _format_time_from_stem(path: Path, part_index: int) -> str:
+    return _format_time_from_name(path.name, part_index)
 
 
 def _read_rate(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
@@ -159,6 +166,25 @@ def _aggregate_county(
     return gdf, label_column, pd.DataFrame(grouped)
 
 
+def _format_rainfall(value: Any) -> str:
+    # 面雨量样例里大量数值小于 0.1mm；PNG 使用三位小数和极小值标记，
+    # 避免真实非零降水被旧模板的一位小数展示成 0.0。
+    numeric = float(value)
+    if 0 < abs(numeric) < 0.001:
+        return "<0.001"
+    return f"{numeric:.3f}"
+
+
+def _table_row_values(row: Any) -> list[Any]:
+    return [
+        int(row["排行"]),
+        row.iloc[1],
+        float(row["最大雨量"]),
+        float(row["面雨量"]),
+        int(row["覆盖格点数"]),
+    ]
+
+
 def _write_excel(table, output_xlsx: Path, time_text: str) -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -166,7 +192,7 @@ def _write_excel(table, output_xlsx: Path, time_text: str) -> None:
     ensure_parent(output_xlsx)
     wb = Workbook()
     ws = wb.active
-    ws.title = "降水等级表格"
+    ws.title = "面雨量表格"
 
     title_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
     header_fill = PatternFill(start_color="2E75B6", end_color="2E75B6", fill_type="solid")
@@ -176,7 +202,7 @@ def _write_excel(table, output_xlsx: Path, time_text: str) -> None:
     center = Alignment(horizontal="center", vertical="center")
 
     ws.merge_cells("A1:E1")
-    ws["A1"] = "短时临近降水预报——区县等级表格"
+    ws["A1"] = "短时临近降水预报——区县面雨量表格"
     ws["A1"].font = Font(name="Microsoft YaHei", size=16, bold=True, color="FFFFFF")
     ws["A1"].fill = title_fill
     ws["A1"].alignment = center
@@ -186,8 +212,7 @@ def _write_excel(table, output_xlsx: Path, time_text: str) -> None:
     ws["A2"].alignment = center
     ws["A2"].font = Font(name="Microsoft YaHei", size=11)
 
-    headers = ["排行", "区县", "乡镇", "站点", "雨量"]
-    for column, header in enumerate(headers, 1):
+    for column, header in enumerate(TABLE_HEADERS, 1):
         cell = ws.cell(row=4, column=column, value=header)
         cell.font = Font(name="Microsoft YaHei", size=11, bold=True, color="FFFFFF")
         cell.fill = header_fill
@@ -196,12 +221,14 @@ def _write_excel(table, output_xlsx: Path, time_text: str) -> None:
 
     for row_index, row in table.iterrows():
         excel_row = row_index + 5
-        values = [int(row["排行"]), row.iloc[1], "-", "-", round(float(row["面雨量"]), 1)]
+        values = _table_row_values(row)
         for column, value in enumerate(values, 1):
             cell = ws.cell(row=excel_row, column=column, value=value)
             cell.font = Font(name="Microsoft YaHei", size=10)
             cell.border = border
             cell.alignment = center
+            if column in {3, 4}:
+                cell.number_format = "0.000###"
             if row_index < 3:
                 cell.fill = top_fill
 
@@ -224,20 +251,26 @@ def _write_table_png(table, output_png: Path, time_text: str, top_n: int, style:
 
     plot_table = table.head(top_n).reset_index(drop=True)
     figure_height = max(3.0, 1.7 + 0.38 * len(plot_table))
-    fig, ax = plt.subplots(figsize=(5.0, figure_height))
+    fig, ax = plt.subplots(figsize=(5.8, figure_height))
     ax.axis("off")
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
 
-    rows = [["排行", "区县", "乡镇", "站点", "雨量"]]
+    rows = [TABLE_HEADERS]
     for _, row in plot_table.iterrows():
-        rows.append([str(int(row["排行"])), str(row.iloc[1]), "-", "-", f"{float(row['面雨量']):.1f}"])
+        rows.append([
+            str(int(row["排行"])),
+            str(row.iloc[1]),
+            _format_rainfall(row["最大雨量"]),
+            _format_rainfall(row["面雨量"]),
+            str(int(row["覆盖格点数"])),
+        ])
 
     table_artist = ax.table(
         cellText=rows,
         cellLoc="center",
         loc="upper center",
-        colWidths=[0.12, 0.28, 0.18, 0.24, 0.14],
+        colWidths=[0.12, 0.24, 0.22, 0.22, 0.18],
     )
     table_artist.auto_set_font_size(False)
     table_artist.set_fontsize(9)
@@ -269,6 +302,7 @@ def _write_table_png(table, output_png: Path, time_text: str, top_n: int, style:
 def generate_area_rainfall_table(
     *,
     nc_paths: list[Path],
+    nc_names: list[str] | None = None,
     boundary_path: Path,
     output_xlsx: Path,
     output_png: Path,
@@ -289,8 +323,10 @@ def generate_area_rainfall_table(
         label_field=label_field,
     )
 
-    start_text = _format_time_from_stem(sorted(nc_paths, key=lambda item: item.name)[0], 0)
-    end_text = _format_time_from_stem(sorted(nc_paths, key=lambda item: item.name)[-1], 1)
+    display_names = nc_names if nc_names and len(nc_names) == len(nc_paths) else [path.name for path in nc_paths]
+    ordered_names = [name for _, name in sorted(zip(nc_paths, display_names), key=lambda item: item[1])]
+    start_text = _format_time_from_name(ordered_names[0], 0)
+    end_text = _format_time_from_name(ordered_names[-1], 1)
     time_text = f"{start_text}-{end_text}(单位:毫米)"
     _write_excel(table, output_xlsx, time_text)
     _write_table_png(table, output_png, time_text, top_n, style)

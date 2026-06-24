@@ -118,6 +118,82 @@ describe('thread context management', () => {
     }
   })
 
+  it('projects asynchronous tool transcript entries into valid chat-completions order', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-context-tools-'))
+    try {
+      const store = await createStore(root)
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '工具顺序恢复')
+      const run = await store.createRun(session.id, '继续使用上一轮工具结果', { threadId: thread.id })
+
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'message',
+        payload: { role: 'user', content: run.userQuery },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'tool_call',
+        payload: { callId: 'call_a', name: 'list_layers', arguments: { query: '杭州' } },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'checkpoint',
+        payload: {
+          type: 'assistant_content_for_tool_call',
+          callId: 'call_a',
+          content: '我先检查系统图层。',
+        },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'tool_call',
+        payload: { callId: 'call_b', name: 'inspect_dataset', arguments: { dataset_ref: 'ref_nc' } },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'tool_call',
+        payload: { callId: 'call_orphan', name: 'render_map', arguments: { dataset_ref: 'ref_missing' } },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'tool_result',
+        payload: { callId: 'call_a', name: 'list_layers', content: '{"layers":["hangzhou_districts"]}' },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'tool_result',
+        payload: { callId: 'call_b', name: 'inspect_dataset', content: '{"variables":["QPF"]}' },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'message',
+        payload: { role: 'assistant', content: '已经找到杭州区划和降水变量。' },
+      })
+
+      const assembled = await assembleThreadContext(store, thread.id, defaultRuntimeConfig().context, '系统提示')
+      const toolCallIds = assembled.messages.flatMap(message => message.tool_calls?.map(call => call.id) ?? [])
+      const callAIndex = assembled.messages.findIndex(message => message.tool_calls?.[0]?.id === 'call_a')
+      const callBIndex = assembled.messages.findIndex(message => message.tool_calls?.[0]?.id === 'call_b')
+
+      expect(toolCallIds).toEqual(['call_a', 'call_b'])
+      expect(assembled.messages[callAIndex]).toMatchObject({ role: 'assistant', content: '我先检查系统图层。' })
+      expect(assembled.messages[callAIndex + 1]).toMatchObject({ role: 'tool', tool_call_id: 'call_a' })
+      expect(assembled.messages[callBIndex + 1]).toMatchObject({ role: 'tool', tool_call_id: 'call_b' })
+      expect(JSON.stringify(assembled.messages)).not.toContain('call_orphan')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('excludes the current run from automatic memory updates', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'geo-context-current-run-'))
     try {

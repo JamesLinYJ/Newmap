@@ -17,9 +17,10 @@ import type { ToolDef, ToolProvider, ValueRef } from '../../../server/src/framew
 import {
   collectObservationSchema,
   manifest,
+  renderObservationBadgeSchema,
   writeObservationReportSchema,
 } from './demoManifest.js'
-import { createObservationRef, writeObservationArtifact } from './demoService.js'
+import { createObservationRef, createPngArtifactTarget, writeObservationArtifact } from './demoService.js'
 
 const collectObservationTool: ToolDef = {
   name: manifest.tools[0].name,
@@ -108,9 +109,68 @@ const writeObservationReportTool: ToolDef = {
   },
 }
 
+const renderObservationBadgeTool: ToolDef = {
+  name: manifest.tools[2].name,
+  label: manifest.tools[2].label,
+  description: manifest.tools[2].description,
+  group: manifest.tools[2].group,
+  tags: manifest.tools[2].tags,
+  isReadOnly: manifest.tools[2].isReadOnly,
+  isDestructive: manifest.tools[2].isDestructive,
+  jsonSchema: renderObservationBadgeSchema,
+  handler: async (args, ctx) => {
+    const observationRefId = String(args.observation_ref)
+    const badgeStyle = String(args.badge_style ?? 'compact')
+    const observationRef = ctx.resolveValueRef(observationRefId)
+    assertObservationRef(observationRef)
+    const artifact = createPngArtifactTarget({
+      runId: ctx.runId,
+      name: 'Demo 观测徽章',
+      metadata: {
+        observationRef: observationRef.refId,
+        badgeStyle,
+      },
+    })
+    const worker = await callWorker('demo_render_observation_badge', {
+      observation: observationRef.value,
+      badge_style: badgeStyle,
+      output_relative_path: artifact.relativePath,
+    })
+    return {
+      message: 'Demo 观测徽章已渲染。',
+      payload: {
+        artifact_id: artifact.artifactId,
+        worker,
+      },
+      warnings: [],
+      resultId: `demo_badge_${ctx.runId}`,
+      source: 'demo-observation.badge',
+      artifacts: [artifact],
+      provenance: {
+        providerId: manifest.id,
+        toolName: 'demo_render_observation_badge',
+        algorithm: 'demo-worker-backed-v1',
+        inputRefs: {
+          observation_ref: observationRef.refId,
+        },
+        outputArtifacts: [{
+          artifactId: artifact.artifactId,
+          artifactType: artifact.artifactType,
+          relativePath: artifact.relativePath,
+        }],
+      },
+    }
+  },
+}
+
 export const demoProvider: ToolProvider = {
   manifest,
-  tools: () => [collectObservationTool, writeObservationReportTool],
+  tools: () => [collectObservationTool, writeObservationReportTool, renderObservationBadgeTool],
+  async onInstall(ctx) {
+    if (!ctx.config.WORKER_URL) {
+      throw new Error('WORKER_URL 未配置，worker-backed demo 工具不可用')
+    }
+  },
 }
 
 export default demoProvider
@@ -119,4 +179,24 @@ function assertObservationRef(ref: ValueRef) {
   if (ref.kind !== 'demo_observation') {
     throw new Error(`observation_ref 类型错误：期望 demo_observation，实际为 ${ref.kind}`)
   }
+}
+
+async function callWorker(toolName: string, args: Record<string, unknown>) {
+  const workerUrl = process.env.WORKER_URL
+  if (!workerUrl) throw new Error('WORKER_URL 未配置')
+  const response = await fetch(`${workerUrl.replace(/\/$/u, '')}/tools/${toolName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ args }),
+  })
+  if (!response.ok) throw new Error(`Worker HTTP ${response.status}: ${await response.text()}`)
+  const body: unknown = await response.json()
+  if (!isRecord(body) || !isRecord(body.payload)) {
+    throw new Error('Worker 返回 payload 无效')
+  }
+  return body.payload
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

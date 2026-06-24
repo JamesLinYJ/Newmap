@@ -174,6 +174,18 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
     const finalIndex = result.items.findIndex(item => item.itemType === 'message' && item.body === '未来3小时不会下雨，您可以放心出门。')
     expect(preambleIndex).toBeLessThan(toolIndex)
     expect(toolIndex).toBeLessThan(finalIndex)
+    const transcriptToolIndex = result.transcript.findIndex(entry => entry.kind === 'tool_call' && entry.payload.name === 'answer_nowcast_question')
+    const transcriptPreambleIndex = result.transcript.findIndex(entry => (
+      entry.kind === 'checkpoint'
+      && entry.payload.type === 'assistant_content_for_tool_call'
+      && entry.payload.callId === 'answer_call'
+    ))
+    const transcriptResultIndex = result.transcript.findIndex(entry => entry.kind === 'tool_result' && entry.payload.name === 'answer_nowcast_question')
+    const transcriptFinalIndex = result.transcript.findIndex(entry => entry.kind === 'message' && entry.payload.content === '未来3小时不会下雨，您可以放心出门。')
+    expect(result.transcript[transcriptPreambleIndex].payload.content).toBe('我先分析一下。')
+    expect(transcriptToolIndex).toBeLessThan(transcriptResultIndex)
+    expect(transcriptToolIndex).toBeLessThan(transcriptPreambleIndex)
+    expect(transcriptResultIndex).toBeLessThan(transcriptFinalIndex)
   })
 
   it('keeps provider reasoning UI-only while completing a tool continuation', async () => {
@@ -262,6 +274,77 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         'runs', run.id, 'agents', 'spatial_analyst', 'transcript.jsonl',
       ), 'utf8')
       expect(agentLog).toContain('completed_item')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('restores previous run valueRefs for continuous thread tool calls', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-runtime-thread-values-'))
+    try {
+      const store = new PostgresPlatformStore(noOpDb(), root)
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '连续 valueRef 测试')
+      const tools = new ToolRegistry()
+      tools.register(providerFromTools('thread-value-test', [{
+        ...toolDefinition('use_dataset_ref', ['dataset_ref']),
+        jsonSchema: {
+          type: 'object',
+          properties: {
+            dataset_ref: {
+              type: 'string',
+              description: '必须使用 valueRef ID',
+              'x-source': 'value_ref',
+              'x-value-ref-kinds': ['meteorological_dataset'],
+            },
+          },
+          required: ['dataset_ref'],
+        },
+        handler: async (_args, context) => {
+          const ref = context.resolveValueRef('ref_prior_dataset')
+          return result('reuse', [], { reusedKind: ref.kind })
+        },
+      }]))
+      const firstRun = await store.createRun(session.id, '先检查数据', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: testRuntimeConfig(),
+      })
+      await store.updateRunState(firstRun.id, {
+        toolValueRefs: [{
+          refId: 'ref_prior_dataset',
+          kind: 'meteorological_dataset',
+          label: '上一轮数据集',
+          value: { name: 'rain.nc', relativePath: 'objects/sha256/aa/rain.nc' },
+          metadata: {},
+          sourceTool: 'inspect_meteorological_dataset',
+          sourceResultId: 'result_prior',
+          createdAt: new Date().toISOString(),
+          unit: null,
+        }],
+      })
+      await store.completeRun(firstRun.id, 'completed')
+      const secondRun = await store.createRun(session.id, '继续使用上一轮数据集', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: testRuntimeConfig(),
+      })
+      let turns = 0
+      const model = scriptedModel(request => {
+        turns += 1
+        if (hasToolResult(request)) return { text: '已经复用上一轮数据集。' }
+        return { toolCalls: [{ id: 'call_reuse', name: 'use_dataset_ref', arguments: '{"dataset_ref":"ref_prior_dataset"}' }] }
+      })
+
+      const completed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run(runOptions(secondRun, thread.id))
+
+      expect(completed.status).toBe('completed')
+      expect(turns).toBe(2)
+      expect(completed.state.toolResults[0]).toMatchObject({
+        tool: 'use_dataset_ref',
+        status: 'completed',
+      })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -386,7 +469,11 @@ async function executeTextRun(model: Model, tools = new ToolRegistry()) {
     })
     const completed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run(runOptions(run, thread.id))
     await store.conversationStore.flush()
-    return { run: structuredClone(completed), items: structuredClone(await store.listItems(run.id)) }
+    return {
+      run: structuredClone(completed),
+      items: structuredClone(await store.listItems(run.id)),
+      transcript: structuredClone(await store.activeTranscript(thread.id)),
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }

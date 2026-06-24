@@ -1,10 +1,10 @@
 {
   "id": "geo-platform-meteorology",
-  "name": "气象科学工具",
-  "version": "2.0.0",
+  "name": "气象分析",
+  "version": "0.1.0",
   "author": "geo-agent-platform",
   "language": "typescript",
-  "description": "以通用线程文件和 valueRef 驱动的气象分析与短临预报工具链",
+  "description": "气象数据、短临降水与第三方气象制图工具",
   "requires": {
     "WORKER_URL": "required"
   },
@@ -141,7 +141,13 @@
             "enum": [
               "reflectivity",
               "velocity",
-              "spectrum_width"
+              "spectrum_width",
+              "zdr",
+              "cc",
+              "dp",
+              "kdp",
+              "snrh",
+              "echo_top"
             ],
             "x-source": "text"
           },
@@ -153,6 +159,16 @@
           "tolerance_sec": {
             "type": "number",
             "title": "时间容差秒",
+            "x-source": "number"
+          },
+          "grid_res_km": {
+            "type": "number",
+            "title": "网格分辨率 km",
+            "x-source": "number"
+          },
+          "min_dbz": {
+            "type": "number",
+            "title": "最小显示 dBZ",
             "x-source": "number"
           }
         },
@@ -210,6 +226,21 @@
           "level_index": {
             "type": "number",
             "title": "层级索引",
+            "x-source": "number"
+          },
+          "product_label": {
+            "type": "string",
+            "title": "产品标签",
+            "x-source": "text"
+          },
+          "product_unit": {
+            "type": "string",
+            "title": "产品单位",
+            "x-source": "text"
+          },
+          "min_display": {
+            "type": "number",
+            "title": "最小对比显示值",
             "x-source": "number"
           }
         },
@@ -541,11 +572,73 @@
         "properties": {
           "thresholds": {
             "type": "array",
+            "minItems": 1,
             "items": {
-              "type": "object"
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label",
+                "min",
+                "max",
+                "color"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "min": {
+                  "type": "number"
+                },
+                "max": {
+                  "type": "number"
+                },
+                "color": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                }
+              }
             },
             "title": "阈值调色板 JSON",
-            "x-source": "json"
+            "x-source": "json",
+            "default": [
+              {
+                "label": "无雨/小雨",
+                "min": 0,
+                "max": 1.5,
+                "color": "#f0f0f0"
+              },
+              {
+                "label": "短时大雨",
+                "min": 1.5,
+                "max": 3,
+                "color": "#a6d96a"
+              },
+              {
+                "label": "短时暴雨",
+                "min": 3,
+                "max": 5,
+                "color": "#1a9850"
+              },
+              {
+                "label": "短时大暴雨",
+                "min": 5,
+                "max": 8,
+                "color": "#fdae61"
+              },
+              {
+                "label": "短时大暴雨~特大暴雨",
+                "min": 8,
+                "max": 12,
+                "color": "#d73027"
+              },
+              {
+                "label": "短时特大暴雨",
+                "min": 12,
+                "max": 999,
+                "color": "#7a0177"
+              }
+            ]
           }
         },
         "required": [],
@@ -557,7 +650,7 @@
     {
       "name": "render_rainfall_risk_map",
       "label": "生成降雨风险区划图",
-      "description": "使用 NC、变量、边界和阈值生成风险/渐变/对比图",
+      "description": "使用单个 NC 数据集、变量、边界和阈值生成风险/渐变/对比图；dataset_ref 必须来自 inspect_meteorological_dataset 的 meteorological_dataset，不接受 nowcast_sequence",
       "group": "气象",
       "tags": [
         "meteorology"
@@ -593,7 +686,8 @@
             "x-value-ref-kinds": [
               "meteorological_file",
               "feature_collection",
-              "nowcast_area"
+              "nowcast_area",
+              "layer"
             ]
           },
           "thresholds_ref": {
@@ -650,7 +744,7 @@
     {
       "name": "generate_area_rainfall_table",
       "label": "生成面雨量表格",
-      "description": "生成短临面雨量排行 Excel 和 PNG 表格",
+      "description": "使用 NC 文件集合或短临序列生成区县面雨量排行 Excel 和 PNG 表格；多文件输入表示时段累加面雨量，不是单时次均值",
       "group": "气象",
       "tags": [
         "meteorology"
@@ -678,7 +772,8 @@
             "x-value-ref-kinds": [
               "meteorological_file",
               "feature_collection",
-              "nowcast_area"
+              "nowcast_area",
+              "layer"
             ]
           },
           "top_n": {
@@ -693,8 +788,53 @@
           },
           "style": {
             "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "titleText": {
+                "type": "string",
+                "minLength": 1
+              },
+              "titleColor": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "headerBg": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "headerColor": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "top3Bg": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "borderColor": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "dataColor": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "bgColor": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              }
+            },
             "title": "表格样式 JSON",
-            "x-source": "json"
+            "x-source": "json",
+            "default": {
+              "titleText": "区县面雨量排行",
+              "titleColor": "#2E72D6",
+              "headerBg": "#E8F0FA",
+              "headerColor": "#333333",
+              "top3Bg": "#FFF2CC",
+              "borderColor": "#D0D0D0",
+              "dataColor": "#333333",
+              "bgColor": "#FFFFFF"
+            }
           }
         },
         "required": [
@@ -709,7 +849,7 @@
     {
       "name": "create_nowcast_sequence",
       "label": "创建短临序列",
-      "description": "从当前线程气象文件集合创建短临序列引用",
+      "description": "从当前线程气象文件集合创建短临序列引用；仅用于短临问答、连续时次分析和面雨量表格，不作为风险区划图 dataset_ref",
       "group": "气象",
       "tags": [
         "meteorology"
@@ -765,7 +905,7 @@
     {
       "name": "prepare_hangzhou_nowcast_scope",
       "label": "准备杭州短临范围",
-      "description": "根据问题准备杭州区县边界或地点坐标引用",
+      "description": "根据问题和已有边界/坐标引用准备杭州区划或地点范围",
       "group": "气象",
       "tags": [
         "meteorology"
@@ -778,6 +918,24 @@
           "question": {
             "type": "string",
             "title": "短临问题",
+            "x-source": "text"
+          },
+          "scope_ref": {
+            "type": "string",
+            "title": "已有杭州边界或地点引用",
+            "description": "必须使用当前 run 中已存在的 valueRef ID",
+            "x-source": "value_ref",
+            "x-value-ref-kinds": [
+              "feature_collection",
+              "nowcast_area",
+              "layer",
+              "nowcast_coordinate",
+              "place_candidate"
+            ]
+          },
+          "district_name_field": {
+            "type": "string",
+            "title": "区划名称字段",
             "x-source": "text"
           }
         },

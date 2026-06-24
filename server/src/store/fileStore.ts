@@ -81,8 +81,11 @@ export class RuntimeFileStore {
     await mkdir(dir, { recursive: true })
     const bytes = Buffer.from(await file.arrayBuffer())
     const contentHash = createHash('sha256').update(bytes).digest('hex')
-    const relativePath = path.posix.join('objects', 'sha256', contentHash.slice(0, 2), contentHash)
-    const objectPath = path.join(this.objectRoot, contentHash.slice(0, 2), contentHash)
+    // 内容哈希仍是对象身份；原始安全扩展名进入对象路径，避免气象、
+    // GeoJSON、雷达等后缀敏感 reader 在 runtime hash 文件上误判格式。
+    const objectName = `${contentHash}${safeObjectExtension(cleanName)}`
+    const relativePath = path.posix.join('objects', 'sha256', contentHash.slice(0, 2), objectName)
+    const objectPath = path.join(this.objectRoot, contentHash.slice(0, 2), objectName)
     await mkdir(path.dirname(objectPath), { recursive: true })
     try {
       await writeFile(objectPath, bytes, { flag: 'wx' })
@@ -223,6 +226,11 @@ function safePathSegment(value: string, field: string): string {
 function sanitizeFilename(name: string): string {
   const base = path.basename(name).replace(/[^\w.\-\u4e00-\u9fff]+/gu, '_')
   return base || 'upload.bin'
+}
+
+function safeObjectExtension(name: string): string {
+  const ext = path.extname(name).toLowerCase()
+  return /^[.][a-z0-9]{1,12}$/u.test(ext) ? ext : ''
 }
 
 function formatBytes(bytes: number): string {

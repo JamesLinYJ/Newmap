@@ -288,14 +288,65 @@ async function buildThreadResourceMessage(
 }
 
 function composeTranscriptMessages(entries: TranscriptEntry[], resourceMessage: string | null): ConversationChatMessage[] {
-  if (!resourceMessage) return entries.flatMap(toChatMessages)
+  if (!resourceMessage) return transcriptEntriesToChatMessages(entries)
   const currentUserIndex = findLastIndex(entries, entry => entry.kind === 'message' && entry.payload.role === 'user')
-  if (currentUserIndex < 0) return entries.flatMap(toChatMessages)
+  if (currentUserIndex < 0) return transcriptEntriesToChatMessages(entries)
   return [
-    ...entries.slice(0, currentUserIndex).flatMap(toChatMessages),
+    ...transcriptEntriesToChatMessages(entries.slice(0, currentUserIndex)),
     { role: 'system', content: resourceMessage },
-    ...entries.slice(currentUserIndex).flatMap(toChatMessages),
+    ...transcriptEntriesToChatMessages(entries.slice(currentUserIndex)),
   ]
+}
+
+function transcriptEntriesToChatMessages(entries: TranscriptEntry[]): ConversationChatMessage[] {
+  const assistantContentByCallId = assistantToolContentByCallId(entries)
+  const resultsByCallId = new Map(
+    entries
+      .filter(entry => entry.kind === 'tool_result')
+      .flatMap(entry => {
+        const callId = stringField(entry.payload.callId)
+        return callId ? [[callId, entry] as const] : []
+      }),
+  )
+  const consumedResults = new Set<string>()
+  const messages: ConversationChatMessage[] = []
+
+  for (const entry of entries) {
+    if (entry.kind === 'tool_call') {
+      const callId = stringField(entry.payload.callId)
+      const result = callId ? resultsByCallId.get(callId) : null
+      if (!callId || !result) continue
+      messages.push(...toChatMessages(entry, assistantContentByCallId.get(callId)), ...toChatMessages(result))
+      consumedResults.add(callId)
+      continue
+    }
+    if (entry.kind === 'tool_result') {
+      const callId = stringField(entry.payload.callId)
+      if (!callId || consumedResults.has(callId)) continue
+      // 历史工具结果必须紧跟对应 assistant tool_call。孤立结果只保留在
+      // transcript 事实源和 run items 中，避免下一轮模型请求违反协议。
+      continue
+    }
+    messages.push(...toChatMessages(entry))
+  }
+  return messages
+}
+
+function assistantToolContentByCallId(entries: TranscriptEntry[]): Map<string, string> {
+  const contentByCallId = new Map<string, string>()
+  for (const entry of entries) {
+    if (entry.kind === 'tool_call') {
+      const callId = stringField(entry.payload.callId)
+      const content = stringField(entry.payload.assistantContent)
+      if (callId && content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
+      continue
+    }
+    if (!isAssistantContentCheckpoint(entry)) continue
+    const callId = stringField(entry.payload.callId)
+    const content = stringField(entry.payload.content)
+    if (callId && content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
+  }
+  return contentByCallId
 }
 
 function parseContentRef(value: unknown): ContentRef | null {
@@ -311,7 +362,7 @@ function parseContentRef(value: unknown): ContentRef | null {
   }
 }
 
-function toChatMessages(entry: TranscriptEntry): ConversationChatMessage[] {
+function toChatMessages(entry: TranscriptEntry, assistantContentOverride?: string): ConversationChatMessage[] {
   if (entry.kind === 'message') {
     const role = stringField(entry.payload.role)
     const content = stringField(entry.payload.content)
@@ -326,7 +377,7 @@ function toChatMessages(entry: TranscriptEntry): ConversationChatMessage[] {
       : JSON.stringify(entry.payload.arguments ?? {})
     return [{
       role: 'assistant',
-      content: stringField(entry.payload.assistantContent),
+      content: assistantContentOverride ?? stringField(entry.payload.assistantContent),
       tool_calls: [{ id: callId, type: 'function', function: { name, arguments: args } }],
     }]
   }
@@ -347,7 +398,8 @@ function toChatMessages(entry: TranscriptEntry): ConversationChatMessage[] {
 
 function preserveRecentTurns(entries: TranscriptEntry[], turnCount: number): TranscriptEntry[] {
   const summary = findLastEntry(entries, entry => entry.kind === 'compact_summary')
-  const visible = entries.filter(entry => entry.kind !== 'compact_boundary' && entry.kind !== 'checkpoint')
+  const visible = entries.filter(entry => entry.kind !== 'compact_boundary'
+    && (entry.kind !== 'checkpoint' || isAssistantContentCheckpoint(entry)))
   const preserveIndex = findPreserveStart(visible, turnCount)
   const recent = visible.slice(Math.max(0, preserveIndex))
   return summary && !recent.some(entry => entry.entryId === summary.entryId) ? [summary, ...recent] : recent
@@ -371,6 +423,14 @@ function stripCompactionReplay(entries: TranscriptEntry[]): TranscriptEntry[] {
 
 function isModelVisibleEntry(entry: TranscriptEntry): boolean {
   return ['message', 'tool_call', 'tool_result', 'compact_summary'].includes(entry.kind)
+    || isAssistantContentCheckpoint(entry)
+}
+
+function isAssistantContentCheckpoint(entry: TranscriptEntry): boolean {
+  return entry.kind === 'checkpoint'
+    && entry.payload.type === 'assistant_content_for_tool_call'
+    && typeof entry.payload.callId === 'string'
+    && typeof entry.payload.content === 'string'
 }
 
 function isCompletedTurnBoundary(entry: TranscriptEntry): boolean {

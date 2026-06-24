@@ -171,6 +171,104 @@ def _classify(values: np.ndarray, thresholds: list[dict[str, Any]]) -> dict[str,
     return counts
 
 
+def _risk_level(value: float | None, thresholds: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the configured risk level for a scalar region value."""
+
+    if value is None or not np.isfinite(value):
+        return None
+    for item in thresholds:
+        if item["min"] <= float(value) < item["max"]:
+            return item
+    return None
+
+
+def _bounds_from_grid(grid: RiskGrid) -> list[float]:
+    """Derive WGS84 bounds from the NC grid coordinates."""
+
+    return [
+        float(np.nanmin(grid.lons)),
+        float(np.nanmin(grid.lats)),
+        float(np.nanmax(grid.lons)),
+        float(np.nanmax(grid.lats)),
+    ]
+
+
+def _coordinates_from_bounds(bounds: list[float]) -> list[list[float]]:
+    """Return MapLibre image-source coordinates for west/south/east/north bounds."""
+
+    west, south, east, north = bounds
+    return [[west, north], [east, north], [east, south], [west, south]]
+
+
+def _write_region_geojson(
+    *,
+    gdf: Any,
+    values: np.ndarray,
+    thresholds: list[dict[str, Any]],
+    output_geojson: Path,
+    label_column: str | None,
+    variable: str,
+    units: str,
+    aggregation: str,
+) -> None:
+    """Persist a map-native regional risk layer beside the preview PNG."""
+
+    ensure_parent(output_geojson)
+    layer_gdf = gdf.copy()
+    if layer_gdf.crs is not None and str(layer_gdf.crs).upper() != "EPSG:4326":
+        layer_gdf = layer_gdf.to_crs("EPSG:4326")
+    risk_values: list[float | None] = []
+    risk_levels: list[str | None] = []
+    risk_colors: list[str | None] = []
+    risk_min: list[float | None] = []
+    risk_max: list[float | None] = []
+    for value in values:
+        scalar = finite_float(value)
+        level = _risk_level(scalar, thresholds)
+        risk_values.append(scalar)
+        risk_levels.append(str(level["label"]) if level else None)
+        risk_colors.append(str(level["color"]) if level else None)
+        risk_min.append(finite_float(level["min"]) if level else None)
+        risk_max.append(finite_float(level["max"]) if level else None)
+    layer_gdf["risk_value"] = risk_values
+    layer_gdf["risk_level"] = risk_levels
+    layer_gdf["risk_color"] = risk_colors
+    layer_gdf["risk_min"] = risk_min
+    layer_gdf["risk_max"] = risk_max
+    layer_gdf["risk_variable"] = variable
+    layer_gdf["risk_units"] = units
+    layer_gdf["risk_aggregation"] = aggregation
+    if label_column and label_column in layer_gdf.columns:
+        layer_gdf["name"] = layer_gdf[label_column].astype(str)
+    _normalize_geojson_properties(layer_gdf)
+    output_geojson.write_text(layer_gdf.to_json(drop_id=True), encoding="utf-8")
+
+
+def _normalize_geojson_properties(gdf: Any) -> None:
+    """Convert GeoDataFrame properties to JSON-native values before to_json."""
+
+    for column in gdf.columns:
+        if column == gdf.geometry.name:
+            continue
+        gdf[column] = gdf[column].map(_json_native_value)
+
+
+def _json_native_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, np.ndarray):
+        return [_json_native_value(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return _json_native_value(value.item())
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    if isinstance(value, list | tuple):
+        return [_json_native_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_native_value(item) for key, item in value.items()}
+    return value
+
+
 def _draw_map(
     *,
     grid: RiskGrid,
@@ -255,6 +353,7 @@ def render_rainfall_risk_map(
     output_png: Path,
     variable: str,
     boundary_path: Path | None = None,
+    output_geojson: Path | None = None,
     thresholds: list[dict[str, Any]] | None = None,
     map_mode: str = "regional",
     aggregation: str = "mean",
@@ -311,12 +410,29 @@ def render_rainfall_risk_map(
                     }
                 )
 
+    if output_geojson is not None:
+        if gdf is None or values is None:
+            raise ValueError("输出区划 GeoJSON 需要边界文件和区划统计结果")
+        _write_region_geojson(
+            gdf=gdf,
+            values=values,
+            thresholds=levels,
+            output_geojson=output_geojson,
+            label_column=label_column,
+            variable=grid.variable,
+            units=grid.units,
+            aggregation=aggregation,
+        )
+
+    bounds = _bounds_from_grid(grid)
     return {
         "variable": grid.variable,
         "units": grid.units,
         "longName": grid.long_name,
         "mapMode": mode,
         "aggregation": aggregation,
+        "bounds": bounds,
+        "coordinates": _coordinates_from_bounds(bounds),
         "thresholds": levels,
         "valueRange": {
             "min": finite_float(np.nanmin(finite)) if finite.size else None,
@@ -324,5 +440,8 @@ def render_rainfall_risk_map(
             "mean": finite_float(np.nanmean(finite)) if finite.size else None,
         },
         "regionSummary": region_summary,
-        "outputs": {"png": output_png.name},
+        "outputs": {
+            "png": output_png.name,
+            **({"geojson": output_geojson.name} if output_geojson is not None else {}),
+        },
     }

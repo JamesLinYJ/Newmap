@@ -7,6 +7,25 @@
   "description": "PostGIS 查询、Turf.js 空间分析、图层创建与地图导出",
   "tools": [
     {
+      "name": "list_layers",
+      "label": "检索平台图层",
+      "description": "按名称、分类、标签或来源检索平台中已经注册的 PostGIS 图层，不会访问外部数据源；行政边界查询不会返回自动生成的分析矩形。",
+      "group": "空间分析",
+      "tags": ["layer", "postgis", "catalog"],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "图层名称、描述或标签关键词，例如“杭州 行政区划”" },
+          "category": { "type": "string", "description": "图层分类过滤" },
+          "sourceType": { "type": "string", "description": "图层来源过滤，例如 system、analysis、upload" },
+          "status": { "type": "string", "description": "图层状态过滤，默认 active" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "返回数量上限" }
+        }
+      }
+    },
+    {
       "name": "query_layer",
       "label": "查询图层",
       "description": "从 PostGIS 图层读取真实要素。",

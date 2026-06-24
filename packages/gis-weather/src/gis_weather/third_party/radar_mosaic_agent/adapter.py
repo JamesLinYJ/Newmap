@@ -70,6 +70,7 @@ def inspect_radar_station_collection(paths: list[Path]) -> dict[str, Any]:
     station_counts = Counter(record.station for record in records)
     time_counts = Counter(record.timestamp for record in records)
     station_records = rm.group_records_by_station(records)
+    product_options = rm.product_options()
 
     candidate_times = []
     for timestamp, count in sorted(time_counts.items()):
@@ -95,7 +96,9 @@ def inspect_radar_station_collection(paths: list[Path]) -> dict[str, Any]:
             for station, count in sorted(station_counts.items())
         ],
         "candidateTimes": candidate_times,
-        "products": ["reflectivity", "velocity", "spectrum_width"],
+        "products": [item["key"] for item in product_options],
+        "productOptions": product_options,
+        "productAliases": dict(getattr(rm, "PRODUCT_ALIASES", {})),
         "strategies": ["max", "weighted", "quality"],
     }
 
@@ -127,6 +130,7 @@ def render_radar_mosaic(
     paths: list[Path],
     output_png: Path,
     output_npz: Path,
+    output_map_png: Path | None = None,
     target_time: str,
     tolerance_sec: int = 300,
     strategy: str = "max",
@@ -141,6 +145,12 @@ def render_radar_mosaic(
     normalized_strategy = strategy.lower().strip()
     if normalized_strategy not in {"max", "weighted", "quality"}:
         raise ValueError(f"不支持的雷达拼图策略: {strategy}")
+    known_products = set(getattr(rm, "PRODUCT_CONFIGS", {}).keys())
+    known_aliases = set(getattr(rm, "PRODUCT_ALIASES", {}).keys())
+    requested_product = product.lower().strip()
+    if requested_product not in known_products and requested_product not in known_aliases:
+        raise ValueError(f"不支持的雷达产品: {product}")
+    normalized_product = rm.normalize_product_key(product)
 
     parsed_target = _parse_target_time(target_time)
     station_records = rm.group_records_by_station(records)
@@ -161,7 +171,7 @@ def render_radar_mosaic(
             "data",
             0.05,
             normalized_strategy,
-            product,
+            normalized_product,
             int(level_index),
         )
         generated_pngs = sorted(tmp_dir.glob("*.png"))
@@ -176,11 +186,18 @@ def render_radar_mosaic(
     if display_key not in payload.files:
         raise RuntimeError(f"雷达拼图 NPZ 缺少结果字段: {payload.files}")
     mosaic = payload[display_key]
+    bounds = _grid_bounds(payload)
+    if output_map_png is not None:
+        _write_map_overlay_png(
+            output_map_png=output_map_png,
+            data=mosaic,
+            product=normalized_product,
+        )
     finite = np.isfinite(mosaic)
     return {
         "targetTime": target_time,
         "strategy": normalized_strategy,
-        "product": product,
+        "product": normalized_product,
         "levelIndex": int(level_index),
         "stationsUsed": sorted({record.station for record in group.records}),
         "sourceFiles": [record.path.name for record in group.records],
@@ -189,11 +206,52 @@ def render_radar_mosaic(
             "min": finite_float(np.nanmin(mosaic[finite])) if np.any(finite) else None,
             "max": finite_float(np.nanmax(mosaic[finite])) if np.any(finite) else None,
         },
+        "bounds": bounds,
+        "coordinates": _coordinates_from_bounds(bounds),
         "outputs": {
             "png": output_png.name,
             "npz": output_npz.name,
+            **({"mapPng": output_map_png.name} if output_map_png is not None else {}),
         },
     }
+
+
+def _grid_bounds(payload: Any) -> list[float]:
+    required = {"grid_lon", "grid_lat"}
+    if not required.issubset(payload.files):
+        raise RuntimeError(f"雷达拼图 NPZ 缺少地图坐标字段: {', '.join(sorted(required - set(payload.files)))}")
+    grid_lon = np.asarray(payload["grid_lon"], dtype=float)
+    grid_lat = np.asarray(payload["grid_lat"], dtype=float)
+    return [
+        float(np.nanmin(grid_lon)),
+        float(np.nanmin(grid_lat)),
+        float(np.nanmax(grid_lon)),
+        float(np.nanmax(grid_lat)),
+    ]
+
+
+def _coordinates_from_bounds(bounds: list[float]) -> list[list[float]]:
+    west, south, east, north = bounds
+    return [[west, north], [east, north], [east, south], [west, south]]
+
+
+def _write_map_overlay_png(*, output_map_png: Path, data: np.ndarray, product: str) -> None:
+    """Write a transparent map-native radar overlay without axes or legends."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    rm = _radar_mosaic_module()
+    config = rm.get_product_config(product)
+    cmap, norm, _levels = rm.get_radar_colormap(config.key)
+    display = np.asarray(data, dtype=np.float32).copy()
+    display[display < float(config.min_display)] = np.nan
+    rgba = cmap(norm(display))
+    rgba[~np.isfinite(display), 3] = 0.0
+    ensure_parent(output_map_png)
+    plt.imsave(output_map_png, np.flipud(rgba))
 
 
 def compare_radar_mosaic_reference(

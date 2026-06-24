@@ -49,6 +49,39 @@ describe('thread transcript projection', () => {
     expect(merged.filter(item => item.body === '运行正常。')).toHaveLength(1)
     expect(merged.at(-1)?.metadata.live).toBe(true)
   })
+
+  // Chat Completions 允许 assistant 在同一消息里同时给出正文和 tool_call；
+  // canonical transcript 会把这段正文投影到工具卡之前，刷新后顺序不变。
+  it('projects assistantContent on tool calls as a normal assistant message before the tool card', () => {
+    const projected = transcriptEntriesToConversationItems([
+      entry(1, 'entry_user_1', 'run_1', 'user', '查一下杭州降雨风险。'),
+      toolEntry(2, 'entry_tool_1', 'run_1', 'call_1', 'list_meteorological_files', '我先查找当前线程里的气象文件。'),
+    ])
+
+    expect(projected.map(item => [item.itemType, item.body ?? item.name])).toEqual([
+      ['message', '查一下杭州降雨风险。'],
+      ['message', '我先查找当前线程里的气象文件。'],
+      ['function_call', 'list_meteorological_files'],
+    ])
+    expect(projected[1].metadata.assistantContentForCallId).toBe('call_1')
+  })
+
+  // Agents SDK 有时在工具 ledger 落盘后才通过 Session 给出完整 assistant 消息；
+  // checkpoint 记录 callId 归属，前端仍按协议顺序展示正文和工具卡。
+  it('projects assistantContent checkpoints before the referenced tool card', () => {
+    const projected = transcriptEntriesToConversationItems([
+      entry(1, 'entry_user_1', 'run_1', 'user', '查一下杭州降雨风险。'),
+      toolEntry(2, 'entry_tool_1', 'run_1', 'call_1', 'list_meteorological_files', ''),
+      assistantContentCheckpoint(3, 'entry_checkpoint_1', 'run_1', 'call_1', '我先查找当前线程里的气象文件。'),
+    ])
+
+    expect(projected.map(item => [item.itemType, item.body ?? item.name])).toEqual([
+      ['message', '查一下杭州降雨风险。'],
+      ['message', '我先查找当前线程里的气象文件。'],
+      ['function_call', 'list_meteorological_files'],
+    ])
+    expect(projected[1].metadata.assistantContentForCallId).toBe('call_1')
+  })
 })
 
 function entry(
@@ -70,5 +103,50 @@ function entry(
     kind: 'message',
     timestamp: new Date(2026, 5, 22, 8, 0, seq).toISOString(),
     payload: { role, content },
+  }
+}
+
+function toolEntry(
+  seq: number,
+  entryId: string,
+  runId: string,
+  callId: string,
+  name: string,
+  assistantContent: string,
+): TranscriptEntry {
+  return {
+    schemaVersion: 1,
+    seq,
+    entryId,
+    parentEntryId: seq > 1 ? `entry_${seq - 1}` : null,
+    logicalParentEntryId: null,
+    threadId: 'thread_1',
+    runId,
+    turnId: `turn_${seq}`,
+    kind: 'tool_call',
+    timestamp: new Date(2026, 5, 22, 8, 0, seq).toISOString(),
+    payload: { callId, name, arguments: {}, assistantContent },
+  }
+}
+
+function assistantContentCheckpoint(
+  seq: number,
+  entryId: string,
+  runId: string,
+  callId: string,
+  content: string,
+): TranscriptEntry {
+  return {
+    schemaVersion: 1,
+    seq,
+    entryId,
+    parentEntryId: seq > 1 ? `entry_${seq - 1}` : null,
+    logicalParentEntryId: null,
+    threadId: 'thread_1',
+    runId,
+    turnId: `turn_${seq}`,
+    kind: 'checkpoint',
+    timestamp: new Date(2026, 5, 22, 8, 0, seq).toISOString(),
+    payload: { type: 'assistant_content_for_tool_call', callId, content },
   }
 }

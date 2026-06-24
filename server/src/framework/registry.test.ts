@@ -77,6 +77,12 @@ describe('ToolRegistry contract', () => {
     await expect(registry.execute('example', {}, context())).rejects.toThrow('真实失败')
   })
 
+  it('rejects unsupported artifact display surfaces at execution boundary', async () => {
+    const registry = new ToolRegistry()
+    registry.register(artifactProvider({ displaySurfaces: ['miniapp'] }))
+    await expect(registry.execute('artifact_example', {}, context())).rejects.toThrow('不支持的展示面')
+  })
+
   it('hard-fails unknown value references', () => {
     expect(() => context().resolveValueRef('missing')).toThrow('未知 valueRef')
   })
@@ -98,6 +104,43 @@ function provider(fails = false): ToolProvider {
         if (fails) throw new Error('真实失败')
         return { message: '成功', payload: {}, warnings: [], resultId: 'result_1', source: 'test' }
       },
+    }],
+  }
+}
+
+function artifactProvider(metadata: Record<string, unknown>): ToolProvider {
+  const definition = {
+    name: 'artifact_example',
+    label: 'Artifact 示例',
+    description: '验证 artifact 展示面契约',
+    group: '测试',
+    tags: [],
+    isReadOnly: true,
+    isDestructive: false,
+    jsonSchema: { type: 'object', properties: {} },
+  }
+  return {
+    manifest: {
+      id: 'artifact-provider', name: 'Artifact 测试', version: '1', author: 'test', language: 'typescript', description: 'Artifact 测试',
+      tools: [definition],
+    },
+    tools: () => [{
+      ...definition,
+      handler: async () => ({
+        message: '成功',
+        payload: {},
+        warnings: [],
+        resultId: 'result_artifact',
+        source: 'test',
+        artifacts: [{
+          artifactId: 'artifact_1',
+          artifactType: 'raster_png',
+          name: '预览图',
+          uri: '/api/v1/results/artifact_1/file',
+          relativePath: 'artifacts/run_1/artifact_1.png',
+          metadata,
+        }],
+      }),
     }],
   }
 }

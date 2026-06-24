@@ -14,7 +14,7 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ToolContext, ValueRef } from '../../../server/src/framework/types.js'
 import { validateToolProvider } from '../../../server/src/framework/validation.js'
 import demoProvider from '../src/index.js'
@@ -31,6 +31,8 @@ describe('demo ToolProvider', () => {
 
   afterEach(() => {
     delete process.env.RUNTIME_ROOT
+    delete process.env.WORKER_URL
+    vi.unstubAllGlobals()
     rmSync(runtimeRoot, { recursive: true, force: true })
   })
 
@@ -73,6 +75,60 @@ describe('demo ToolProvider', () => {
     await expect(reportTool.handler({
       observation_ref: 'missing_ref',
     }, context(refs))).rejects.toThrow('未知 valueRef')
+  })
+
+  it('shows a worker-backed mini-app tool and passes only runtime-relative artifact paths', async () => {
+    process.env.WORKER_URL = 'http://worker.test'
+    const [collectTool, , badgeTool] = demoProvider.tools()
+    const collectResult = await collectTool.handler({
+      station_name: 'City Center',
+      observed_value: 12.5,
+      unit: 'mm',
+    }, context(refs))
+    for (const ref of collectResult.valueRefs ?? []) refs.set(ref.refId, ref)
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit): Promise<Response> => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ payload: { width: 480, height: 160 } }),
+    } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await badgeTool.handler({
+      observation_ref: collectResult.valueRefs?.[0]?.refId,
+      badge_style: 'presentation',
+    }, context(refs))
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+
+    expect(badgeTool.jsonSchema).toMatchObject({
+      'x-mini-app': { type: 'demo_observation_badge_console' },
+    })
+    expect(body.args).toMatchObject({
+      badge_style: 'presentation',
+      output_relative_path: expect.stringMatching(/^artifacts\/run_demo\/demo_observation_badge_/u),
+    })
+    expect(path.isAbsolute(body.args.output_relative_path)).toBe(false)
+    expect(result.artifacts?.[0]).toMatchObject({
+      artifactType: 'raster_png',
+      metadata: {
+        previewRole: 'demo_observation_badge',
+        badgeStyle: 'presentation',
+      },
+    })
+    expect(result.provenance).toMatchObject({
+      providerId: 'demo-observation',
+      toolName: 'demo_render_observation_badge',
+      algorithm: 'demo-worker-backed-v1',
+    })
+  })
+
+  it('hard-fails worker-backed tools when WORKER_URL is missing', async () => {
+    const installContext = {
+      config: {},
+      state: new Map<string, unknown>(),
+      log: () => undefined,
+    }
+
+    await expect(demoProvider.onInstall?.(installContext)).rejects.toThrow('WORKER_URL 未配置')
   })
 })
 

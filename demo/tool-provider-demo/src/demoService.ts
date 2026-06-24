@@ -103,6 +103,31 @@ export async function writeObservationArtifact({
   return { artifact, reportRef }
 }
 
+export function createPngArtifactTarget({
+  runId,
+  name,
+  metadata = {},
+}: {
+  runId: string
+  name: string
+  metadata?: Record<string, unknown>
+}): ToolArtifact {
+  const artifactId = `demo_observation_badge_${runId}_${Date.now()}`
+  const relativePath = path.posix.join('artifacts', runId, `${artifactId}.png`)
+  return {
+    artifactId,
+    artifactType: 'raster_png',
+    name,
+    uri: `artifact://${artifactId}`,
+    relativePath,
+    metadata: {
+      ...metadata,
+      relativePath,
+      previewRole: 'demo_observation_badge',
+    },
+  }
+}
+
 function resolveRuntimePath(runtimeRoot: string, relativePath: string) {
   const normalizedParts = relativePath.split('/').filter(Boolean)
   const target = path.resolve(runtimeRoot, ...normalizedParts)

@@ -24,6 +24,7 @@ import { failure, parseMessage, push, success, type ClientMsg } from './protocol
 import { persistToolExecutionResult, resolveRuntimeValueRef } from '../tools/resultPersistence.js'
 import { assembleThreadContext, compactThreadIfNeeded, rebuildThreadMemory } from '../agent/contextManager.js'
 import { buildSystemPrompt } from '../agent/prompts.js'
+import { ItemSink } from '../conversation/itemSink.js'
 
 interface WsDependencies {
   store: PostgresPlatformStore
@@ -380,14 +381,45 @@ async function executeTool(
   }
   const toolName = requiredString(payload, 'toolName')
   const args = requiredRecord(payload, 'args')
+  const callId = makeId('call')
+  const itemSink = new ItemSink(item => store.appendItem(item), runId, run.threadId)
+  const callItem = itemSink.startItem('function_call', {
+    name: toolName,
+    callId,
+    arguments: JSON.stringify(args),
+  })
   try {
     const result = await registry.execute(toolName, args, context)
     await persistToolExecutionResult(store, runId, toolName, args, result)
+    itemSink.completeItem(callItem.itemId, {
+      callId,
+      name: toolName,
+      output: JSON.stringify(result.payload),
+      metadata: { resultId: result.resultId, source: result.source, artifacts: result.artifacts ?? [] },
+    })
+    const outputItem = itemSink.startItem('function_call_output', {
+      callId,
+      name: toolName,
+      role: 'tool',
+      metadata: { resultId: result.resultId, source: result.source, artifacts: result.artifacts ?? [] },
+    })
+    itemSink.completeItem(outputItem.itemId, {
+      callId,
+      name: toolName,
+      output: JSON.stringify(result.payload),
+      metadata: { resultId: result.resultId, source: result.source, valueRefs: result.valueRefs ?? [], artifacts: result.artifacts ?? [] },
+    })
     if (directRun) await store.completeRun(runId, 'completed')
     return { result, run: store.getRun(runId) }
   } catch (error) {
+    const message = formatError(error)
+    itemSink.completeItem(callItem.itemId, {
+      callId,
+      name: toolName,
+      body: message,
+      isError: true,
+    })
     if (directRun) {
-      const message = formatError(error)
       const current = store.getRun(runId)
       await store.updateRunState(runId, { errors: [...current.state.errors, message], failedTool: toolName })
       await store.completeRun(runId, 'failed')

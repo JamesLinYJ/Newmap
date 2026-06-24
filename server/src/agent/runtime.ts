@@ -21,7 +21,7 @@ import {
 } from '@openai/agents'
 import type { ToolRegistry } from '../framework/registry.js'
 import type { ModelAdapter, ModelAdapterRegistry } from '../model/registry.js'
-import type { AgentRuntimeConfig, AnalysisRun } from '../schemas/types.js'
+import type { AgentRuntimeConfig, AnalysisRun, ToolValueRef } from '../schemas/types.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
 import { ItemSink } from '../conversation/itemSink.js'
 import { makeId, nowUtc } from '../utils/ids.js'
@@ -66,14 +66,15 @@ interface RuntimeAssembly {
   threadId: string
   turnId: string
   subAgentNames: ReadonlySet<string>
+  flushPendingSessionAssistantMessage: () => Promise<void>
 }
 
 interface StreamProjectionState {
   assistantItemId: string | null
   reasoningItemId: string | null
   reasoningText: string
-  assistantText: string
-  completedAssistantItems: Array<{ itemId: string; text: string }>
+  lastAssistantText: string
+  completedAssistantItems: Array<{ itemId: string; text: string; entryId: string | null }>
 }
 
 // OpenAIAgentsRuntime
@@ -116,7 +117,7 @@ export class OpenAIAgentsRuntime {
 
     try {
       if (!options.resume && await shouldRunDeterministicNowcast(this.store, options.query, threadId)) {
-        const valueState = new Map<string, unknown>(run.state.toolValueRefs.map(ref => [ref.refId, ref]))
+        const valueState = this.createThreadValueState(threadId, options.runId)
         const coordinator = new ToolExecutionCoordinator({
           store: this.store,
           registry: this.toolRegistry,
@@ -239,6 +240,26 @@ export class OpenAIAgentsRuntime {
     }
   }
 
+  private createThreadValueState(threadId: string, currentRunId: string): Map<string, unknown> {
+    const refs = this.visibleThreadValueRefs(threadId, currentRunId)
+    return new Map<string, unknown>(refs.map(ref => [ref.refId, ref]))
+  }
+
+  private visibleThreadValueRefs(threadId: string, currentRunId: string): ToolValueRef[] {
+    const currentRun = this.store.getRun(currentRunId)
+    const currentCreatedAt = Date.parse(currentRun.createdAt)
+    const priorRuns = this.store.listRunsForThread(threadId)
+      .filter(run => run.id !== currentRunId && Date.parse(run.createdAt) <= currentCreatedAt)
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+
+    // 连续对话会把上一轮 tool_result 作为可见上下文交给模型；运行时黑板必须恢复
+    // 同一 thread 中已落盘的 valueRef，否则模型可见的 refId 会在执行边界变成未知引用。
+    return [
+      ...priorRuns.flatMap(run => run.state.toolValueRefs),
+      ...currentRun.state.toolValueRefs,
+    ]
+  }
+
   private async assembleRuntime(
     options: RunOptions,
     threadId: string,
@@ -281,8 +302,14 @@ export class OpenAIAgentsRuntime {
       },
     })
 
-    const valueState = new Map<string, unknown>(run.state.toolValueRefs.map(ref => [ref.refId, ref]))
-    const coordinator = new ToolExecutionCoordinator({
+    const valueState = this.createThreadValueState(threadId, options.runId)
+    let coordinator: ToolExecutionCoordinator
+    const context: AgentsExecutionContext = {
+      runId: options.runId,
+      prepareToolCall: (toolName, args, callId) => coordinator.prepare(toolName, args, callId),
+      executeTool: (toolName, args, callId) => coordinator.executeForModel(toolName, args, callId),
+    }
+    coordinator = new ToolExecutionCoordinator({
       store: this.store,
       registry: this.toolRegistry,
       adapter,
@@ -296,11 +323,6 @@ export class OpenAIAgentsRuntime {
       itemSink,
       valueState,
     })
-    const context: AgentsExecutionContext = {
-      runId: options.runId,
-      prepareToolCall: (toolName, args, callId) => coordinator.prepare(toolName, args, callId),
-      executeTool: (toolName, args, callId) => coordinator.executeForModel(toolName, args, callId),
-    }
     const approvalTools = new Set(options.runtimeConfig.supervisor.approvalInterruptTools)
     const supervisorTools = createAgentsTools(this.toolRegistry, approvalTools)
     const previousSubAgents = new Map(this.store.getRun(options.runId).state.subAgents.map(agent => [agent.agentId, agent]))
@@ -387,62 +409,72 @@ export class OpenAIAgentsRuntime {
       toolExecution: { maxFunctionToolConcurrency: 1, preApprovalInputGuardrails: true },
     })
 
-    const projectSessionItem = async (item: AgentInputItem): Promise<void> => {
-      if (isAssistantMessage(item)) {
-        const content = assistantText(item)
-        if (!content) return
-        await this.store.appendTranscript({
-          threadId,
-          runId: options.runId,
-          turnId,
-          kind: 'message',
-          payload: { role: 'assistant', content },
-        })
-        return
-      }
-      if (item.type === 'reasoning' || ('role' in item && item.role === 'user')) return
-      if (item.type === 'function_call') {
-        const exists = (await this.store.activeTranscript(threadId))
-          .some(entry => entry.kind === 'tool_call' && entry.payload.callId === item.callId)
-        if (!exists) throw new Error(`SDK Session 收到未准备的工具调用 '${item.callId}'`)
-        return
-      }
-      if (item.type === 'function_call_result') {
-        const exists = (await this.store.activeTranscript(threadId))
-          .some(entry => entry.kind === 'tool_result' && entry.payload.callId === item.callId)
-        if (exists) return
-        const content = toolResultText(item.output)
-        const isSubAgent = options.runtimeConfig.subAgents.some(config => config.agentId === item.name)
-        await this.store.appendTranscript({
-          threadId,
-          runId: options.runId,
-          turnId,
-          kind: 'tool_result',
-          payload: {
-            callId: item.callId,
-            name: item.name,
-            summary: content,
-            content,
-            contentRef: null,
-            ledgerStatus: isSubAgent ? 'completed' : 'rejected',
-            resultId: null,
-          },
-        })
-        await this.store.conversationStore.saveRun(this.store.getRun(options.runId), {
-          pendingToolCallIds: [],
-          recoveryStatus: 'clean',
-        })
+    let assembly: RuntimeAssembly | null = null
+    let pendingSessionAssistantContent: string | null = null
+    const flushPendingSessionAssistantMessage = async (): Promise<void> => {
+      if (!pendingSessionAssistantContent) return
+      if (!assembly) throw new Error('SDK Session assistant 消息早于运行时装配完成')
+      const content = pendingSessionAssistantContent
+      pendingSessionAssistantContent = null
+      await this.appendAssistantMessageTranscript(assembly, content)
+    }
+    const projectSessionItems = async (items: AgentInputItem[]): Promise<void> => {
+      for (const item of items) {
+        if (isAssistantMessage(item)) {
+          const content = assistantText(item)
+          if (!content) continue
+          await flushPendingSessionAssistantMessage()
+          pendingSessionAssistantContent = content
+          continue
+        }
+        if (item.type === 'reasoning' || ('role' in item && item.role === 'user')) continue
+        if (item.type === 'function_call') {
+          const exists = (await this.store.activeTranscript(threadId))
+            .some(entry => entry.kind === 'tool_call' && entry.payload.callId === item.callId)
+          if (!exists) throw new Error(`SDK Session 收到未准备的工具调用 '${item.callId}'`)
+          if (pendingSessionAssistantContent) {
+            if (!assembly) throw new Error('SDK Session 工具调用早于运行时装配完成')
+            await this.appendAssistantContentCheckpoint(assembly, item.callId, pendingSessionAssistantContent)
+            pendingSessionAssistantContent = null
+          }
+          continue
+        }
+        await flushPendingSessionAssistantMessage()
+        if (item.type === 'function_call_result') {
+          const exists = (await this.store.activeTranscript(threadId))
+            .some(entry => entry.kind === 'tool_result' && entry.payload.callId === item.callId)
+          if (exists) continue
+          const content = toolResultText(item.output)
+          const isSubAgent = options.runtimeConfig.subAgents.some(config => config.agentId === item.name)
+          await this.store.appendTranscript({
+            threadId,
+            runId: options.runId,
+            turnId,
+            kind: 'tool_result',
+            payload: {
+              callId: item.callId,
+              name: item.name,
+              summary: content,
+              content,
+              contentRef: null,
+              ledgerStatus: isSubAgent ? 'completed' : 'rejected',
+              resultId: null,
+            },
+          })
+          await this.store.conversationStore.saveRun(this.store.getRun(options.runId), {
+            pendingToolCallIds: [],
+            recoveryStatus: 'clean',
+          })
+        }
       }
     }
     const history = conversationMessagesToAgentItems(assembled.messages, options.query, systemPrompt)
     const session = new FileAgentsSession(
       `${options.sessionId}:${threadId}`,
       history,
-      async items => {
-        for (const item of items) await projectSessionItem(item)
-      },
+      projectSessionItems,
     )
-    return {
+    assembly = {
       agent,
       runner,
       session,
@@ -454,7 +486,9 @@ export class OpenAIAgentsRuntime {
       threadId,
       turnId,
       subAgentNames: new Set(options.runtimeConfig.subAgents.map(config => config.agentId)),
+      flushPendingSessionAssistantMessage,
     }
+    return assembly
   }
 
   private async executeSdkRun(
@@ -465,6 +499,13 @@ export class OpenAIAgentsRuntime {
     eventSink: RunEventSink,
     itemSink: ItemSink,
   ): Promise<'completed' | 'waiting_approval'> {
+    const projection: StreamProjectionState = {
+      assistantItemId: null,
+      reasoningItemId: null,
+      reasoningText: '',
+      lastAssistantText: '',
+      completedAssistantItems: [],
+    }
     const stream = await assembly.runner.run(
       assembly.agent,
       resumeState ?? options.query,
@@ -477,13 +518,6 @@ export class OpenAIAgentsRuntime {
       },
     )
     await this.persistSdkState(options.runId, stream.state, assembly)
-    const projection: StreamProjectionState = {
-      assistantItemId: null,
-      reasoningItemId: null,
-      reasoningText: '',
-      assistantText: '',
-      completedAssistantItems: [],
-    }
     for await (const event of stream) {
       await this.projectStreamEvent(event, projection, assembly, eventSink, itemSink)
       if (event.type === 'run_item_stream_event' && ['tool_output', 'tool_approval_requested'].includes(event.name)) {
@@ -492,6 +526,7 @@ export class OpenAIAgentsRuntime {
     }
     await stream.completed
     if (stream.error) throw stream.error
+    await assembly.flushPendingSessionAssistantMessage()
     await this.linkAssistantTranscriptEntries(options.runId, assembly, projection, itemSink)
     if (projection.reasoningItemId) {
       itemSink.completeItem(projection.reasoningItemId, { body: projection.reasoningText })
@@ -505,22 +540,18 @@ export class OpenAIAgentsRuntime {
     }
     const finalOutput = typeof stream.finalOutput === 'string' ? stream.finalOutput.trim() : ''
     if (!finalOutput) throw new Error('Agent 未返回可交付文本')
-    if (!projection.assistantText || projection.assistantText !== finalOutput) {
+    if (!projection.lastAssistantText || projection.lastAssistantText !== finalOutput) {
       const synthetic: AgentInputItem = {
         type: 'message', role: 'assistant', status: 'completed',
         content: [{ type: 'output_text', text: finalOutput }],
       }
       const content = assistantText(synthetic)
       if (!content) throw new Error('终止工具未生成可持久化文本')
-      const persisted = await this.store.appendTranscript({
-        threadId: assembly.threadId,
-        runId: options.runId,
-        turnId: assembly.turnId,
-        kind: 'message',
-        payload: { role: 'assistant', content },
-      })
-      itemSink.appendAssistantMessage(finalOutput, {
-        transcriptEntryId: persisted.entryId,
+      const item = itemSink.startItem('message', { role: 'assistant' })
+      const persisted = await this.appendAssistantMessageTranscript(assembly, content, item.itemId)
+      itemSink.completeItem(item.itemId, {
+        body: finalOutput,
+        metadata: { transcriptEntryId: persisted.entryId },
       })
     }
     await this.persistSdkState(options.runId, stream.state, assembly)
@@ -543,7 +574,6 @@ export class OpenAIAgentsRuntime {
         if (!projection.assistantItemId) {
           projection.assistantItemId = itemSink.startItem('message', { role: 'assistant' }).itemId
         }
-        projection.assistantText += event.data.delta
         itemSink.deltaItem(projection.assistantItemId, event.data.delta)
       }
       if (event.data.type === 'model') {
@@ -569,12 +599,12 @@ export class OpenAIAgentsRuntime {
         let itemId: string
         if (projection.assistantItemId) {
           itemId = projection.assistantItemId
-          itemSink.completeItem(itemId, { body: text })
         } else {
-          itemId = itemSink.appendAssistantMessage(text).itemId
+          itemId = itemSink.startItem('message', { role: 'assistant' }).itemId
         }
-        projection.completedAssistantItems.push({ itemId, text })
-        projection.assistantText = text
+        itemSink.completeItem(itemId, { body: text })
+        projection.completedAssistantItems.push({ itemId, text, entryId: null })
+        projection.lastAssistantText = text
         projection.assistantItemId = null
       }
     } else if (event.name === 'reasoning_item_created') {
@@ -617,8 +647,8 @@ export class OpenAIAgentsRuntime {
 
   // linkAssistantTranscriptEntries
   //
-  // SDK Session 是 assistant 语义落盘的唯一入口；流式 item 在 completed 后只回填
-  // canonical entry 身份，数量或顺序不一致时直接报告协议错误。
+  // 流式 item 只负责实时可见状态；完成后根据 canonical transcript 回填
+  // message 或 assistant_content_for_tool_call checkpoint 的身份。
   private async linkAssistantTranscriptEntries(
     runId: string,
     assembly: RuntimeAssembly,
@@ -626,27 +656,101 @@ export class OpenAIAgentsRuntime {
     itemSink: ItemSink,
   ): Promise<void> {
     if (!projection.completedAssistantItems.length) return
+    if (projection.completedAssistantItems.every(item => item.entryId)) return
     const entries = (await this.store.activeTranscript(assembly.threadId)).filter(entry => (
       entry.runId === runId
       && entry.turnId === assembly.turnId
-      && entry.kind === 'message'
+    ))
+    const assistantMessages = entries.filter(entry => (
+      entry.kind === 'message'
       && entry.payload.role === 'assistant'
     ))
-    if (entries.length < projection.completedAssistantItems.length) {
-      throw new Error('SDK Session 未持久化全部 assistant 消息')
-    }
-    const persisted = entries.slice(-projection.completedAssistantItems.length)
-    for (let index = 0; index < projection.completedAssistantItems.length; index += 1) {
-      const projected = projection.completedAssistantItems[index]
-      const entry = persisted[index]
-      if (entry.payload.content !== projected.text) {
-        throw new Error('SDK Session assistant 消息顺序与流事件不一致')
+    const assistantToolContent = entries.filter(isAssistantContentCheckpoint)
+    for (const projected of projection.completedAssistantItems) {
+      const messageIndex = assistantMessages.findIndex(entry => entry.payload.content === projected.text)
+      if (messageIndex >= 0) {
+        const [entry] = assistantMessages.splice(messageIndex, 1)
+        itemSink.completeItem(projected.itemId, {
+          body: projected.text,
+          metadata: { transcriptEntryId: entry.entryId },
+        })
+        projected.entryId = entry.entryId
+        continue
       }
+      const checkpointIndex = assistantToolContent.findIndex(entry => entry.payload.content === projected.text)
+      if (checkpointIndex < 0) throw new Error('SDK Session 未持久化全部 assistant 可见正文')
+      const [entry] = assistantToolContent.splice(checkpointIndex, 1)
       itemSink.completeItem(projected.itemId, {
         body: projected.text,
-        metadata: { transcriptEntryId: entry.entryId },
+        metadata: {
+          transcriptEntryId: entry.entryId,
+          assistantContentForCallId: entry.payload.callId,
+        },
       })
+      projected.entryId = entry.entryId
     }
+  }
+
+  // appendAssistantMessageTranscript
+  //
+  // 独立 assistant 正文直接进入 transcript；若同一 SDK assistant 消息还
+  // 携带 tool_call，则由 appendAssistantContentCheckpoint 绑定到 callId。
+  private async appendAssistantMessageTranscript(
+    assembly: RuntimeAssembly,
+    content: string,
+    itemId?: string | null,
+  ) {
+    return this.store.appendTranscript({
+      threadId: assembly.threadId,
+      runId: assembly.context.runId,
+      turnId: assembly.turnId,
+      kind: 'message',
+      payload: itemId
+        ? { role: 'assistant', content, itemId }
+        : { role: 'assistant', content },
+    })
+  }
+
+  // appendAssistantContentCheckpoint
+  //
+  // Chat Completions 允许同一 assistant 消息同时包含正文和 tool_calls。
+  // transcript 保持工具 ledger append-only，用 checkpoint 按 callId 记录正文归属。
+  private async appendAssistantContentCheckpoint(
+    assembly: RuntimeAssembly,
+    callId: string,
+    content: string,
+  ) {
+    const entries = await this.store.activeTranscript(assembly.threadId)
+    const toolCall = entries.find(entry => entry.kind === 'tool_call' && entry.payload.callId === callId)
+    if (!toolCall) throw new Error(`SDK Session 收到未准备的工具调用 '${callId}'`)
+    const existingContent = typeof toolCall.payload.assistantContent === 'string' && toolCall.payload.assistantContent.trim()
+      ? toolCall.payload.assistantContent.trim()
+      : null
+    if (existingContent && existingContent !== content) {
+      throw new Error(`工具调用 '${callId}' 的 assistant 前导正文不一致`)
+    }
+    const existingCheckpoint = entries.find(entry => (
+      isAssistantContentCheckpoint(entry)
+      && entry.payload.callId === callId
+    ))
+    if (existingCheckpoint) {
+      if (existingCheckpoint.payload.content !== content) {
+        throw new Error(`工具调用 '${callId}' 的 assistant 前导正文 checkpoint 不一致`)
+      }
+      return existingCheckpoint
+    }
+    return this.store.appendTranscript({
+      threadId: assembly.threadId,
+      runId: assembly.context.runId,
+      turnId: assembly.turnId,
+      kind: 'checkpoint',
+      payload: {
+        type: 'assistant_content_for_tool_call',
+        callId,
+        content,
+        source: 'openai_agents_session',
+      },
+    })
   }
 
   private async persistApprovals(
@@ -837,6 +941,16 @@ function assistantText(item: Extract<AgentInputItem, { role: 'assistant' }>): st
     if (part.type === 'refusal') return part.refusal
     return ''
   }).join('').trim()
+}
+
+function isAssistantContentCheckpoint(entry: {
+  kind: string
+  payload: Record<string, unknown>
+}): boolean {
+  return entry.kind === 'checkpoint'
+    && entry.payload.type === 'assistant_content_for_tool_call'
+    && typeof entry.payload.callId === 'string'
+    && typeof entry.payload.content === 'string'
 }
 
 function toolResultText(output: Extract<AgentInputItem, { type: 'function_call_result' }>['output']): string {

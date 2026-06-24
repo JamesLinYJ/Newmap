@@ -11,6 +11,8 @@
 import type { ToolDef, ToolProvider, ToolContext, ToolResult } from './types.js'
 import { validateToolProvider } from './validation.js'
 
+const ARTIFACT_DISPLAY_SURFACES = new Set(['map', 'mini_app', 'download'])
+
 export class ToolRegistry {
   private tools = new Map<string, ToolDef>()
   private providers = new Map<string, ToolProvider>()
@@ -121,8 +123,26 @@ export class ToolRegistry {
       if (!artifact.artifactId || !artifact.artifactType || !artifact.name || !artifact.uri || !artifact.relativePath) {
         throw new Error(`工具 "${name}" 返回了无效 artifact`)
       }
+      validateArtifactDisplaySurfaces(name, artifact.metadata ?? {})
     }
     return result
+  }
+}
+
+// Artifact 展示面属于工具契约，服务端先校验，避免前端用名称或类型猜测业务意图。
+// 未显式声明时由通用 artifact 类型决定；显式声明时只能使用平台支持的展示面。
+function validateArtifactDisplaySurfaces(toolName: string, metadata: Record<string, unknown>): void {
+  if (!('displaySurfaces' in metadata) && !('displaySurface' in metadata)) return
+  const surfaces = Array.isArray(metadata.displaySurfaces)
+    ? metadata.displaySurfaces
+    : typeof metadata.displaySurface === 'string' ? [metadata.displaySurface] : null
+  if (!surfaces?.length) {
+    throw new Error(`工具 "${toolName}" artifact displaySurfaces 必须是非空数组`)
+  }
+  for (const surface of surfaces) {
+    if (typeof surface !== 'string' || !ARTIFACT_DISPLAY_SURFACES.has(surface)) {
+      throw new Error(`工具 "${toolName}" artifact displaySurfaces 包含不支持的展示面 "${String(surface)}"`)
+    }
   }
 }
 

@@ -80,12 +80,17 @@ test.describe('workspace browser acceptance', () => {
     const select = page.locator('#debug-tool-select')
     await select.selectOption('render_radar_mosaic')
     await expect(page.getByRole('heading', { name: '雷达拼图控制台' })).toBeVisible()
+    const radarWorkflow = page.getByLabel('雷达拼图控制台 流程台')
+    await expect(radarWorkflow).toContainText('站点与时次')
+    await expect(radarWorkflow).toContainText('radar_station_collection')
 
     await select.selectOption('render_rainfall_risk_map')
     await expect(page.getByRole('heading', { name: '降雨风险区划图' })).toBeVisible()
+    await expect(page.getByLabel('降雨风险区划图 流程台')).toContainText('阈值调色板')
 
     await select.selectOption('generate_area_rainfall_table')
     await expect(page.getByRole('heading', { name: '面雨量表格' })).toBeVisible()
+    await expect(page.getByLabel('面雨量表格 流程台')).toContainText('Excel 下载件')
     expect(errors).toEqual([])
   })
 })

@@ -35,39 +35,31 @@ demo/tool-provider-demo/
 | --- | --- | --- |
 | `demo_collect_observation` | 接收一个观测点、数值和单位，生成结构化观测引用 | `demo_observation` valueRef |
 | `demo_write_observation_report` | 消费观测引用，生成 JSON 报告 artifact | `json` artifact、`demo_report` valueRef |
+| `demo_render_observation_badge` | 消费观测引用，调用 worker 生成 PNG 预览 | `raster_png` artifact |
 
-第二个工具故意只接收 `observation_ref`，不让模型复制观测值。这是平台工具链的核心规范：工具派生值必须通过 `valueRef` 流转。
+后两个工具故意只接收 `observation_ref`，不让模型复制观测值。这是平台工具链的核心规范：工具派生值必须通过 `valueRef` 流转。
 
 ## Worker-backed 工具示例
 
-需要调用 Python/外部科学计算 worker 时，Provider 仍然负责解析 valueRef、准备 artifact 目标和保存 provenance。worker 只接受 runtime 相对路径：
+需要调用 Python/外部科学计算 worker 时，Provider 仍然负责解析 valueRef、准备 artifact 目标和保存 provenance。worker 只接受 runtime 相对路径。`demo_render_observation_badge` 是一个完整示例：
 
 ```ts
-const artifact = {
-  artifactId: makeId('artifact'),
-  artifactType: 'raster_png',
-  name: '示例栅格图',
-  uri: `/api/v1/results/${artifactId}/file`,
-  relativePath: `artifacts/${ctx.runId}/${artifactId}.png`,
-  metadata: { relativePath: `artifacts/${ctx.runId}/${artifactId}.png` },
-}
-
-const worker = await callWorker('demo_render_grid', {
-  file_relative_path: dataset.relativePath,
+const worker = await callWorker('demo_render_observation_badge', {
+  observation: observationRef.value,
   output_relative_path: artifact.relativePath,
 })
 ```
 
-如果 worker `/health` 缺依赖，Provider `onInstall()` 必须失败，并在 DebugPage 显示不可用原因。
+如果 `WORKER_URL` 未配置、worker `/health` 缺依赖、worker 返回非 2xx 或 payload 结构不合法，Provider 必须失败，并在 DebugPage 显示不可用原因。
 
 ## Mini-App Metadata 示例
 
-小工具页面不要 iframe 原系统，也不要开新端口。把 UI 类型作为 metadata 暴露给前端，运行仍走统一 `tool:run`：
+小工具页面不要 iframe 原系统，也不要开新端口。把 UI 类型作为 schema metadata 暴露给前端，运行仍走统一 `tool:run`：
 
 ```json
 {
   "x-mini-app": {
-    "type": "rainfall_risk_map_console"
+    "type": "demo_observation_badge_console"
   }
 }
 ```
@@ -143,6 +135,7 @@ npm run build:web
 - handler 遇到未知 `valueRef`、坏参数、文件写入失败必须抛错。
 - artifact 必须写入 runtime 根目录内真实文件。
 - provenance 必须说明 provider、工具、输入引用和算法版本。
+- 第三方源码快照应放在工具目录的 `source/original/`，运行包装放在旁路 adapter/service 中。
 - 工具管理页能看到 Provider 元数据和风险标识。
 
 更多规则见 `docs/tool-integration-standard.md`。

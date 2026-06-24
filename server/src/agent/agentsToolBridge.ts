@@ -10,6 +10,7 @@
 
 import { tool, type RunContext, type Tool, type ToolInputParameters } from '@openai/agents'
 import type { ToolRegistry } from '../framework/registry.js'
+import type { ToolDef } from '../framework/types.js'
 
 export interface AgentsExecutionContext {
   runId: string
@@ -36,7 +37,7 @@ export function createAgentsTools(
     const parameters = normalizeObjectSchema(definition.name, definition.jsonSchema)
     return tool<typeof parameters, AgentsExecutionContext>({
       name: definition.name,
-      description: definition.description,
+      description: describeToolForAgent(definition),
       parameters,
       strict: false,
       errorFunction: null,
@@ -64,10 +65,57 @@ function normalizeObjectSchema(toolName: string, schema: Record<string, unknown>
   return {
     ...schema,
     type: 'object',
-    properties: isRecord(schema.properties) ? schema.properties : {},
+    properties: isRecord(schema.properties) ? enrichProperties(schema.properties) : {},
     required: Array.isArray(schema.required) ? schema.required.map(String) : [],
     additionalProperties: true,
   } as NonStrictJsonParameters
+}
+
+// Agent 看到的是 Chat Completions 函数 schema，而不是 DebugPage 的参数面板。
+// 因此 valueRef kind 约束必须写进模型可读描述里，避免把相邻工具产生的 ref 混用。
+function describeToolForAgent(definition: ToolDef): string {
+  const rules = valueRefRules(definition.jsonSchema)
+  if (!rules.length) return definition.description
+  return `${definition.description}\nValueRef 参数规则：${rules.join('；')}。调用前必须确认 refId 的 kind 匹配，不能用其它 kind 的 valueRef 代替。`
+}
+
+function valueRefRules(schema: Record<string, unknown>, prefix = ''): string[] {
+  const properties = isRecord(schema.properties) ? schema.properties : {}
+  const rules: string[] = []
+  for (const [key, raw] of Object.entries(properties)) {
+    if (!isRecord(raw)) continue
+    const path = prefix ? `${prefix}.${key}` : key
+    const kinds = valueRefKinds(raw)
+    if (kinds.length) rules.push(`${path} 只接受 ${kinds.join(' / ')}`)
+    rules.push(...valueRefRules(raw, path))
+  }
+  return rules
+}
+
+function enrichProperties(properties: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(properties).map(([key, value]) => [key, enrichSchema(value)]),
+  )
+}
+
+function enrichSchema(value: unknown): unknown {
+  if (!isRecord(value)) return value
+  const schema: Record<string, unknown> = { ...value }
+  const kinds = valueRefKinds(schema)
+  if (kinds.length) {
+    const base = typeof schema.description === 'string' && schema.description.trim()
+      ? schema.description.trim()
+      : '必须使用当前 run 中已存在的 valueRef ID'
+    schema.description = `${base}；允许的 valueRef kind: ${kinds.join(' / ')}；禁止传入其它 kind 的 valueRef。`
+  }
+  if (isRecord(schema.properties)) schema.properties = enrichProperties(schema.properties)
+  if (isRecord(schema.items)) schema.items = enrichSchema(schema.items)
+  return schema
+}
+
+function valueRefKinds(schema: Record<string, unknown>): string[] {
+  if (!Array.isArray(schema['x-value-ref-kinds'])) return []
+  return schema['x-value-ref-kinds'].map(String).filter(Boolean)
 }
 
 function requireContext(runContext?: RunContext<unknown>): AgentsExecutionContext {

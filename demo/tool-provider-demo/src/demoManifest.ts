@@ -66,6 +66,33 @@ export const writeObservationReportSchema = {
   additionalProperties: false,
 }
 
+export const renderObservationBadgeSchema = {
+  type: 'object',
+  properties: {
+    observation_ref: {
+      type: 'string',
+      title: '观测引用',
+      description: '由 demo_collect_observation 返回的 demo_observation valueRef。',
+      minLength: 1,
+      'x-source': 'value_ref',
+      'x-value-ref-kinds': ['demo_observation'],
+    },
+    badge_style: {
+      type: 'string',
+      title: '徽章样式',
+      description: '传给 worker 的渲染样式。',
+      enum: ['compact', 'presentation'],
+      default: 'compact',
+      'x-source': 'text',
+    },
+  },
+  required: ['observation_ref'],
+  additionalProperties: false,
+  'x-mini-app': {
+    type: 'demo_observation_badge_console',
+  },
+}
+
 export const manifest: ToolManifest = {
   id: 'demo-observation',
   name: '观测 Demo 工具',
@@ -93,6 +120,16 @@ export const manifest: ToolManifest = {
       isReadOnly: true,
       isDestructive: false,
       jsonSchema: writeObservationReportSchema,
+    },
+    {
+      name: 'demo_render_observation_badge',
+      label: '渲染 Demo 观测徽章',
+      description: '消费观测 valueRef，调用 worker 生成 PNG 预览 artifact。',
+      group: 'demo',
+      tags: ['demo', 'worker', 'mini-app'],
+      isReadOnly: true,
+      isDestructive: false,
+      jsonSchema: renderObservationBadgeSchema,
     },
   ],
 }

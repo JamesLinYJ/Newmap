@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>短临降雨预报风险等级区划图</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: "Microsoft YaHei", "SimHei", sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; }
+header { background: linear-gradient(135deg, #1a5276, #2980b9); color: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+header h1 { font-size: 20px; font-weight: 700; }
+header .badge { background: #e74c3c; padding: 3px 10px; border-radius: 12px; font-size: 11px; }
+.main { display: flex; gap: 18px; padding: 16px; max-width: 1650px; margin: 0 auto; height: calc(100vh - 128px); }
+.panel { width: 380px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.card { background: #fff; border-radius: 8px; padding: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+.card h3 { font-size: 14px; margin-bottom: 10px; color: #1a5276; border-bottom: 2px solid #2980b9; padding-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
+.dropzone { border: 2px dashed #ccc; border-radius: 8px; padding: 18px 12px; text-align: center; cursor: pointer; transition: .2s; background: #fafafa; }
+.dropzone:hover, .dropzone.dragover { border-color: #2980b9; background: #eaf2f8; }
+.dropzone .icon { font-size: 28px; margin-bottom: 4px; }
+.dropzone .hint { font-size: 11px; color: #888; }
+.dropzone.ready { border-color: #27ae60; background: #eafaf1; }
+.dropzone.ready .icon { color: #27ae60; }
+.dropzone.small { padding: 10px; }
+.dropzone.small .icon { font-size: 20px; }
+.file-info { font-size: 11px; color: #666; margin-top: 6px; word-break: break-all; }
+.toggle-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.toggle-btn { flex: 1; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: center; background: #f5f5f5; transition: .2s; }
+.toggle-btn.active { background: #2980b9; color: #fff; border-color: #2980b9; }
+.custom-area { display: none; }
+.custom-area.show { display: block; }
+.param-row { display: flex; align-items: center; margin-bottom: 10px; gap: 8px; }
+.param-row label { width: 70px; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.param-row select, .param-row input { flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 12px; }
+.param-row input[type=range] { padding: 0; }
+.btn { display: block; width: 100%; padding: 10px; border: none; border-radius: 7px; font-size: 14px; font-weight: 700; cursor: pointer; transition: .2s; color: #fff; background: #2980b9; }
+.btn:hover:not(:disabled) { background: #1a5276; }
+.btn:disabled { background: #bbb; cursor: not-allowed; }
+.btn-sm { width: auto; padding: 5px 12px; font-size: 11px; }
+.threshold-table { width: 100%; font-size: 11px; border-collapse: collapse; }
+.threshold-table th { background: #f5f5f5; padding: 4px; text-align: left; font-weight: 600; }
+.threshold-table td { padding: 4px 3px; }
+.threshold-table input { width: 100%; padding: 3px; border: 1px solid #ddd; border-radius: 3px; font-size: 11px; }
+.threshold-table input[type=color] { width: 28px; height: 20px; padding: 0; cursor: pointer; }
+.content { flex: 1; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+.content .card { display: flex; flex-direction: column; }
+.map-container { text-align: center; background: #f8f8f8; border-radius: 6px; min-height: 300px; display: flex; align-items: center; justify-content: center; overflow: auto; }
+.map-container img { max-width: 100%; max-height: 62vh; border-radius: 4px; }
+.map-container .placeholder { color: #aaa; font-size: 14px; }
+.chart-container { padding: 8px 16px; }
+.bar-row { display: flex; align-items: center; margin: 6px 0; gap: 8px; }
+.bar-label { width: 155px; font-size: 12px; font-weight: 700; text-align: right; flex-shrink: 0; }
+.bar-track { flex: 1; height: 26px; background: #f0f0f0; border-radius: 3px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; }
+.bar-fill span { font-size: 12px; font-weight: 700; color: #333; }
+.bar-max { width: 48px; font-size: 11px; font-weight: 600; color: #666; flex-shrink: 0; }
+.legend-strip { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 4px 8px; background: #f8f8f8; border-radius: 5px; border: 1px solid #e0e0e0; }
+.legend-dot { width: 12px; height: 12px; border-radius: 2px; border: 1px solid #888; flex-shrink: 0; }
+.legend-count { color: #666; font-weight: 400; }
+#loading { display: none; text-align: center; padding: 16px; color: #666; }
+.status-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.status-tag.default { background: #e8f4fd; color: #2980b9; }
+.status-tag.custom { background: #fef3e2; color: #e67e22; }
+@media (max-width: 1000px) { .main { flex-direction: column; height: auto; } .panel { width: 100%; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>短临降雨预报 — 风险等级区划图</h1>
+  <span class="badge">Beta</span>
+  <span id="regionTag" style="margin-left:auto;font-size:12px;opacity:0.8;">默认区域: 浙江省</span>
+</header>
+<div class="main">
+<div class="panel">
+
+<div class="card">
+  <h3>NC 数据上传</h3>
+  <div class="dropzone" id="dropzone">
+    <div class="icon" id="uploadIcon">&#128194;</div>
+    <div style="font-weight:600;">拖拽 NC 文件到此处</div>
+    <div class="hint">或点击选择文件 (.nc)</div>
+  </div>
+  <input type="file" id="fileInput" accept=".nc" style="display:none;">
+  <div class="file-info" id="fileInfo"></div>
+</div>
+
+<div class="card">
+  <h3>研究区域 <span class="status-tag default" id="regionStatus">省级默认</span></h3>
+  <div class="toggle-row">
+    <button class="toggle-btn active" id="btnDefault" onclick="switchRegion('default')">默认 (浙江省)</button>
+    <button class="toggle-btn" id="btnCustom" onclick="switchRegion('custom')">自定义区域</button>
+  </div>
+  <div class="custom-area" id="customArea">
+    <div class="dropzone small" id="shpDropzone">
+      <div class="icon" id="shpIcon">&#128206;</div>
+      <div style="font-weight:600;font-size:12px;">上传 Shapefile (.zip 或 .shp+.shx+.dbf)</div>
+      <div class="hint">支持 zip 压缩包或单独文件</div>
+    </div>
+    <input type="file" id="shpZipInput" accept=".zip" style="display:none;">
+    <input type="file" id="shpMultiInput" accept=".shp,.shx,.dbf,.prj" multiple style="display:none;">
+    <div class="file-info" id="shpFileInfo"></div>
+    <div class="param-row" style="margin-top:8px;"><label>图层</label><select id="layerSelect"><option value="">自动</option></select></div>
+    <div class="param-row"><label>标签字段</label><select id="labelField"><option value="FNAME">自动检测</option></select></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>绘图参数</h3>
+  <div class="param-row"><label>变量</label><select id="variable"><option value="">请先上传 NC 文件</option></select></div>
+  <div class="param-row"><label>聚合方式</label><select id="aggregation"><option value="mean">均值</option><option value="max">最大值</option><option value="sum">累计值</option></select></div>
+  <div class="param-row"><label>展示模式</label><select id="mapMode"><option value="regional">分类区划图</option><option value="gradient">渐变分布图</option><option value="compare">对比图 (区划+分布)</option></select></div>
+  <div class="param-row"><label>标题</label><input type="text" id="title" placeholder="自定义标题 (可选)"></div>
+  <div class="param-row"><label>边界线宽</label><input type="range" id="boundaryWidth" min="0.1" max="2" step="0.1" value="0.4"><span id="bwVal" style="font-size:11px;width:28px;">0.4</span></div>
+  <div class="param-row"><label>字号</label><input type="range" id="fontSize" min="6" max="16" step="1" value="10"><span id="fsVal" style="font-size:11px;width:28px;">10</span></div>
+  <div class="param-row"><label></label><label style="width:auto;font-weight:400;cursor:pointer;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="filterSmall" checked style="width:auto;">过滤小面积区域标签</label></div>
+  <button class="btn" id="btnAnalyze" disabled>开始分析</button>
+</div>
+
+<div class="card">
+  <h3>调色板
+    <select id="paletteMode" style="font-size:11px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;margin-right:8px;">
+      <option value="risk">风险等级 (区划图)</option>
+      <option value="contour">渐变等值面 (分布图)</option>
+    </select>
+    <button class="btn btn-sm" id="btnResetPalette">恢复默认</button>
+  </h3>
+  <div id="paletteRisk"><table class="threshold-table" id="thresholdTable"></table></div>
+  <div id="paletteContour" style="display:none;">
+    <table class="threshold-table" id="contourColorTable">
+      <tr><th>层级 (mm)</th><th>颜色</th></tr>
+      <tr><td colspan="2" style="color:#999;font-size:11px;">生成渐变图或对比图后自动填充</td></tr>
+    </table>
+  </div>
+</div>
+
+</div>
+
+<div class="content">
+<div class="card">
+  <h3>区划图<button class="btn btn-sm" id="btnExport" style="display:none;" onclick="exportImage()">导出图片</button></h3>
+  <div class="map-container" id="mapContainer"><div class="placeholder">请上传 NC 文件并点击「开始分析」</div></div>
+  <div id="loading">正在分析中...</div>
+</div>
+<div class="card">
+  <h3>各风险等级统计</h3>
+  <div class="chart-container" id="chartContainer"></div>
+  <div class="legend-strip" id="legendStrip"></div>
+</div>
+</div>
+</div>
+
+<script>
+let sessionId = null, shpSid = "", currentRegion = "default";
+
+const defaultLevels = [
+  { name: "无雨/小雨", lo: 0, hi: 1.5, color: "#f0f0f0" },
+  { name: "短时大雨", lo: 1.5, hi: 3.0, color: "#a6d96a" },
+  { name: "短时暴雨", lo: 3.0, hi: 5.0, color: "#1a9850" },
+  { name: "短时大暴雨", lo: 5.0, hi: 8.0, color: "#fdae61" },
+  { name: "短时大暴雨~特大暴雨", lo: 8.0, hi: 12.0, color: "#d73027" },
+  { name: "短时特大暴雨", lo: 12.0, hi: 999, color: "#7a0177" },
+];
+
+const $ = id => document.getElementById(id);
+const dropzone = $("dropzone"), fileInput = $("fileInput"), fileInfo = $("fileInfo"),
+      uploadIcon = $("uploadIcon"), btnAnalyze = $("btnAnalyze"), selVar = $("variable"),
+      selAgg = $("aggregation"), inpTitle = $("title"), inpBW = $("boundaryWidth"),
+      inpFS = $("fontSize"), mapContainer = $("mapContainer"), loading = $("loading"),
+      legendStrip = $("legendStrip"), thresholdTable = $("thresholdTable"),
+      customArea = $("customArea"), shpDropzone = $("shpDropzone"),
+      shpZipInput = $("shpZipInput"), shpMultiInput = $("shpMultiInput"),
+      shpFileInfo = $("shpFileInfo"), shpIcon = $("shpIcon"),
+      selLabel = $("labelField"), regionStatus = $("regionStatus"), regionTag = $("regionTag");
+
+function switchRegion(mode) {
+  currentRegion = mode;
+  $("btnDefault").classList.toggle("active", mode === "default");
+  $("btnCustom").classList.toggle("active", mode === "custom");
+  customArea.classList.toggle("show", mode === "custom");
+  if (mode === "default") { shpSid = ""; regionStatus.textContent = "省级默认"; regionStatus.className = "status-tag default"; regionTag.textContent = "默认区域: 浙江省"; }
+}
+
+// NC upload
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.classList.add("dragover"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+dropzone.addEventListener("drop", e => { e.preventDefault(); dropzone.classList.remove("dragover"); if (e.dataTransfer.files.length) handleNCFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener("change", () => { if (fileInput.files.length) handleNCFile(fileInput.files[0]); });
+
+async function handleNCFile(file) {
+  if (!file.name.endsWith(".nc")) { alert("请上传 .nc 格式文件"); return; }
+  fileInfo.textContent = `已选择: ${file.name} (${(file.size/1e6).toFixed(1)} MB)`;
+  dropzone.classList.add("ready"); uploadIcon.innerHTML = "&#9989;";
+  const fd = new FormData(); fd.append("file", file);
+  try {
+    const r = await fetch("/api/variables", { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    sessionId = d.session_id;
+    selVar.innerHTML = "";
+    d.variables.forEach(v => { const o = document.createElement("option"); o.value = v.name; o.textContent = v.name + " (" + v.units + ")"; if (v.name === "QPF") o.selected = true; selVar.appendChild(o); });
+    btnAnalyze.disabled = false;
+  } catch (err) { alert("上传失败: " + err.message); }
+}
+
+// Shapefile upload
+shpDropzone.addEventListener("click", () => { if (confirm("确定上传 .zip / 取消选择单独文件")) shpZipInput.click(); else shpMultiInput.click(); });
+shpDropzone.addEventListener("dragover", e => { e.preventDefault(); shpDropzone.classList.add("dragover"); });
+shpDropzone.addEventListener("dragleave", () => shpDropzone.classList.remove("dragover"));
+shpDropzone.addEventListener("drop", e => { e.preventDefault(); shpDropzone.classList.remove("dragover"); if (e.dataTransfer.files.length) uploadShapefile(Array.from(e.dataTransfer.files)); });
+shpZipInput.addEventListener("change", () => { if (shpZipInput.files.length) uploadShapefile([shpZipInput.files[0]]); });
+shpMultiInput.addEventListener("change", () => { if (shpMultiInput.files.length) uploadShapefile(Array.from(shpMultiInput.files)); });
+
+async function uploadShapefile(files) {
+  const fd = new FormData(); fd.append("session_id", sessionId || "");
+  if (files.length === 1 && files[0].name.endsWith(".zip")) { fd.append("zipfile", files[0]); }
+  else { for (const f of files) { const ext = f.name.split(".").pop().toLowerCase(); if (ext === "shp") fd.append("shp", f); else if (ext === "shx") fd.append("shx", f); else if (ext === "dbf") fd.append("dbf", f); else if (ext === "prj") fd.append("prj", f); } }
+  shpFileInfo.textContent = "上传中...";
+  try {
+    const r = await fetch("/api/upload_shapefile", { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    shpSid = d.shp_sid; updateLayerUI(d);
+    const ls = $("layerSelect"); ls.innerHTML = "";
+    if (d.layers && d.layers.length > 1) {
+      d.layers.forEach(l => { const o = document.createElement("option"); o.value = l.path; o.textContent = l.file + " (" + (l.feature_count||"?") + " 要素)"; if (l.file === d.active_layer) o.selected = true; ls.appendChild(o); });
+      ls.onchange = async () => { const lfd = new FormData(); lfd.append("shp_sid", shpSid); lfd.append("layer_path", ls.value); const lr = await fetch("/api/select_layer", { method: "POST", body: lfd }); const ld = await lr.json(); if (!ld.error) updateLayerUI(ld); };
+    } else { const o = document.createElement("option"); o.value = ""; o.textContent = "默认"; ls.appendChild(o); }
+  } catch (err) { alert("上传失败: " + err.message); }
+}
+
+function updateLayerUI(d) {
+  shpFileInfo.textContent = "已加载: " + d.feature_count + " 个要素";
+  shpDropzone.classList.add("ready"); shpIcon.innerHTML = "&#9989;";
+  regionStatus.textContent = "自定义"; regionStatus.className = "status-tag custom";
+  regionTag.textContent = "自定义区域 (" + d.feature_count + " 个要素)";
+  selLabel.innerHTML = "";
+  (d.fields||[]).forEach(f => { const o = document.createElement("option"); o.value = f.name; o.textContent = f.name + " [" + (f.dtype||"") + "] - " + (f.sample||""); selLabel.appendChild(o); });
+}
+
+// Threshold table
+function renderThresholdTable(levels) {
+  thresholdTable.innerHTML = "<tr><th>等级</th><th>下限</th><th>上限</th><th>颜色</th></tr>" + levels.map((l,i) => "<tr><td><input type='text' data-idx='"+i+"' data-field='name' value='"+l.name+"'></td><td><input type='number' data-idx='"+i+"' data-field='lo' value='"+l.lo+"' step='0.1'></td><td><input type='number' data-idx='"+i+"' data-field='hi' value='"+l.hi+"' step='0.1'></td><td><input type='color' data-idx='"+i+"' data-field='color' value='"+l.color+"'></td></tr>").join("");
+}
+renderThresholdTable(defaultLevels);
+
+function readThresholds() {
+  const rows = thresholdTable.querySelectorAll("tr"), result = [];
+  for (let i = 1; i < rows.length; i++) { const inputs = rows[i].querySelectorAll("input"); if (inputs.length >= 4) result.push({ name: inputs[0].value, lo: parseFloat(inputs[1].value), hi: parseFloat(inputs[2].value), color: inputs[3].value }); }
+  return result;
+}
+
+inpBW.addEventListener("input", () => $("bwVal").textContent = inpBW.value);
+inpFS.addEventListener("input", () => $("fsVal").textContent = inpFS.value);
+
+// ===== 统一调色板 =====
+$("paletteMode").addEventListener("change", function() {
+  var m = this.value;
+  $("paletteRisk").style.display = (m === "risk") ? "" : "none";
+  $("paletteContour").style.display = (m === "contour") ? "" : "none";
+});
+
+$("btnResetPalette").addEventListener("click", function() {
+  if ($("paletteMode").value === "contour") {
+    $("contourColorTable").innerHTML = "<tr><th>层级 (mm)</th><th>颜色</th></tr><tr><td colspan='2' style='color:#999;font-size:11px;'>生成渐变图或对比图后自动填充</td></tr>";
+  } else {
+    renderThresholdTable(defaultLevels);
+  }
+});
+
+function populateContourColors(levels, colors) {
+  var h = "<tr><th>层级 (mm)</th><th>颜色</th></tr>";
+  for (var i = 0; i < levels.length - 1; i++) {
+    h += "<tr><td>" + levels[i].toFixed(1) + " ~ " + levels[i+1].toFixed(1) + "</td>";
+    h += "<td><input type='color' value='" + (colors[i]||"#ffffff") + "'></td></tr>";
+  }
+  $("contourColorTable").innerHTML = h;
+  $("paletteMode").value = "contour";
+  $("paletteRisk").style.display = "none";
+  $("paletteContour").style.display = "";
+}
+
+// ===== 分析 =====
+btnAnalyze.addEventListener("click", runAnalysis);
+
+async function runAnalysis() {
+  if (!sessionId) { alert("请先上传 NC 文件"); return; }
+  loading.style.display = "block"; btnAnalyze.disabled = true;
+  const fd = new FormData();
+  fd.append("session_id", sessionId);
+  fd.append("variable", selVar.value);
+  fd.append("aggregation", selAgg.value);
+  fd.append("boundary_width", inpBW.value);
+  fd.append("font_size", inpFS.value);
+  fd.append("title", inpTitle.value);
+  fd.append("filter_small", $("filterSmall").checked ? "1" : "0");
+  fd.append("map_mode", $("mapMode").value);
+  fd.append("thresholds", JSON.stringify(readThresholds()));
+  if (shpSid) {
+    fd.append("shp_sid", shpSid);
+    fd.append("label_field", selLabel.value);
+  }
+  var ccInputs = $("contourColorTable").querySelectorAll("input[type=color]");
+  if (ccInputs.length > 1) { var colors = []; ccInputs.forEach(function(inp) { colors.push(inp.value); }); fd.append("contour_colors", JSON.stringify(colors)); }
+  try {
+    const r = await fetch("/api/analyze", { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    mapContainer.innerHTML = "<img src='" + d.image_url + "?t=" + Date.now() + "' alt='区划图'>";
+    $("btnExport").style.display = "";
+    if (d.contour_levels && d.contour_colors) { populateContourColors(d.contour_levels, d.contour_colors); }
+    renderChart(d.stats, d.total, d.nodata);
+    renderLegendStrip(d.stats, d.nodata);
+    loading.style.display = "none"; btnAnalyze.disabled = false;
+  } catch (err) { alert("分析失败: " + err.message); loading.style.display = "none"; btnAnalyze.disabled = false; }
+}
+
+// ===== 统计图 =====
+function renderChart(stats, total, nodata) {
+  const c = $("chartContainer"), mx = Math.max(...stats.map(s => s.count), 1);
+  var h = "";
+  stats.forEach(s => { const p = s.count > 0 ? Math.max((s.count/mx)*100, 4) : 0; h += "<div class='bar-row'><div class='bar-label'>"+s.name+"</div><div class='bar-track'><div class='bar-fill' style='width:"+p+"%;background:"+s.color+";border:1px solid #999;'>"+(s.count>0?"<span>"+s.count+" 个</span>":"")+"</div></div><div class='bar-max'>"+(s.count>0?"":"0")+"</div></div>"; });
+  if (nodata > 0) h += "<div class='bar-row' style='margin-top:10px;'><div class='bar-label' style='color:#999;'>无数据</div><div class='bar-track'><div class='bar-fill' style='width:"+Math.max((nodata/mx)*100,4)+"%;background:#e0e0e0;border:1px solid #aaa;'><span>"+nodata+" 个</span></div></div><div class='bar-max'></div></div>";
+  c.innerHTML = h;
+}
+
+function renderLegendStrip(stats, nodata) {
+  var h = stats.filter(s => s.count > 0).map(s => "<div class='legend-item'><span class='legend-dot' style='background:"+s.color+";'></span>"+s.name+" <span class='legend-count'>"+s.count+" 个</span></div>").join("");
+  if (nodata > 0) h += "<div class='legend-item'><span class='legend-dot' style='background:#e0e0e0;'></span>无数据 <span class='legend-count'>"+nodata+" 个</span></div>";
+  legendStrip.innerHTML = h;
+}
+
+function exportImage() {
+  var img = document.querySelector("#mapContainer img");
+  if (!img) { alert("请先生成图片"); return; }
+  var a = document.createElement("a"); a.href = img.src; a.download = "output_" + Date.now() + ".png";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+</script>
+</body>
+</html>

@@ -20,8 +20,15 @@ const NETCDF_SUFFIXES = ['.nc', '.nc4']
 const RADAR_SUFFIXES = ['.bz2']
 const BOUNDARY_SUFFIXES = ['.zip', '.shp', '.geojson', '.json']
 const WEATHER_SUFFIXES = [...DATASET_SUFFIXES, ...RADAR_SUFFIXES, ...BOUNDARY_SUFFIXES]
+const RADAR_PRODUCTS = ['reflectivity', 'velocity', 'spectrum_width', 'zdr', 'cc', 'dp', 'kdp', 'snrh', 'echo_top']
 const HANGZHOU_DISTRICTS = ['上城区', '拱墅区', '西湖区', '滨江区', '萧山区', '余杭区', '富阳区', '临安区', '钱塘区', '临平区', '桐庐县', '淳安县', '建德市']
-const HANGZHOU_BOUNDARY_URL = 'https://geo.datav.aliyun.com/areas_v3/bound/330100_full.json'
+const BOUNDARY_REF_KINDS = ['meteorological_file', 'feature_collection', 'nowcast_area', 'layer']
+const THIRD_PARTY_SOURCE_SNAPSHOTS = {
+  radar_mosaic_agent: 'packages/gis-weather/src/gis_weather/third_party/radar_mosaic_agent/source/original',
+  rainfall_risk_map: 'packages/gis-weather/src/gis_weather/third_party/rainfall_risk_map/source/original',
+  short_term_forecast: 'packages/gis-weather/src/gis_weather/third_party/short_term_forecast/source/original',
+} as const
+const THIRD_PARTY_WRAPPER_VERSION = 'newmap-wrapper-2026-06-23'
 
 export const weatherTools: ToolDef[] = [
   tool('list_meteorological_files', '列出气象文件', '列出当前线程可用的通用气象文件', {}, listMeteorologicalFiles),
@@ -36,15 +43,20 @@ export const weatherTools: ToolDef[] = [
     radar_collection_ref: refParameter('雷达文件集合引用', ['radar_station_collection']),
     target_time_ref: refParameter('目标时次引用', ['radar_target_time']),
     strategy_ref: refParameter('拼图策略引用', ['radar_mosaic_strategy']),
-    product: selectParameter('雷达产品', ['reflectivity', 'velocity', 'spectrum_width']),
+    product: selectParameter('雷达产品', RADAR_PRODUCTS),
     level_index: numberParameter('层级索引'),
     tolerance_sec: numberParameter('时间容差秒'),
+    grid_res_km: numberParameter('网格分辨率 km'),
+    min_dbz: numberParameter('最小显示 dBZ'),
   }, renderRadarMosaic, ['radar_collection_ref', 'target_time_ref', 'strategy_ref']),
   tool('compare_radar_mosaic_reference', '对比雷达拼图与 NC 参考', '生成拼图结果与参考 NC 的差异对比图和滑块素材', {
     radar_mosaic_result_ref: refParameter('雷达拼图结果引用', ['radar_mosaic_result']),
     dataset_ref: refParameter('NC 参考数据引用', ['meteorological_dataset', 'meteorological_file']),
     target_time_ref: refParameter('目标时次引用', ['radar_target_time']),
     level_index: numberParameter('层级索引'),
+    product_label: textParameter('产品标签'),
+    product_unit: textParameter('产品单位'),
+    min_display: numberParameter('最小对比显示值'),
   }, compareRadarMosaicReference, ['radar_mosaic_result_ref', 'dataset_ref', 'target_time_ref']),
   tool('inspect_meteorological_dataset', '检查气象数据集', '检查变量、维度、时间、层级和地图能力', {
     dataset_ref: refParameter('气象文件引用', ['meteorological_file']),
@@ -88,34 +100,36 @@ export const weatherTools: ToolDef[] = [
     interpretation_ref: refParameter('模型解读引用'),
   }, generateReport, ['dataset_ref', 'interpretation_ref']),
   tool('define_rainfall_risk_thresholds', '定义降雨风险阈值', '保存降雨风险区划图使用的阈值和调色板', {
-    thresholds: jsonParameter('阈值调色板 JSON', { type: 'array', items: { type: 'object' } }),
+    thresholds: jsonParameter('阈值调色板 JSON', rainfallThresholdsSchema(), defaultRainfallThresholds()),
   }, defineRainfallRiskThresholds),
-  tool('render_rainfall_risk_map', '生成降雨风险区划图', '使用 NC、变量、边界和阈值生成风险/渐变/对比图', {
+  tool('render_rainfall_risk_map', '生成降雨风险区划图', '使用单个 NC 数据集、变量、边界和阈值生成风险/渐变/对比图；dataset_ref 必须来自 inspect_meteorological_dataset 的 meteorological_dataset，不接受 nowcast_sequence', {
     dataset_ref: refParameter('数据集引用', ['meteorological_dataset']),
     variable_ref: refParameter('变量引用', ['meteorological_variable']),
-    boundary_ref: refParameter('边界引用', ['meteorological_file', 'feature_collection', 'nowcast_area']),
+    boundary_ref: refParameter('边界引用', BOUNDARY_REF_KINDS),
     thresholds_ref: refParameter('阈值引用', ['rainfall_risk_thresholds']),
     map_mode: selectParameter('图件模式', ['regional', 'gradient', 'compare']),
     aggregation: selectParameter('区划聚合', ['mean', 'max', 'sum']),
     label_field: textParameter('区划名称字段'),
     title: textParameter('图名'),
   }, renderRainfallRiskMap, ['dataset_ref', 'variable_ref', 'boundary_ref', 'thresholds_ref']),
-  tool('generate_area_rainfall_table', '生成面雨量表格', '生成短临面雨量排行 Excel 和 PNG 表格', {
+  tool('generate_area_rainfall_table', '生成面雨量表格', '使用 NC 文件集合或短临序列生成区县面雨量排行 Excel 和 PNG 表格；多文件输入表示时段累加面雨量，不是单时次均值', {
     file_collection_ref: refParameter('NC 文件集合或短临序列引用', ['meteorological_file_collection', 'nowcast_sequence']),
-    boundary_ref: refParameter('边界文件引用', ['meteorological_file', 'feature_collection', 'nowcast_area']),
+    boundary_ref: refParameter('边界文件引用', BOUNDARY_REF_KINDS),
     top_n: numberParameter('展示前 N 个区域'),
     label_field: textParameter('区划名称字段'),
-    style: jsonParameter('表格样式 JSON', { type: 'object' }),
+    style: jsonParameter('表格样式 JSON', areaRainfallStyleSchema(), defaultAreaRainfallStyle()),
   }, generateAreaRainfallTable, ['file_collection_ref', 'boundary_ref']),
-  tool('create_nowcast_sequence', '创建短临序列', '从当前线程气象文件集合创建短临序列引用', {
+  tool('create_nowcast_sequence', '创建短临序列', '从当前线程气象文件集合创建短临序列引用；仅用于短临问答、连续时次分析和面雨量表格，不作为风险区划图 dataset_ref', {
     file_collection_ref: refParameter('文件集合引用'),
     variable_ref: refParameter('变量引用'),
   }, createNowcastSequence, ['file_collection_ref']),
   tool('inspect_nowcast_sequence', '检查短临序列', '检查短临序列每个时次的数据集', {
     sequence_ref: refParameter('短临序列引用'),
   }, inspectNowcastSequence, ['sequence_ref']),
-  tool('prepare_hangzhou_nowcast_scope', '准备杭州短临范围', '根据问题准备杭州区县边界或地点坐标引用', {
+  tool('prepare_hangzhou_nowcast_scope', '准备杭州短临范围', '根据问题和已有边界/坐标引用准备杭州区划或地点范围', {
     question: textParameter('短临问题'),
+    scope_ref: refParameter('已有杭州边界或地点引用', ['feature_collection', 'nowcast_area', 'layer', 'nowcast_coordinate', 'place_candidate']),
+    district_name_field: textParameter('区划名称字段'),
   }, prepareHangzhouNowcastScope, ['question']),
   tool('analyze_nowcast_precipitation', '分析短临降水', '按时次和杭州区划或地点范围计算降水统计事实', {
     sequence_ref: refParameter('短临序列引用'),
@@ -176,6 +190,7 @@ function workerDatasetTool(
     const file = datasetValue(ctx, requiredRefKind(ctx, args, 'dataset_ref', ['meteorological_dataset']))
     const workerArgs: Record<string, unknown> = {
       file_relative_path: file.relativePath,
+      file_name: file.name,
       variable: optionalRefValue(ctx, args, 'variable_ref', 'name'),
       time_index: optionalRefValue(ctx, args, 'time_index_ref'),
       level_index: optionalRefValue(ctx, args, 'level_index_ref'),
@@ -191,7 +206,11 @@ function workerDatasetTool(
     }
     const worker = await callWorker(name, workerArgs)
     if (artifactType === 'png' && artifact) {
-      mergeArtifactMetadata(artifact, worker.payload)
+      mergeArtifactMetadata(artifact, {
+        ...worker.payload,
+        displaySurfaces: ['map', 'download'],
+        primarySurface: 'map',
+      })
     }
     if (artifactType === 'geojson') {
       artifact = artifactTarget(ctx, 'geojson', `${file.name} ${label}`)
@@ -270,7 +289,9 @@ async function inspectRadarStationCollection(args: Record<string, unknown>, ctx:
       metadata: { fileCount: item.fileCount },
     })
   }
-  return result('inspect_radar_station_collection', worker.message, worker.payload, refs)
+  return result('inspect_radar_station_collection', worker.message, worker.payload, refs, [], thirdPartyProvenance('radar_mosaic_agent', {
+    radarCollectionRef: args.radar_collection_ref,
+  }))
 }
 
 async function recommendRadarMosaicStrategy(args: Record<string, unknown>): Promise<ToolResult> {
@@ -286,7 +307,10 @@ async function recommendRadarMosaicStrategy(args: Record<string, unknown>): Prom
     label: `雷达拼图策略：${strategy}`,
     value: worker.payload,
   }
-  return result('recommend_radar_mosaic_strategy', worker.message, worker.payload, [ref])
+  return result('recommend_radar_mosaic_strategy', worker.message, worker.payload, [ref], [], thirdPartyProvenance('radar_mosaic_agent', {
+    goalMode: args.goal_mode ?? 'quicklook',
+    timeStrategy: args.time_strategy ?? 'nearest',
+  }))
 }
 
 async function renderRadarMosaic(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -297,6 +321,7 @@ async function renderRadarMosaic(args: Record<string, unknown>, ctx: ToolContext
   const strategy = typeof strategySource.strategy === 'string' ? strategySource.strategy : ''
   if (!strategy) throw new Error('strategy_ref 不包含雷达拼图策略')
   const png = artifactTarget(ctx, 'png', `${targetTime} 雷达拼图`)
+  const mapPng = artifactTarget(ctx, 'png', `${targetTime} 雷达拼图地图图层`)
   const npz = artifactTarget(ctx, 'npz', `${targetTime} 雷达拼图数据`)
   const worker = await callWorker('render_radar_mosaic', {
     files,
@@ -305,11 +330,31 @@ async function renderRadarMosaic(args: Record<string, unknown>, ctx: ToolContext
     product: typeof args.product === 'string' ? args.product : 'reflectivity',
     level_index: typeof args.level_index === 'number' ? args.level_index : 0,
     tolerance_sec: typeof args.tolerance_sec === 'number' ? args.tolerance_sec : 300,
+    grid_res_km: typeof args.grid_res_km === 'number' ? args.grid_res_km : 1,
+    min_dbz: typeof args.min_dbz === 'number' ? args.min_dbz : 5,
     output_png_relative_path: png.relativePath,
+    output_map_png_relative_path: mapPng.relativePath,
     output_npz_relative_path: npz.relativePath,
   })
-  mergeArtifactMetadata(png, { ...worker.payload, previewRole: 'radar_mosaic' })
-  mergeArtifactMetadata(npz, { ...worker.payload, dataRole: 'radar_mosaic_npz' })
+  mergeArtifactMetadata(png, {
+    ...worker.payload,
+    previewRole: 'radar_mosaic',
+    displaySurfaces: ['mini_app', 'download'],
+    primarySurface: 'mini_app',
+  })
+  mergeArtifactMetadata(mapPng, {
+    ...worker.payload,
+    previewRole: 'radar_mosaic_overlay',
+    previewArtifactId: png.artifactId,
+    displaySurfaces: ['map', 'download'],
+    primarySurface: 'map',
+  })
+  mergeArtifactMetadata(npz, {
+    ...worker.payload,
+    dataRole: 'radar_mosaic_npz',
+    displaySurfaces: ['download'],
+    primarySurface: 'download',
+  })
   const ref: ValueRef = {
     refId: makeId('ref'),
     kind: 'radar_mosaic_result',
@@ -318,14 +363,16 @@ async function renderRadarMosaic(args: Record<string, unknown>, ctx: ToolContext
       ...worker.payload,
       targetTime,
       pngArtifactId: png.artifactId,
+      mapPngArtifactId: mapPng.artifactId,
       npzArtifactId: npz.artifactId,
       npzRelativePath: npz.relativePath,
     },
   }
-  return result('render_radar_mosaic', worker.message, worker.payload, [ref], [png, npz], {
-    thirdPartySource: 'radar_mosaic_agent',
-    inputRefs: { radarCollectionRef: args.radar_collection_ref, targetTimeRef: args.target_time_ref, strategyRef: args.strategy_ref },
-  })
+  return result('render_radar_mosaic', worker.message, worker.payload, [ref], [png, mapPng, npz], thirdPartyProvenance('radar_mosaic_agent', {
+    radarCollectionRef: args.radar_collection_ref,
+    targetTimeRef: args.target_time_ref,
+    strategyRef: args.strategy_ref,
+  }, [png, mapPng, npz]))
 }
 
 async function compareRadarMosaicReference(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -342,6 +389,9 @@ async function compareRadarMosaicReference(args: Record<string, unknown>, ctx: T
     reference_files: [{ name: reference.name, relativePath: reference.relativePath }],
     target_time: targetTime,
     level_index: typeof args.level_index === 'number' ? args.level_index : 0,
+    product_label: typeof args.product_label === 'string' ? args.product_label : undefined,
+    product_unit: typeof args.product_unit === 'string' ? args.product_unit : undefined,
+    min_display: typeof args.min_display === 'number' ? args.min_display : undefined,
     output_png_relative_path: comparison.relativePath,
     output_reference_png_relative_path: referencePng.relativePath,
   })
@@ -350,12 +400,16 @@ async function compareRadarMosaicReference(args: Record<string, unknown>, ctx: T
     previewRole: 'radar_reference_comparison',
     baseImageArtifactId: referencePng.artifactId,
     overlayImageArtifactId: comparison.artifactId,
+    displaySurfaces: ['mini_app', 'download'],
+    primarySurface: 'mini_app',
   })
   mergeArtifactMetadata(referencePng, {
     ...worker.payload,
     previewRole: 'radar_reference_image',
     baseImageArtifactId: referencePng.artifactId,
     overlayImageArtifactId: comparison.artifactId,
+    displaySurfaces: ['mini_app', 'download'],
+    primarySurface: 'mini_app',
   })
   const ref: ValueRef = {
     refId: makeId('ref'),
@@ -367,15 +421,16 @@ async function compareRadarMosaicReference(args: Record<string, unknown>, ctx: T
       referenceArtifactId: referencePng.artifactId,
     },
   }
-  return result('compare_radar_mosaic_reference', worker.message, worker.payload, [ref], [comparison, referencePng], {
-    thirdPartySource: 'radar_mosaic_agent',
-    inputRefs: { mosaicRef: args.radar_mosaic_result_ref, datasetRef: args.dataset_ref },
-  })
+  return result('compare_radar_mosaic_reference', worker.message, worker.payload, [ref], [comparison, referencePng], thirdPartyProvenance('radar_mosaic_agent', {
+    mosaicRef: args.radar_mosaic_result_ref,
+    datasetRef: args.dataset_ref,
+    targetTimeRef: args.target_time_ref,
+  }, [comparison, referencePng]))
 }
 
 async function inspectDataset(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const file = datasetValue(ctx, requiredRefKind(ctx, args, 'dataset_ref', ['meteorological_file']))
-  const worker = await callWorker('inspect_meteorological_dataset', { file_relative_path: file.relativePath })
+  const worker = await callWorker('inspect_meteorological_dataset', { file_relative_path: file.relativePath, file_name: file.name })
   const variables = Array.isArray(worker.payload.variables) ? worker.payload.variables.filter(isRecord) : []
   const refs: ValueRef[] = [{
     refId: makeId('ref'), kind: 'meteorological_dataset', label: file.name,
@@ -427,8 +482,14 @@ async function generateReport(args: Record<string, unknown>, ctx: ToolContext): 
   const artifact = artifactTarget(ctx, 'docx', `${dataset.name} 气象分析报告`)
   const worker = await callWorker('generate_meteorological_report', {
     file_relative_path: dataset.relativePath,
+    file_name: dataset.name,
     interpretation_text: text,
     output_relative_path: artifact.relativePath,
+  })
+  mergeArtifactMetadata(artifact, {
+    ...worker.payload,
+    displaySurfaces: ['download'],
+    primarySurface: 'download',
   })
   return result('generate_meteorological_report', worker.message, worker.payload, [], [artifact])
 }
@@ -441,7 +502,9 @@ async function defineRainfallRiskThresholds(args: Record<string, unknown>): Prom
     label: '降雨风险阈值调色板',
     value: { thresholds },
   }
-  return result('define_rainfall_risk_thresholds', `已定义 ${thresholds.length} 个降雨风险等级`, { thresholds }, [ref])
+  return result('define_rainfall_risk_thresholds', `已定义 ${thresholds.length} 个降雨风险等级`, { thresholds }, [ref], [], thirdPartyProvenance('rainfall_risk_map', {
+    thresholdCount: thresholds.length,
+  }))
 }
 
 async function renderRainfallRiskMap(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -452,8 +515,10 @@ async function renderRainfallRiskMap(args: Record<string, unknown>, ctx: ToolCon
   const thresholds = refObject(requiredRefKind(ctx, args, 'thresholds_ref', ['rainfall_risk_thresholds']).value)
   const boundaryRelativePath = await boundaryInputRelativePath(ctx, args, 'boundary_ref')
   const artifact = artifactTarget(ctx, 'png', `${dataset.name} 降雨风险区划图`)
+  const regionLayer = artifactTarget(ctx, 'geojson', `${dataset.name} 降雨风险区划图层`)
   const worker = await callWorker('render_rainfall_risk_map', {
     file_relative_path: dataset.relativePath,
+    file_name: dataset.name,
     variable: variableName,
     boundary_relative_path: boundaryRelativePath,
     thresholds: thresholds.thresholds,
@@ -462,22 +527,40 @@ async function renderRainfallRiskMap(args: Record<string, unknown>, ctx: ToolCon
     label_field: typeof args.label_field === 'string' ? args.label_field : undefined,
     title: typeof args.title === 'string' ? args.title : undefined,
     output_relative_path: artifact.relativePath,
+    output_geojson_relative_path: regionLayer.relativePath,
   })
   mergeArtifactMetadata(artifact, {
     ...worker.payload,
     previewRole: 'rainfall_risk_map',
     miniApp: { type: 'rainfall_risk_map_console' },
+    displaySurfaces: ['mini_app', 'download'],
+    primarySurface: 'mini_app',
+  })
+  mergeArtifactMetadata(regionLayer, {
+    mapRole: 'rainfall_risk_regions',
+    variable: worker.payload.variable,
+    units: worker.payload.units,
+    mapMode: worker.payload.mapMode,
+    aggregation: worker.payload.aggregation,
+    thresholds: worker.payload.thresholds,
+    regionSummary: worker.payload.regionSummary,
+    previewArtifactId: artifact.artifactId,
+    miniApp: { type: 'rainfall_risk_map_console' },
+    displaySurfaces: ['map', 'download'],
+    primarySurface: 'map',
   })
   const ref: ValueRef = {
     refId: makeId('ref'),
     kind: 'rainfall_risk_map_result',
     label: `${dataset.name} 风险区划图结果`,
-    value: { ...worker.payload, artifactId: artifact.artifactId },
+    value: { ...worker.payload, artifactId: artifact.artifactId, geojsonArtifactId: regionLayer.artifactId },
   }
-  return result('render_rainfall_risk_map', worker.message, worker.payload, [ref], [artifact], {
-    thirdPartySource: 'rainfall_risk_map',
-    inputRefs: { datasetRef: args.dataset_ref, variableRef: args.variable_ref, boundaryRef: args.boundary_ref, thresholdsRef: args.thresholds_ref },
-  })
+  return result('render_rainfall_risk_map', worker.message, worker.payload, [ref], [artifact, regionLayer], thirdPartyProvenance('rainfall_risk_map', {
+    datasetRef: args.dataset_ref,
+    variableRef: args.variable_ref,
+    boundaryRef: args.boundary_ref,
+    thresholdsRef: args.thresholds_ref,
+  }, [artifact, regionLayer]))
 }
 
 async function generateAreaRainfallTable(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -499,11 +582,18 @@ async function generateAreaRainfallTable(args: Record<string, unknown>, ctx: Too
     output_xlsx_relative_path: xlsx.relativePath,
     output_png_relative_path: png.relativePath,
   })
-  mergeArtifactMetadata(xlsx, { ...worker.payload, downloadRole: 'area_rainfall_table_xlsx' })
+  mergeArtifactMetadata(xlsx, {
+    ...worker.payload,
+    downloadRole: 'area_rainfall_table_xlsx',
+    displaySurfaces: ['download'],
+    primarySurface: 'download',
+  })
   mergeArtifactMetadata(png, {
     ...worker.payload,
     previewRole: 'area_rainfall_table_png',
     miniApp: { type: 'area_rainfall_table_console' },
+    displaySurfaces: ['mini_app', 'download'],
+    primarySurface: 'mini_app',
   })
   const ref: ValueRef = {
     refId: makeId('ref'),
@@ -511,10 +601,10 @@ async function generateAreaRainfallTable(args: Record<string, unknown>, ctx: Too
     label: '面雨量表格结果',
     value: { ...worker.payload, xlsxArtifactId: xlsx.artifactId, pngArtifactId: png.artifactId },
   }
-  return result('generate_area_rainfall_table', worker.message, worker.payload, [ref], [xlsx, png], {
-    thirdPartySource: 'short_term_forecast',
-    inputRefs: { fileCollectionRef: args.file_collection_ref, boundaryRef: args.boundary_ref },
-  })
+  return result('generate_area_rainfall_table', worker.message, worker.payload, [ref], [xlsx, png], thirdPartyProvenance('short_term_forecast', {
+    fileCollectionRef: args.file_collection_ref,
+    boundaryRef: args.boundary_ref,
+  }, [xlsx, png]))
 }
 
 async function createNowcastSequence(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -536,66 +626,63 @@ async function inspectNowcastSequence(args: Record<string, unknown>, ctx: ToolCo
   return result('inspect_nowcast_sequence', worker.message, worker.payload, [ref])
 }
 
-async function prepareHangzhouNowcastScope(args: Record<string, unknown>): Promise<ToolResult> {
+async function prepareHangzhouNowcastScope(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const question = requiredText(args, 'question')
   const requestedDistrict = HANGZHOU_DISTRICTS.find(name => question.includes(name))
   const locationHint = stripNowcastQuestion(question)
   const isCitywide = !requestedDistrict && (!locationHint || ['杭州', '杭州市', '全市', '杭州全市'].includes(locationHint))
+  const scopeRefId = typeof args.scope_ref === 'string' ? args.scope_ref.trim() : ''
 
-  if (requestedDistrict || isCitywide) {
-    const response = await fetch(HANGZHOU_BOUNDARY_URL, { signal: AbortSignal.timeout(15_000) })
-    if (!response.ok) throw new Error(`杭州区划边界获取失败：HTTP ${response.status}`)
-    const boundary: unknown = await response.json()
-    if (!isRecord(boundary) || boundary.type !== 'FeatureCollection' || !Array.isArray(boundary.features)) {
-      throw new Error('杭州区划边界返回了无效 GeoJSON')
+  if (scopeRefId) {
+    const scopeRef = requiredRefKind(ctx, args, 'scope_ref', ['feature_collection', 'nowcast_area', 'layer', 'nowcast_coordinate', 'place_candidate'])
+    if (scopeRef.kind === 'nowcast_coordinate' || scopeRef.kind === 'place_candidate') {
+      const coordinate = coordinateFromRef(scopeRef)
+      const ref: ValueRef = {
+        refId: makeId('ref'),
+        kind: 'nowcast_coordinate',
+        label: coordinate.label,
+        value: coordinate,
+        metadata: { sourceRef: scopeRef.refId },
+      }
+      return result('prepare_hangzhou_nowcast_scope', `已准备杭州地点范围：${coordinate.label}`, {
+        scopeType: 'coordinate', label: coordinate.label,
+      }, [ref])
     }
+
+    const boundary = featureCollectionFromBoundaryRef(scopeRef, 'scope_ref')
+    const districtNameField = typeof args.district_name_field === 'string' && args.district_name_field.trim()
+      ? args.district_name_field.trim()
+      : typeof scopeRef.metadata?.districtNameField === 'string'
+        ? scopeRef.metadata.districtNameField
+        : 'name'
     const features = requestedDistrict
-      ? boundary.features.filter(feature => isRecord(feature) && isRecord(feature.properties) && feature.properties.name === requestedDistrict)
+      ? boundary.features.filter(feature => isRecord(feature) && isRecord(feature.properties) && feature.properties[districtNameField] === requestedDistrict)
       : boundary.features
-    if (!features.length) throw new Error(`杭州区划边界中未找到 ${requestedDistrict}`)
+    if (!features.length) throw new Error(`已有杭州区划边界中未找到 ${requestedDistrict ?? '可用区域'}`)
     const collection = { type: 'FeatureCollection', features }
     const ref: ValueRef = {
       refId: makeId('ref'),
       kind: 'nowcast_area',
       label: requestedDistrict ?? '杭州市区县边界',
       value: collection,
-      metadata: { source: HANGZHOU_BOUNDARY_URL, districtNameField: 'name' },
+      metadata: { sourceRef: scopeRef.refId, districtNameField },
     }
     const boundaryRef: ValueRef = {
       refId: makeId('ref'),
       kind: 'feature_collection',
       label: requestedDistrict ? `${requestedDistrict}区划边界` : '杭州市区县边界',
       value: collection,
-      metadata: { source: HANGZHOU_BOUNDARY_URL, districtNameField: 'name', purpose: 'nowcast_scope' },
+      metadata: { sourceRef: scopeRef.refId, districtNameField, purpose: 'nowcast_scope' },
     }
     return result('prepare_hangzhou_nowcast_scope', `已准备 ${features.length} 个杭州区划范围`, {
       scopeType: 'area', label: ref.label, featureCount: features.length,
     }, [ref, boundaryRef])
   }
 
-  const location = extractLocationQuery(question)
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=jsonv2&limit=1&accept-language=zh-CN`
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'geo-agent-platform/0.1' },
-    signal: AbortSignal.timeout(10_000),
-  })
-  if (!response.ok) throw new Error(`杭州地点解析失败：HTTP ${response.status}`)
-  const candidates: unknown = await response.json()
-  const candidate = Array.isArray(candidates) && isRecord(candidates[0]) ? candidates[0] : null
-  const lat = candidate ? Number(candidate.lat) : Number.NaN
-  const lng = candidate ? Number(candidate.lon) : Number.NaN
-  if (!candidate || !Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error(`未能在杭州解析地点：${location}`)
-  const label = typeof candidate.display_name === 'string' ? candidate.display_name.split(',')[0] : location
-  const ref: ValueRef = {
-    refId: makeId('ref'),
-    kind: 'nowcast_coordinate',
-    label,
-    value: { lat, lng, label },
-    metadata: { source: 'nominatim' },
+  if (requestedDistrict || isCitywide) {
+    throw new Error('杭州行政区划边界必须来自平台已有图层、上传边界或当前 run 的 valueRef。请先使用 list_layers 检索杭州行政区划图层，并用 query_layer 生成 feature_collection 引用。')
   }
-  return result('prepare_hangzhou_nowcast_scope', `已准备杭州地点范围：${label}`, {
-    scopeType: 'coordinate', label,
-  }, [ref])
+  throw new Error('杭州地点范围必须来自当前 run 的 nowcast_coordinate 或 place_candidate 引用；本工具不会联网解析地点。')
 }
 
 async function analyzeNowcast(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -617,12 +704,6 @@ async function analyzeNowcast(args: Record<string, unknown>, ctx: ToolContext): 
     })
   }
   return result('analyze_nowcast_precipitation', worker.message, worker.payload, refs)
-}
-
-function extractLocationQuery(question: string): string {
-  const location = stripNowcastQuestion(question)
-  if (!location) throw new Error('地点短临问题中没有可解析的杭州地点')
-  return location.includes('杭州') ? location : `杭州市${location}`
 }
 
 function stripNowcastQuestion(question: string): string {
@@ -663,8 +744,10 @@ async function answerNowcast(args: Record<string, unknown>, ctx: ToolContext): P
   const ref: ValueRef = { refId: makeId('ref'), kind: 'nowcast_answer', label: '短临问题回答事实', value: worker.payload }
   const candidate = selectNowcastMapCandidate(analysis)
   const artifact = artifactTarget(ctx, 'png', `${String(candidate.label ?? '代表时次')} 短临降水`)
+  const candidateFileName = typeof candidate.filename === 'string' ? candidate.filename : undefined
   const raster = await callWorker('render_nowcast_raster', {
     file_relative_path: requiredCandidateText(candidate, 'relativePath'),
+    file_name: candidateFileName,
     variable: requiredCandidateText(candidate, 'variable'),
     bbox: nowcastRenderBbox(analysis),
     output_relative_path: artifact.relativePath,
@@ -674,6 +757,8 @@ async function answerNowcast(args: Record<string, unknown>, ctx: ToolContext): P
     nowcastCandidate: candidate,
     nowcastMapReason: candidate.reason ?? null,
     nowcastLeadMinutes: candidate.leadMinutes ?? null,
+    displaySurfaces: ['map', 'download'],
+    primarySurface: 'map',
   })
   return result('answer_nowcast_question', worker.message, {
     ...worker.payload,
@@ -705,10 +790,15 @@ async function renderNowcastRaster(args: Record<string, unknown>, ctx: ToolConte
   const artifact = artifactTarget(ctx, 'png', '短临降水栅格')
   const worker = await callWorker('render_nowcast_raster', {
     file_relative_path: candidate.relativePath,
+    file_name: typeof candidate.filename === 'string' ? candidate.filename : undefined,
     variable: candidate.variable,
     output_relative_path: artifact.relativePath,
   })
-  mergeArtifactMetadata(artifact, worker.payload)
+  mergeArtifactMetadata(artifact, {
+    ...worker.payload,
+    displaySurfaces: ['map', 'download'],
+    primarySurface: 'map',
+  })
   return result('render_nowcast_raster', worker.message, worker.payload, resultRefs('render_nowcast_raster', '短临栅格', worker.payload), [artifact])
 }
 
@@ -827,6 +917,24 @@ function artifactKind(ext: WeatherArtifactExt): string {
   return ext
 }
 
+function thirdPartyProvenance(
+  source: keyof typeof THIRD_PARTY_SOURCE_SNAPSHOTS,
+  inputRefs: Record<string, unknown>,
+  artifacts: ReturnType<typeof artifactTarget>[] = [],
+): Record<string, unknown> {
+  return {
+    thirdPartySource: source,
+    sourceSnapshot: THIRD_PARTY_SOURCE_SNAPSHOTS[source],
+    wrapperVersion: THIRD_PARTY_WRAPPER_VERSION,
+    inputRefs,
+    outputArtifacts: artifacts.map(artifact => ({
+      artifactId: artifact.artifactId,
+      artifactType: artifact.artifactType,
+      relativePath: artifact.relativePath,
+    })),
+  }
+}
+
 function mergeArtifactMetadata(
   artifact: ReturnType<typeof artifactTarget>,
   payload: Record<string, unknown>,
@@ -868,8 +976,13 @@ function selectParameter(title: string, values: string[]) {
   return { type: 'string', title, enum: values, 'x-source': 'text' }
 }
 
-function jsonParameter(title: string, schema: Record<string, unknown>) {
-  return { ...schema, title, 'x-source': 'json' }
+function jsonParameter(title: string, schema: Record<string, unknown>, defaultValue?: unknown) {
+  return {
+    ...schema,
+    title,
+    'x-source': 'json',
+    ...(defaultValue === undefined ? {} : { default: defaultValue }),
+  }
 }
 
 function inputKind(name: string): 'dataset' | 'radar' | 'boundary' {
@@ -919,19 +1032,44 @@ function assertFileObjectsSuffix(files: Record<string, unknown>[], suffixes: str
 }
 
 async function boundaryInputRelativePath(ctx: ToolContext, args: Record<string, unknown>, key: string): Promise<string> {
-  const ref = requiredRefKind(ctx, args, key, ['meteorological_file', 'feature_collection', 'nowcast_area'])
+  const ref = requiredRefKind(ctx, args, key, BOUNDARY_REF_KINDS)
   if (ref.kind === 'meteorological_file') {
     const file = datasetValue(ctx, ref)
     assertSuffix(file.name, BOUNDARY_SUFFIXES, '边界')
     return file.relativePath
   }
-  const payload = ref.value
-  if (!isRecord(payload) || payload.type !== 'FeatureCollection' || !Array.isArray(payload.features)) {
-    throw new Error(`${key} 必须是 FeatureCollection 或边界文件引用`)
-  }
+  const payload = featureCollectionFromBoundaryRef(ref, key)
   const relativePath = path.posix.join('artifacts', ctx.runId, `${makeId('boundary')}.geojson`)
   await writeRuntimeJson(relativePath, payload)
   return relativePath
+}
+
+type FeatureCollectionRecord = Record<string, unknown> & { type: 'FeatureCollection'; features: unknown[] }
+
+function featureCollectionFromBoundaryRef(ref: ValueRef, key: string): FeatureCollectionRecord {
+  const payload = ref.kind === 'layer' ? refObject(ref.value).featureCollection : ref.value
+  if (!isFeatureCollectionRecord(payload)) {
+    if (ref.kind === 'layer') {
+      throw new Error(`${key} 的 layer 引用缺少 featureCollection，请先使用 query_layer 生成 feature_collection 引用`)
+    }
+    throw new Error(`${key} 必须是 FeatureCollection、layer 或边界文件引用`)
+  }
+  return payload
+}
+
+function isFeatureCollectionRecord(value: unknown): value is FeatureCollectionRecord {
+  return isRecord(value) && value.type === 'FeatureCollection' && Array.isArray(value.features)
+}
+
+function coordinateFromRef(ref: ValueRef): { lat: number; lng: number; label: string } {
+  const payload = refObject(ref.value)
+  const lat = Number(payload.lat)
+  const lng = Number(payload.lng ?? payload.lon)
+  const label = typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : ref.label
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error(`scope_ref '${ref.refId}' 不包含有效经纬度`)
+  }
+  return { lat, lng, label }
 }
 
 function normalizeThresholds(value: unknown): Array<{ label: string; min: number; max: number; color: string }> {
@@ -963,6 +1101,55 @@ function defaultRainfallThresholds() {
     { label: '短时大暴雨~特大暴雨', min: 8, max: 12, color: '#d73027' },
     { label: '短时特大暴雨', min: 12, max: 999, color: '#7a0177' },
   ]
+}
+
+function rainfallThresholdsSchema(): Record<string, unknown> {
+  return {
+    type: 'array',
+    minItems: 1,
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['label', 'min', 'max', 'color'],
+      properties: {
+        label: { type: 'string', minLength: 1 },
+        min: { type: 'number' },
+        max: { type: 'number' },
+        color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },
+      },
+    },
+  }
+}
+
+function areaRainfallStyleSchema(): Record<string, unknown> {
+  const color = { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' }
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      titleText: { type: 'string', minLength: 1 },
+      titleColor: color,
+      headerBg: color,
+      headerColor: color,
+      top3Bg: color,
+      borderColor: color,
+      dataColor: color,
+      bgColor: color,
+    },
+  }
+}
+
+function defaultAreaRainfallStyle(): Record<string, string> {
+  return {
+    titleText: '区县面雨量排行',
+    titleColor: '#2E72D6',
+    headerBg: '#E8F0FA',
+    headerColor: '#333333',
+    top3Bg: '#FFF2CC',
+    borderColor: '#D0D0D0',
+    dataColor: '#333333',
+    bgColor: '#FFFFFF',
+  }
 }
 
 function parseJson(value: string, label: string): unknown {

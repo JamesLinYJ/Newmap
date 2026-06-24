@@ -9,7 +9,7 @@
 // --------------------------------------------------------------------------
 
 import type { ToolRegistry } from '../framework/registry.js'
-import type { ToolContext, ToolResult } from '../framework/types.js'
+import type { ToolContext, ToolResult, ValueRef } from '../framework/types.js'
 import type { ModelAdapter } from '../model/registry.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
 import { persistToolExecutionResult, resolveRuntimeValueRef } from '../tools/resultPersistence.js'
@@ -77,11 +77,7 @@ export class ToolExecutionCoordinator {
     if (toolName === 'answer_nowcast_question' && typeof result.payload.answer === 'string') {
       return result.payload.answer
     }
-    return JSON.stringify({
-      message: result.message,
-      payload: result.payload,
-      valueRefs: (result.valueRefs ?? []).map(ref => ({ refId: ref.refId, kind: ref.kind, label: ref.label })),
-    })
+    return formatToolResultForModel(result, this.options.inlineToolResultMaxChars)
   }
 
   async executeDirect(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -194,6 +190,55 @@ export class ToolExecutionCoordinator {
       payload: { callId, name: toolName, ledgerStatus, error: error ?? null },
     })
   }
+}
+
+export function formatToolResultForModel(result: ToolResult, maxChars: number): string {
+  const base = {
+    message: result.message,
+    valueRefs: summarizeValueRefs(result.valueRefs ?? []),
+    artifacts: (result.artifacts ?? []).map(artifact => ({
+      artifactId: artifact.artifactId,
+      artifactType: artifact.artifactType,
+      name: artifact.name,
+      uri: artifact.uri,
+    })),
+  }
+  const full = JSON.stringify({ ...base, payload: result.payload })
+  if (full.length <= maxChars) return full
+  return JSON.stringify({ ...base, payloadSummary: summarizePayload(result.payload) })
+}
+
+function summarizeValueRefs(refs: ValueRef[]) {
+  return refs.map(ref => ({
+    refId: ref.refId,
+    kind: ref.kind,
+    label: ref.label,
+    unit: ref.unit ?? null,
+  }))
+}
+
+// 完整工具结果已经落盘到 run/transcript/artifact；模型继续推理只需要结构摘要和
+// valueRef 清单。大数组保留长度与少量样例，避免后续工具从海量 payload 里误取 ref。
+function summarizePayload(value: unknown, depth = 0): unknown {
+  if (depth > 3) return scalarSummary(value)
+  if (Array.isArray(value)) {
+    return {
+      type: 'array',
+      length: value.length,
+      sample: value.slice(0, 5).map(item => summarizePayload(item, depth + 1)),
+    }
+  }
+  if (isRecord(value)) {
+    const entries = Object.entries(value)
+    return Object.fromEntries(entries.map(([key, item]) => [key, summarizePayload(item, depth + 1)]))
+  }
+  return value
+}
+
+function scalarSummary(value: unknown): unknown {
+  if (Array.isArray(value)) return { type: 'array', length: value.length }
+  if (isRecord(value)) return { type: 'object', keys: Object.keys(value).slice(0, 12) }
+  return value
 }
 
 async function invokeStructuredModel(

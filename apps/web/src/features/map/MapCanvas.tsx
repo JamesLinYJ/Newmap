@@ -874,6 +874,7 @@ function syncArtifactLayerSet({
   const geometryTypes = collectGeometryTypes(layer.data)
   const visibility = visible ? 'visible' : 'none'
   const isRoute = hasRouteProperties(layer.data)
+  const featureColor = featureColorExpression(layer.data, color)
 
   syncMapLayer(map, {
     id: `${sourceId}-fill`,
@@ -882,7 +883,7 @@ function syncArtifactLayerSet({
     enabled: geometryTypes.has('Polygon') || geometryTypes.has('MultiPolygon'),
     visibility,
     paint: {
-      'fill-color': color,
+      'fill-color': featureColor,
       'fill-opacity': (selected ? 0.24 : 0.16) * opacity,
     },
   })
@@ -893,7 +894,7 @@ function syncArtifactLayerSet({
     enabled: geometryTypes.has('Polygon') || geometryTypes.has('MultiPolygon'),
     visibility,
     paint: {
-      'line-color': color,
+      'line-color': featureColor,
       'line-width': selected ? 3 : 2,
       'line-opacity': 0.85 * opacity,
     },
@@ -914,7 +915,7 @@ function syncArtifactLayerSet({
     enabled: geometryTypes.has('LineString') || geometryTypes.has('MultiLineString'),
     visibility,
     paint: {
-      'line-color': color,
+      'line-color': featureColor,
       'line-width': isRoute ? (selected ? 5 : 3.2) : (selected ? 4 : 2.4),
       'line-opacity': 0.92 * opacity,
       ...(routeDashSequence ? { 'line-dasharray': routeDashSequence } : {}),
@@ -927,7 +928,7 @@ function syncArtifactLayerSet({
         'route_end', '#ff3b30',
         color,
       ] as unknown as maplibregl.Expression
-    : color
+    : featureColor
   syncMapLayer(map, {
     id: `${sourceId}-point`,
     type: 'circle',
@@ -942,6 +943,17 @@ function syncArtifactLayerSet({
       'circle-opacity': opacity,
     },
   })
+}
+
+function featureColorExpression(collection: GeoJSON.FeatureCollection, fallback: string) {
+  const hasFeatureColor = collection.features.some((feature) => {
+    const props = feature.properties as Record<string, unknown> | null | undefined
+    return typeof props?.risk_color === 'string' || typeof props?.color === 'string'
+  })
+  if (!hasFeatureColor) {
+    return fallback
+  }
+  return ['coalesce', ['get', 'risk_color'], ['get', 'color'], fallback] as unknown as maplibregl.Expression
 }
 
 function syncMapLayer(

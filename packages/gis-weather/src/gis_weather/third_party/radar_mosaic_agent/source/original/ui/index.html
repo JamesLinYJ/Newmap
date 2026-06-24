@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>雷达拼图智能体决策平台</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="simple-shell">
+    <header class="hero">
+      <div class="hero-main">
+        <p class="hero-kicker">Radar Mosaic Agent</p>
+        <h1>雷达拼图智能体决策平台</h1>
+        <div class="hero-meta">
+          <span class="meta-chip live">系统在线</span>
+          <span class="meta-chip">浙江省域</span>
+          <span class="meta-chip">5 分钟业务节奏</span>
+        </div>
+      </div>
+      <div class="hero-side">
+        <div class="hero-time-card">
+          <span>当前业务时间</span>
+          <strong id="clockValue">载入中</strong>
+        </div>
+      </div>
+    </header>
+
+    <section class="status-banner">
+      <div class="connect-box" id="connectBox">
+        <span class="connect-dot" id="connectDot"></span>
+        <strong id="connectText">正在检查后台连接</strong>
+      </div>
+      <div class="quick-tip">
+        <span>不会操作时：</span>
+        <strong>先选时间 -> 再点“生成智能体建议” -> 最后点“发起任务调度”</strong>
+      </div>
+    </section>
+
+    <main class="main-grid">
+      <section class="primary-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">快速操作</p>
+            <h2>按照 3 步完成一次雷达拼图</h2>
+            <p class="current-target" id="summaryTarget">目标时次载入中</p>
+          </div>
+        </div>
+
+        <div class="steps-grid">
+          <article class="step-card">
+            <span class="step-index">01</span>
+            <h3>选择数据和时次</h3>
+            <p>先选数据来源，再选一个要出图的时次。</p>
+            <label class="field">
+              <span>数据集</span>
+              <div class="dataset-select-row">
+                <select id="datasetSelect" style="flex:1"></select>
+                <button class="button secondary small" id="importDatasetBtn" type="button" title="从文件夹导入新数据">📂</button>
+              </div>
+            </label>
+            <!-- 导入对话框 -->
+            <div class="import-dialog" id="importDialog" style="display:none">
+              <div class="import-dialog-header">导入雷达数据文件夹</div>
+              <div class="import-dialog-body">
+                <label class="field">
+                  <span>文件夹路径</span>
+                  <input type="text" id="importFolderPath" placeholder="例: D:\雷达数据\20260601\">
+                </label>
+                <label class="field">
+                  <span>数据集名称（可选）</span>
+                  <input type="text" id="importLabel" placeholder="自定义名称">
+                </label>
+                <div class="import-actions">
+                  <button class="button primary small" id="importConfirmBtn" type="button">导入</button>
+                  <button class="button secondary small" id="importCancelBtn" type="button">取消</button>
+                </div>
+                <div class="import-scan-section">
+                  <p class="import-scan-hint">或从项目目录自动扫描：</p>
+                  <button class="button secondary small" id="scanFoldersBtn" type="button">🔍 扫描可用数据</button>
+                  <div class="scan-results" id="scanResults" style="display:none"></div>
+                </div>
+              </div>
+            </div>
+            <label class="field">
+              <span>目标时间</span>
+              <select id="targetTime"></select>
+            </label>
+          </article>
+
+          <article class="step-card">
+            <span class="step-index">02</span>
+            <h3>选择产品并生成建议</h3>
+            <p>先选你要拼接的产品，再让智能体推荐算法。</p>
+            <div class="picker-head">
+              <span>拼图产品</span>
+              <small>选择需要拼接的雷达产品，系统会按产品类型匹配色标和有效值范围。</small>
+            </div>
+            <div class="algorithm-picker product-picker" id="productPicker"></div>
+            <div class="field-pair">
+              <label class="field">
+                <span>时间策略</span>
+                <select id="timeStrategy">
+                  <option value="strict">严格落在业务窗口</option>
+                  <option value="relaxed">允许邻近时次补齐</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>业务目标</span>
+                <select id="goalMode">
+                  <option value="coverage">覆盖完整优先</option>
+                  <option value="speed">处理速度优先</option>
+                  <option value="smooth">图面平滑优先</option>
+                </select>
+              </label>
+            </div>
+            <label class="field">
+              <span>高度层</span>
+              <select id="levelIndex">
+                <option value="0">第1层</option>
+                <option value="1">第2层</option>
+                <option value="2">第3层</option>
+              </select>
+            </label>
+            <button class="button primary" id="recommendBtn">生成智能体建议</button>
+          </article>
+
+          <article class="step-card">
+            <span class="step-index">03</span>
+            <h3>执行拼图并查看结果</h3>
+            <p>确认建议后，直接生成拼图结果。</p>
+            <div class="picker-head">
+              <span>执行算法</span>
+              <small>默认自动选中推荐算法，你也可以手动切换。</small>
+            </div>
+            <div class="algorithm-picker" id="algorithmPicker">
+              <button class="algo-option active" data-strategy="max" type="button">
+                <strong>最大反射率</strong>
+                <span>稳态基线</span>
+              </button>
+              <button class="algo-option" data-strategy="weighted" type="button">
+                <strong>距离加权</strong>
+                <span>平滑增强</span>
+              </button>
+              <button class="algo-option" data-strategy="quality" type="button">
+                <strong>质量评分</strong>
+                <span>质量择优</span>
+              </button>
+              <button class="algo-option" data-strategy="strict" type="button">
+                <strong>严格同步</strong>
+                <span>时次优先</span>
+              </button>
+            </div>
+            <div class="run-box">
+              <div>
+                <span>当前推荐</span>
+                <strong id="summaryStrategy">最大反射率拼接</strong>
+              </div>
+              <div>
+                <span>实际执行</span>
+                <strong id="executionStrategy">最大反射率拼接</strong>
+              </div>
+              <div>
+                <span>接入站点</span>
+                <strong id="summaryStationCount">0 站</strong>
+              </div>
+              <div>
+                <span>当前产品</span>
+                <strong id="currentProductLabel">反射率场</strong>
+              </div>
+              <div>
+                <span>当前数据集</span>
+                <strong id="currentDatasetLabel">默认示例数据</strong>
+              </div>
+            </div>
+            <button class="button secondary" id="launchBtn">发起任务调度</button>
+          </article>
+        </div>
+      </section>
+
+      <section class="recommend-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">智能体建议</p>
+            <h2>当前推荐方案</h2>
+          </div>
+        </div>
+
+        <div class="recommend-panel">
+          <span class="recommend-badge" id="recommendationBadge">推荐方案</span>
+          <h3 id="recommendationTitle">最大反射率拼接</h3>
+          <p id="recommendationText">结合当前站点规模、业务时效要求与展示目标，建议优先采用最大反射率拼接作为当前任务的默认策略。</p>
+        </div>
+
+        <div class="recommend-stats">
+          <article>
+            <span>预计站点数</span>
+            <strong id="metricStations">3</strong>
+          </article>
+          <article>
+            <span>预计时效</span>
+            <strong id="metricLatency">4 min</strong>
+          </article>
+          <article>
+            <span>推荐理由数</span>
+            <strong id="metricReasons">3</strong>
+          </article>
+        </div>
+
+        <div class="reason-list" id="reasonList">
+          <article>
+            <h4>原因 1</h4>
+            <p>当前站点规模较小，规则直接，最容易快速形成稳定结果。</p>
+          </article>
+          <article>
+            <h4>原因 2</h4>
+            <p>对强回波保留效果明显，适合汇报和教学演示。</p>
+          </article>
+          <article>
+            <h4>原因 3</h4>
+            <p>适合作为智能体默认保底方案，便于后续接入更复杂算法。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="preview-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">结果预览</p>
+            <h2>生成后的拼图</h2>
+          </div>
+          <div class="preview-toolbar">
+            <button class="button secondary small" id="toggleCompareBtn" type="button">🔍 开启对比模式</button>
+          </div>
+        </div>
+
+        <!-- 普通预览 -->
+        <div class="preview-frame" id="normalPreview">
+          <img id="previewImage" src="../outputs_zhejiang_ppt/mosaic_20260518075048_Z9041-Z9573-Z9574.png" alt="雷达拼图结果预览">
+        </div>
+
+        <!-- 对比模式 -->
+        <div class="compare-panel" id="comparePanel" style="display:none">
+          <!-- 顶栏：状态 + 切换 -->
+          <div class="compare-toolbar">
+            <span class="compare-auto-badge" id="compareAutoBadge">🤖 NC参考自动匹配</span>
+            <span class="compare-ref-info" id="compareRefInfo"></span>
+            <div class="compare-toolbar-actions">
+              <div class="compare-tabs" id="compareTabs">
+                <button class="compare-tab active" data-tab="slider">◀▶ 滑杆对比</button>
+                <button class="compare-tab" data-tab="detail">📊 差值详情</button>
+              </div>
+              <button class="button secondary small" id="compareUploadBtn" type="button">📁 手动上传</button>
+            </div>
+          </div>
+
+          <!-- 手动上传 -->
+          <div class="compare-manual-upload" id="compareManualUpload" style="display:none">
+            <label class="compare-file-label" for="referenceFileInput">📁 上传参考图</label>
+            <input type="file" accept="image/*" id="referenceFileInput" hidden>
+            <input type="text" class="compare-url-input" id="referenceUrlInput" placeholder="或粘贴图片URL...">
+            <button class="button secondary small" id="loadReferenceUrlBtn" type="button">加载</button>
+          </div>
+
+          <!-- Tab 1: 滑杆对比 -->
+          <div class="compare-tab-content" id="compareTabSlider">
+            <div class="compare-slider-container">
+              <div class="compare-images-wrapper" id="compareWrapper">
+                <img class="compare-img-base" id="compareReferenceImg" alt="参考拼图" src="">
+                <div class="compare-img-overlay" id="compareOverlay">
+                  <img id="compareGeneratedImg" alt="生成结果" src="">
+                </div>
+                <div class="compare-handle-bar" id="compareHandleBar">
+                  <div class="compare-handle-grip" id="compareHandleGrip">
+                    <span class="compare-arrow-left">◀</span>
+                    <span class="compare-arrow-right">▶</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 2: 差值详情（全屏查看按钮） -->
+          <div class="compare-tab-content" id="compareTabDetail" style="display:none">
+            <div class="compare-detail-placeholder" id="compareDetailPlaceholder">
+              <p>点击下方按钮查看完整对比图（参考 | 生成 | 差值）</p>
+              <button class="button primary" id="viewFullComparisonBtn" type="button">🔍 查看详细对比图</button>
+            </div>
+          </div>
+
+          <!-- 统计栏（始终可见） -->
+          <div class="compare-stats-bar" id="compareStats" style="display:none">
+            <span class="compare-stat-inline">RMSE <strong id="statRmse">--</strong></span>
+            <span class="compare-stat-divider">|</span>
+            <span class="compare-stat-inline">MAE <strong id="statMae">--</strong></span>
+            <span class="compare-stat-divider">|</span>
+            <span class="compare-stat-inline">相关系数 <strong id="statCorr">--</strong></span>
+            <span class="compare-stat-divider">|</span>
+            <span class="compare-stat-inline">偏差 <strong id="statBias">--</strong></span>
+            <span class="compare-stat-divider">|</span>
+            <span class="compare-stat-inline">生成 <strong id="statGenMean">--</strong></span>
+            <span class="compare-stat-divider">|</span>
+            <span class="compare-stat-inline">参考 <strong id="statRefMean">--</strong></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="support-grid">
+        <div class="support-title">
+          <p class="section-kicker">辅助信息</p>
+          <h2>需要时再查看下面内容</h2>
+        </div>
+        <section class="support-card">
+          <div class="section-head small">
+            <div>
+              <p class="section-kicker">站点状态</p>
+              <h2>当前可用站点</h2>
+            </div>
+          </div>
+          <table class="ops-table station-table">
+            <thead>
+              <tr>
+                <th>站点</th>
+                <th>最近时次</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="stationTableBody"></tbody>
+          </table>
+          <p class="support-note" id="summaryStations">载入中</p>
+        </section>
+
+        <section class="support-card">
+          <div class="section-head small">
+            <div>
+              <p class="section-kicker">任务日志</p>
+              <h2>执行过程</h2>
+            </div>
+          </div>
+          <div class="log-list" id="logList">
+            <article class="log-item">
+              <span class="log-time">--:--</span>
+              <p>等待任务执行。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="support-card">
+          <div class="section-head small">
+            <div>
+              <p class="section-kicker">算法对比</p>
+              <h2>不同算法结果说明</h2>
+            </div>
+          </div>
+          <button class="button secondary small" id="compareBtn">生成算法对比</button>
+          <div class="compare-result" id="compareResult">
+            <p>点击后显示不同算法的对比说明。</p>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- 全屏对比弹窗 -->
+  <div class="compare-modal-overlay" id="compareModal" style="display:none">
+    <div class="compare-modal">
+      <div class="compare-modal-header">
+        <h2>详细对比结果</h2>
+        <button class="compare-modal-close" id="compareModalClose">✕</button>
+      </div>
+      <div class="compare-modal-body">
+        <img id="compareModalImg" src="" alt="对比详情: 参考 | 生成 | 差值">
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

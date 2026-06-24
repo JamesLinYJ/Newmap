@@ -124,6 +124,7 @@ export function ConversationEntryView({
     }
     if (commands.length === 1 && commands[0].toolName === 'answer_nowcast_question') {
       const forecastText = extractNowcastAnswer(commands[0])
+      const artifactId = firstArtifactId(commands[0])
       return (
         <div key={entry.id} className="cc-timeline-item cc-timeline-item--answer">
           <span className="cc-timeline-dot" />
@@ -131,6 +132,11 @@ export function ConversationEntryView({
             <div className="cc-result-card">
               {forecastText || '暂无数据'}
             </div>
+            {artifactId ? (
+              <button className="cc-mini-button mt-2" type="button" onClick={() => onSelectArtifact(artifactId)}>
+                在地图中查看
+              </button>
+            ) : null}
           </div>
         </div>
       )
@@ -151,6 +157,7 @@ export function ConversationEntryView({
                 command={command}
                 expanded={expandedIds.has(`tool:${command.id}`)}
                 onToggle={() => onToggleExpanded(`tool:${command.id}`)}
+                onSelectArtifact={onSelectArtifact}
               />
             ))}
           </m.div>
@@ -230,17 +237,19 @@ function ToolCommandCard({
   command,
   expanded,
   onToggle,
+  onSelectArtifact,
 }: {
   command: ConversationCommand
   expanded: boolean
   onToggle: () => void
+  onSelectArtifact: (id: string) => void
 }) {
   const isRunning = command.status === 'running'
   const hasInput = Boolean(command.commandText?.trim())
   const hasOutput = isRunning || Boolean(command.body.trim())
   const miniAppKind = miniAppKindForTool(command.toolName)
   const artifacts = Array.isArray(command.details?.artifacts) ? command.details.artifacts.filter(isRecord) : []
-  const hasDetails = hasInput || hasOutput
+  const hasDetails = hasInput || hasOutput || Boolean(miniAppKind)
 
   return (
     <div className="cc-tool-row">
@@ -256,6 +265,7 @@ function ToolCommandCard({
         </span>
         <span className="cc-tool-row-title">{formatToolKindLabel(command)}</span>
         <span className="cc-tool-row-subtitle">{formatToolActionLabel(command)}</span>
+        {miniAppKind ? <span className="cc-tool-row-mini-entry">小工具页面</span> : null}
         {hasDetails && <ChevronDown size={14} className={`cc-chevron ml-auto ${expanded ? 'cc-chevron--open' : ''}`} />}
       </button>
       <AnimatePresence initial={false}>
@@ -266,6 +276,7 @@ function ToolCommandCard({
                 toolName={command.toolName}
                 result={command.details?.result}
                 artifacts={artifacts}
+                onSelectArtifact={onSelectArtifact}
               />
             ) : null}
             {hasInput && (
@@ -381,4 +392,18 @@ function extractNowcastAnswer(command: ConversationCommand) {
     if (answer) return answer
   }
   return command.body.trim()
+}
+
+function firstArtifactId(command: ConversationCommand) {
+  const direct = command.details?.artifactId
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+  const artifacts = command.details?.artifacts
+  if (Array.isArray(artifacts)) {
+    for (const artifact of artifacts) {
+      if (isRecord(artifact) && typeof artifact.artifactId === 'string' && artifact.artifactId.trim()) {
+        return artifact.artifactId.trim()
+      }
+    }
+  }
+  return null
 }

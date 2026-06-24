@@ -1,0 +1,34 @@
+# 数据文件（太大，不上传）
+数据/
+前期培训/
+基础知识/
+指导文件.docx
+气象基础培训流程.docx
+培训流程【气象部分】.docx
+短临预报智能体功能清单.xlsx
+*.xlsx
+!requirements.txt
+
+# 临时文件
+~$*
+*.tmp
+temp_*
+test_*
+
+# 缓存
+nc_cache/
+static/outputs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.claude/
+.vscode/
+.idea/
+
+# macOS
+.DS_Store

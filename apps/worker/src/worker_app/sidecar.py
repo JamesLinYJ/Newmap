@@ -61,13 +61,15 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
     service = WeatherDataService()
     if tool_name == "inspect_meteorological_dataset":
         source = input_path(args)
-        return service.inspect(source, filename=source.name)
+        return service.inspect(source, filename=input_filename(args, source))
     if tool_name in {"render_meteorological_raster", "render_nowcast_raster"}:
         source = input_path(args)
+        filename = input_filename(args, source)
         output = output_path(args)
         result = service.render_heatmap(
             source,
             output_path=output,
+            filename=filename,
             variable=optional_text(args, "variable"),
             time_index=optional_int(args, "time_index"),
             level_index=optional_int(args, "level_index"),
@@ -77,6 +79,7 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
     if tool_name == "meteorological_stats":
         return service.stats(
             input_path(args),
+            filename=input_filename(args),
             variable=optional_text(args, "variable"),
             time_index=optional_int(args, "time_index"),
             level_index=optional_int(args, "level_index"),
@@ -87,6 +90,7 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             input_path(args),
             threshold=required_float(args, "threshold"),
             operator=optional_text(args, "operator") or ">=",
+            filename=input_filename(args),
             variable=optional_text(args, "variable"),
             time_index=optional_int(args, "time_index"),
             level_index=optional_int(args, "level_index"),
@@ -96,6 +100,7 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
         return service.contours_geojson(
             input_path(args),
             levels=optional_number_list(args, "levels"),
+            filename=input_filename(args),
             variable=optional_text(args, "variable"),
             time_index=optional_int(args, "time_index"),
             level_index=optional_int(args, "level_index"),
@@ -103,11 +108,12 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
         )
     if tool_name == "generate_meteorological_report":
         source = input_path(args)
+        filename = input_filename(args, source)
         output = output_path(args)
         result = service.generate_report_docx(
             source,
             output_path=output,
-            filename=source.name,
+            filename=filename,
             llm_interpretation=required_text(args, "interpretation_text"),
         )
         return {**result, "outputRelativePath": relative_runtime_path(output)}
@@ -165,10 +171,13 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
 
         output_png = output_path(args, key="output_png_relative_path")
         output_npz = output_path(args, key="output_npz_relative_path")
+        output_map_png_value = optional_text(args, "output_map_png_relative_path")
+        output_map_png = output_path(args, key="output_map_png_relative_path") if output_map_png_value else None
         result = render_radar_mosaic(
             paths=referenced_paths(args, "files"),
             output_png=output_png,
             output_npz=output_npz,
+            output_map_png=output_map_png,
             target_time=required_text(args, "target_time"),
             tolerance_sec=optional_int(args, "tolerance_sec") or 300,
             strategy=optional_text(args, "strategy") or "max",
@@ -181,6 +190,7 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             **result,
             "outputPngRelativePath": relative_runtime_path(output_png),
             "outputNpzRelativePath": relative_runtime_path(output_npz),
+            **({"outputMapPngRelativePath": relative_runtime_path(output_map_png)} if output_map_png is not None else {}),
         }
     if tool_name == "compare_radar_mosaic_reference":
         from gis_weather.third_party.radar_mosaic_agent.adapter import compare_radar_mosaic_reference
@@ -207,9 +217,12 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
         from gis_weather.third_party.rainfall_risk_map.adapter import render_rainfall_risk_map
 
         output = output_path(args)
+        output_geojson_value = optional_text(args, "output_geojson_relative_path")
+        output_geojson = output_path(args, key="output_geojson_relative_path") if output_geojson_value else None
         result = render_rainfall_risk_map(
             nc_path=input_path(args),
             output_png=output,
+            output_geojson=output_geojson,
             variable=required_text(args, "variable"),
             boundary_path=optional_referenced_path(args, "boundary_relative_path"),
             thresholds=optional_list_of_dicts(args, "thresholds"),
@@ -218,14 +231,22 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             label_field=optional_text(args, "label_field"),
             title=optional_text(args, "title"),
         )
-        return {**result, "outputRelativePath": relative_runtime_path(output)}
+        return {
+            **result,
+            "outputRelativePath": relative_runtime_path(output),
+            **({"outputGeojsonRelativePath": relative_runtime_path(output_geojson)} if output_geojson is not None else {}),
+        }
     if tool_name == "generate_area_rainfall_table":
         from gis_weather.third_party.short_term_forecast.adapter import generate_area_rainfall_table
 
+        file_items = sequence_items(args)
+        nc_paths = [referenced_path(item) for item in file_items]
+        nc_names = [referenced_filename(item, source) for item, source in zip(file_items, nc_paths)]
         output_xlsx = output_path(args, key="output_xlsx_relative_path")
         output_png = output_path(args, key="output_png_relative_path")
         result = generate_area_rainfall_table(
-            nc_paths=referenced_paths(args, "files"),
+            nc_paths=nc_paths,
+            nc_names=nc_names,
             boundary_path=referenced_path({"relativePath": required_text(args, "boundary_relative_path")}),
             output_xlsx=output_xlsx,
             output_png=output_png,
@@ -250,11 +271,12 @@ def create_nowcast_sequence(args: dict[str, Any]) -> Any:
     inspector = WeatherDataService()
     for index, item in enumerate(sequence_items(args)):
         source = referenced_path(item)
+        filename = referenced_filename(item, source)
         datasets.append({
             "dataset_id": str(item.get("fileId") or item.get("datasetId") or f"dataset_{index + 1}"),
-            "filename": str(item.get("name") or item.get("filename") or source.name),
+            "filename": filename,
             "path": source,
-            "metadata": inspector.inspect(source, filename=source.name),
+            "metadata": inspector.inspect(source, filename=filename),
         })
     profile = NowcastProductProfile(precipitation_variables=(variable,)) if variable else NowcastProductProfile()
     return NowcastSequenceService().create_sequence(
@@ -317,6 +339,14 @@ def input_path(args: dict[str, Any]) -> Path:
     return referenced_path({"relativePath": required_text(args, "file_relative_path")})
 
 
+def input_filename(args: dict[str, Any], source: Path | None = None) -> str | None:
+    for key in ("filename", "file_name", "name"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return Path(value.strip()).name
+    return source.name if source is not None else None
+
+
 def output_path(args: dict[str, Any], *, key: str = "output_relative_path") -> Path:
     relative = required_text(args, key)
     target = resolve_runtime_path(relative, must_exist=False)
@@ -350,6 +380,14 @@ def referenced_path(value: dict[str, Any]) -> Path:
     if not isinstance(relative, str) or not relative.strip():
         raise ValueError("文件引用缺少 relativePath")
     return resolve_runtime_path(relative, must_exist=True)
+
+
+def referenced_filename(value: dict[str, Any], source: Path) -> str:
+    for key in ("name", "filename", "fileName"):
+        raw = value.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return Path(raw.strip()).name
+    return source.name
 
 
 def resolve_runtime_path(relative: str, *, must_exist: bool) -> Path:

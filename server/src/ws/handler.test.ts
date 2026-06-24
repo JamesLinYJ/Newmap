@@ -21,6 +21,7 @@ import type { PostGisRepository } from '../gis/postgis.js'
 import { ModelAdapterRegistry } from '../model/registry.js'
 import type { ConversationItem, RunEvent } from '../schemas/types.js'
 import { PostgresPlatformStore } from '../store/platformStore.js'
+import type { ToolProvider } from '../framework/types.js'
 import { createWsHandler } from './handler.js'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -113,6 +114,60 @@ describe('WebSocket run subscriptions', () => {
     expect(snapshotEntries(replay, 'events')).toHaveLength(1)
     expect(snapshotRunStatus(replay)).toBe('running')
     await close(second)
+  })
+
+  it('publishes direct tool:run calls as replayable tool output items with artifacts', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-ws-tool-items-'))
+    const store = new PostgresPlatformStore(noOpDb(), root)
+    await store.initialize()
+    const session = await store.createSession()
+    const thread = await store.createThread(session.id, '工具 mini app 回放')
+    const registry = new ToolRegistry()
+    registry.register(previewToolProvider())
+
+    const server = createServer((_request, response) => response.end())
+    const wss = createWsHandler(server, {
+      store,
+      toolRegistry: registry,
+      modelRegistry: new ModelAdapterRegistry(testEnv()),
+      postgis: {} as unknown as PostGisRepository,
+      runtimeRoot: root,
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('测试服务未监听 TCP 地址')
+    cleanups.push(async () => {
+      await new Promise<void>(resolve => wss.close(() => resolve()))
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await store.conversationStore.flush()
+      await rm(root, { recursive: true, force: true })
+    })
+
+    const ws = await connect(`ws://127.0.0.1:${address.port}/ws`)
+    const executed = payloadData(await request(ws, 'tool:run', {
+      sessionId: session.id,
+      threadId: thread.id,
+      toolName: 'render_rainfall_risk_map',
+      args: { ok: true },
+    }, 'tool_run'))
+    const runId = isRecord(executed) && isRecord(executed.run) && typeof executed.run.id === 'string' ? executed.run.id : ''
+    expect(runId).toMatch(/^run_/u)
+
+    const replay = await request(ws, 'run:subscribe', { runId }, 'snapshot')
+    const items = snapshotEntries(replay, 'items')
+    const output = items.find(item => isRecord(item) && item.itemType === 'function_call_output')
+    expect(output).toMatchObject({
+      name: 'render_rainfall_risk_map',
+      status: 'completed',
+      metadata: {
+        artifacts: [expect.objectContaining({
+          artifactType: 'raster_png',
+          name: '风险图预览',
+          metadata: expect.objectContaining({ displaySurfaces: ['mini_app', 'download'] }),
+        })],
+      },
+    })
+    await close(ws)
   })
 
   it('serves thread history, context, memory, fork and trash commands with correlated envelopes', async () => {
@@ -253,6 +308,53 @@ function runEvent(runId: string, threadId: string): RunEvent {
     message: '可回放的事件',
     timestamp: new Date().toISOString(),
     payload: {},
+  }
+}
+
+function previewToolProvider(): ToolProvider {
+  const definition = {
+    name: 'render_rainfall_risk_map',
+    label: '生成降雨风险区划图',
+    description: '测试 mini app 预览 artifact 回放。',
+    group: '气象',
+    tags: ['meteorology'],
+    isReadOnly: true,
+    isDestructive: false,
+    jsonSchema: {
+      type: 'object',
+      properties: {
+        ok: { type: 'boolean' },
+      },
+    },
+  }
+  return {
+    manifest: {
+      id: 'test-preview-provider',
+      name: '测试预览工具',
+      version: '1.0.0',
+      author: 'tests',
+      description: '测试 direct tool item 回放',
+      language: 'typescript',
+      tools: [definition],
+    },
+    tools: () => [{
+      ...definition,
+      handler: async () => ({
+        message: '风险图已生成',
+        payload: { variable: 'QPF', mapMode: 'regional' },
+        warnings: [],
+        resultId: 'result_preview',
+        source: 'test',
+        artifacts: [{
+          artifactId: 'artifact_preview_png',
+          artifactType: 'raster_png',
+          name: '风险图预览',
+          uri: '/api/v1/results/artifact_preview_png/file',
+          relativePath: 'artifacts/run_preview/artifact_preview_png.png',
+          metadata: { previewRole: 'rainfall_risk_map', displaySurfaces: ['mini_app', 'download'] },
+        }],
+      }),
+    }],
   }
 }
 

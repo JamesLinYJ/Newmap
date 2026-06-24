@@ -50,6 +50,10 @@ export function createLayerCreateTool(postgis: PostGisRepository): ToolDef {
         collection,
       })
 
+      // 图层 key 服务于地图和 PostGIS 查询；FeatureCollection 引用服务于后续工具链。
+      // 同一份输入几何不再要求模型复制到下一步，避免 valueRef 断链。
+      const layerRefId = makeId('ref')
+      const collectionRefId = makeId('ref')
       return {
         message: `图层“${name}”创建成功，包含 ${collection.features.length} 个要素`,
         payload: {
@@ -64,12 +68,22 @@ export function createLayerCreateTool(postgis: PostGisRepository): ToolDef {
         resultId: makeId('result'),
         source: 'postgis',
         provenance: { backend: 'postgis', sessionId: ctx.sessionId, threadId: ctx.threadId },
-        valueRefs: [{
-          refId: makeId('ref'),
-          kind: 'layer',
-          label: layer.name,
-          value: { layerKey: layer.layerKey },
-        }],
+        valueRefs: [
+          {
+            refId: layerRefId,
+            kind: 'layer',
+            label: layer.name,
+            value: { layerKey: layer.layerKey, featureCollection: collection },
+            metadata: { featureCollectionRefId: collectionRefId },
+          },
+          {
+            refId: collectionRefId,
+            kind: 'feature_collection',
+            label: `${layer.name} 要素集合`,
+            value: collection,
+            metadata: { sourceLayerKey: layer.layerKey },
+          },
+        ],
       }
     },
   }

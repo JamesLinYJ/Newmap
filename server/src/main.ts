@@ -9,13 +9,14 @@
 // --------------------------------------------------------------------------
 
 import dotenv from 'dotenv'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 从 workspaces 子目录启动时，dotenv 需要指向项目根目录的 .env
-dotenv.config({ path: fileURLToPath(new URL('../../.env', import.meta.url)) })
+const projectRoot = fileURLToPath(new URL('../../', import.meta.url))
+dotenv.config({ path: path.join(projectRoot, '.env') })
 
 import { createServer } from 'node:http'
-import path from 'node:path'
 import { getRequestListener } from '@hono/node-server'
 import { setTracingDisabled } from '@openai/agents'
 import { Hono } from 'hono'
@@ -32,6 +33,7 @@ import { layerRoutes } from './routes/layers.js'
 import { mapRoutes } from './routes/map.js'
 import { PostgresPlatformStore } from './store/platformStore.js'
 import { createWsHandler } from './ws/handler.js'
+import { seedLayersFromDirectory } from './gis/seedLayers.js'
 
 // Newmap 不向外部 tracing 后端发送 Agent 数据；Runner 级配置负责每次运行，
 // 全局开关覆盖 SDK 创建根 trace 和嵌套 Agent 工具的生命周期。
@@ -46,6 +48,11 @@ const modelRegistry = new ModelAdapterRegistry(env)
 
 // 文件型 manifest 与分片 JSONL 是事实源；监听前只恢复轻量索引和 run 检查点。
 await store.initialize()
+if (env.SEED_LAYERS_DIR) {
+  const seedDirectory = path.resolve(projectRoot, env.SEED_LAYERS_DIR)
+  const seededLayers = await seedLayersFromDirectory(postgis, seedDirectory)
+  console.log(`[layers] seeded ${seededLayers.length} layers from ${seedDirectory}`)
+}
 await discoverAndLoad(postgis)
 
 const app = new Hono()

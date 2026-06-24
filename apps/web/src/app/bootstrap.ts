@@ -58,6 +58,7 @@ export async function aggregateThreadItems(runs: { id: string; status: string }[
 }
 
 export function transcriptEntriesToConversationItems(entries: TranscriptEntry[]): ConversationItem[] {
+  const assistantContentByCallId = assistantToolContentByCallId(entries)
   return entries.flatMap((entry): ConversationItem[] => {
     if (entry.kind === 'message') {
       const role = typeof entry.payload.role === 'string' ? entry.payload.role : null
@@ -85,7 +86,33 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
     if (entry.kind === 'tool_call') {
       const callId = typeof entry.payload.callId === 'string' ? entry.payload.callId : null
       if (!callId) return []
-      return [{
+      const contentFromCheckpoint = assistantContentByCallId.get(callId) ?? null
+      const assistantContent = contentFromCheckpoint
+        ?? (typeof entry.payload.assistantContent === 'string' && entry.payload.assistantContent.trim()
+        ? entry.payload.assistantContent.trim()
+        : null)
+      const items: ConversationItem[] = []
+      if (assistantContent) {
+        items.push({
+          itemId: `transcript:${entry.entryId}:assistant-content`,
+          itemType: 'message',
+          runId: entry.runId ?? `thread:${entry.threadId}`,
+          threadId: entry.threadId,
+          turnId: entry.turnId,
+          callId: null,
+          role: 'assistant',
+          body: assistantContent,
+          name: null,
+          arguments: null,
+          output: null,
+          isError: false,
+          phase: null,
+          status: 'completed',
+          metadata: { transcriptEntryId: entry.entryId, assistantContentForCallId: callId, canonical: true },
+          timestamp: entry.timestamp,
+        })
+      }
+      items.push({
         itemId: `transcript:${entry.entryId}`,
         itemType: 'function_call',
         runId: entry.runId ?? `thread:${entry.threadId}`,
@@ -102,7 +129,8 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
         status: 'completed',
         metadata: { transcriptEntryId: entry.entryId, canonical: true },
         timestamp: entry.timestamp,
-      }]
+      })
+      return items
     }
     if (entry.kind === 'tool_result') {
       const callId = typeof entry.payload.callId === 'string' ? entry.payload.callId : null
@@ -128,6 +156,23 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
     }
     return []
   })
+}
+
+function assistantToolContentByCallId(entries: TranscriptEntry[]): Map<string, string> {
+  const contentByCallId = new Map<string, string>()
+  for (const entry of entries) {
+    if (entry.kind === 'tool_call') {
+      const callId = typeof entry.payload.callId === 'string' ? entry.payload.callId : null
+      const content = typeof entry.payload.assistantContent === 'string' ? entry.payload.assistantContent.trim() : ''
+      if (callId && content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
+      continue
+    }
+    if (entry.kind !== 'checkpoint' || entry.payload.type !== 'assistant_content_for_tool_call') continue
+    const callId = typeof entry.payload.callId === 'string' ? entry.payload.callId : null
+    const content = typeof entry.payload.content === 'string' ? entry.payload.content.trim() : ''
+    if (callId && content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
+  }
+  return contentByCallId
 }
 
 export function mergeConversationItems(canonical: ConversationItem[], replayed: ConversationItem[]): ConversationItem[] {
