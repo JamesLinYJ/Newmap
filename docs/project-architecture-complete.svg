@@ -1,0 +1,297 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1120" width="1600" height="1120">
+<style>
+text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', 'Microsoft JhengHei', 'SimHei', sans-serif; }
+.node { filter: url(#softShadow); }
+</style>
+<defs>
+<filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0f172a" flood-opacity="0.08"/></filter>
+<marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker>
+<marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#16a34a"/></marker>
+<marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#ea580c"/></marker>
+<marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#9333ea"/></marker>
+<marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/></marker>
+<marker id="arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#dc2626"/></marker>
+</defs>
+<rect width="1600" height="1120" fill="#ffffff"/>
+<rect x="24" y="24" width="1552" height="1072" rx="32" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="60" y="70" font-size="24" fill="#0f172a" font-weight="800" text-anchor="start">地理智能平台完整架构图</text>
+<text x="60" y="98" font-size="13.5" fill="#475569" font-weight="400" text-anchor="start">React 工作台 + Node WebSocket 控制面 + Agent Runtime + 工具化气象链路 + PostGIS / 文件会话事实源</text>
+<rect x="1190" y="52" width="164" height="28" rx="14" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+<text x="1272.0" y="70" font-size="11.5" fill="#9a3412" font-weight="600" text-anchor="middle">Docker 仅运行 PostGIS</text>
+<rect x="1368" y="52" width="92" height="28" rx="14" fill="#ecfeff" stroke="#a5f3fc" stroke-width="1"/>
+<text x="1414.0" y="70" font-size="11.5" fill="#155e75" font-weight="600" text-anchor="middle">HTTP 仅数据面</text>
+<rect x="1490" y="52" width="84" height="28" rx="14" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+<text x="1532.0" y="70" font-size="11.5" fill="#1d4ed8" font-weight="600" text-anchor="middle">/ws 控制主线</text>
+<rect x="54" y="130" width="330" height="390" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="8 6"/>
+<text x="74" y="160" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">用户与前端工作台</text>
+<text x="74" y="182" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">apps/web: React + MapLibre + 液体玻璃 UI</text>
+<rect x="430" y="130" width="440" height="390" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="8 6"/>
+<text x="450" y="160" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">Node/TypeScript Server</text>
+<text x="450" y="182" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">server: Hono HTTP + /ws + 运行时编排</text>
+<rect x="915" y="130" width="315" height="390" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="8 6"/>
+<text x="935" y="160" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">Agent 与工具层</text>
+<text x="935" y="182" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">tool-calling、审批、valueRef、artifact</text>
+<rect x="1270" y="130" width="276" height="390" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="8 6"/>
+<text x="1290" y="160" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">外部与科学计算</text>
+<text x="1290" y="182" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">模型 provider + Python weather worker</text>
+<rect x="54" y="580" width="1492" height="350" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="8 6"/>
+<text x="74" y="610" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">事实源、数据面与部署边界</text>
+<text x="74" y="632" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">JSONL 记录运行事实；PostGIS 保存投影和元数据；runtime 根目录保存上传与产物</text>
+<rect x="84" y="185" width="270" height="92" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="98" y="199" width="34" height="34" rx="10" fill="#eff6ff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="115" y="222" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">UI</text>
+<text x="144" y="213" font-size="14" fill="#111827" font-weight="700" text-anchor="start">AppShell 页面装配</text>
+<text x="144" y="235" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">路由、页面容器、视觉工作台</text>
+<text x="144" y="251" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">不直接持有网络请求细节</text>
+<rect x="84" y="300" width="270" height="100" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="98" y="314" width="34" height="34" rx="10" fill="#f0fdfa" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="115" y="337" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">C</text>
+<text x="144" y="328" font-size="14" fill="#111827" font-weight="700" text-anchor="start">六类前端控制器</text>
+<text x="144" y="350" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">connection / session-thread / run</text>
+<text x="144" y="366" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">resource / tooling / navigation</text>
+<rect x="84" y="423" width="126" height="70" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="98" y="437" width="34" height="34" rx="10" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="115" y="460" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">M</text>
+<text x="144" y="451" font-size="14" fill="#111827" font-weight="700" text-anchor="start">地图视图</text>
+<text x="144" y="473" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">MapLibre</text>
+<text x="144" y="489" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">图层与结果</text>
+<rect x="228" y="423" width="126" height="70" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="242" y="437" width="34" height="34" rx="10" fill="#faf5ff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="259" y="460" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">D</text>
+<text x="288" y="451" font-size="14" fill="#111827" font-weight="700" text-anchor="start">Debug/工具台</text>
+<text x="288" y="473" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">工具列表</text>
+<text x="288" y="489" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">valueRef 选择</text>
+<rect x="460" y="185" width="180" height="92" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="474" y="199" width="34" height="34" rx="10" fill="#eff6ff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="491" y="222" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">WS</text>
+<text x="520" y="213" font-size="14" fill="#111827" font-weight="700" text-anchor="start">WebSocket /ws</text>
+<text x="520" y="235" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">请求 ID envelope</text>
+<text x="520" y="251" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">run.item/event/snapshot</text>
+<rect x="664" y="185" width="176" height="92" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="678" y="199" width="34" height="34" rx="10" fill="#ecfeff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="695" y="222" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">HTTP</text>
+<text x="724" y="213" font-size="14" fill="#111827" font-weight="700" text-anchor="start">Hono HTTP 数据面</text>
+<text x="724" y="235" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">/health</text>
+<text x="724" y="251" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">上传/下载/地图资源</text>
+<rect x="460" y="305" width="180" height="92" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="474" y="319" width="34" height="34" rx="10" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="491" y="342" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">S</text>
+<text x="520" y="333" font-size="14" fill="#111827" font-weight="700" text-anchor="start">PlatformStore</text>
+<text x="520" y="355" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">内存投影 + 事件总线</text>
+<text x="520" y="371" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">启动前回放 JSONL</text>
+<rect x="664" y="305" width="176" height="92" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="678" y="319" width="34" height="34" rx="10" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="695" y="342" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">GIS</text>
+<text x="724" y="333" font-size="14" fill="#111827" font-weight="700" text-anchor="start">PostGisRepository</text>
+<text x="724" y="355" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">图层导入/查询</text>
+<text x="724" y="371" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">空间数据元信息</text>
+<rect x="460" y="420" width="180" height="72" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="474" y="434" width="34" height="34" rx="10" fill="#fff7ed" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="491" y="457" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">F</text>
+<text x="520" y="448" font-size="14" fill="#111827" font-weight="700" text-anchor="start">RuntimeFileStore</text>
+<text x="520" y="470" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">线程文件库</text>
+<text x="520" y="486" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">相对路径引用</text>
+<rect x="664" y="420" width="176" height="72" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="678" y="434" width="34" height="34" rx="10" fill="#fff7ed" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="695" y="457" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">A</text>
+<text x="724" y="448" font-size="14" fill="#111827" font-weight="700" text-anchor="start">Artifact Routes</text>
+<text x="724" y="470" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">metadata/geojson/file</text>
+<text x="724" y="486" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">download</text>
+<rect x="945" y="185" width="250" height="104" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="959" y="199" width="34" height="34" rx="10" fill="#ede9fe" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="976" y="222" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">AG</text>
+<text x="1005" y="213" font-size="14" fill="#111827" font-weight="700" text-anchor="start">GeoAgentRuntime</text>
+<text x="1005" y="235" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">模型流式输出、工具循环</text>
+<text x="1005" y="251" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">审批恢复、取消、确定性短临链</text>
+<rect x="945" y="315" width="250" height="88" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="959" y="329" width="34" height="34" rx="10" fill="#fef2f2" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="976" y="352" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">TR</text>
+<text x="1005" y="343" font-size="14" fill="#111827" font-weight="700" text-anchor="start">Tool Registry / Loader</text>
+<text x="1005" y="365" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">ENABLED_TOOL_PROVIDERS 显式启用</text>
+<text x="1005" y="381" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">validateToolProvider 后暴露</text>
+<rect x="945" y="428" width="112" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="959" y="442" width="34" height="34" rx="10" fill="#eff6ff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="976" y="465" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">TS</text>
+<text x="1005" y="456" font-size="14" fill="#111827" font-weight="700" text-anchor="start">TS 工具</text>
+<text x="1005" y="478" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">spatial/routing</text>
+<text x="1005" y="494" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">geocode/chart</text>
+<rect x="1083" y="428" width="112" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="1097" y="442" width="34" height="34" rx="10" fill="#dbeafe" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="1114" y="465" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">W</text>
+<text x="1143" y="456" font-size="14" fill="#111827" font-weight="700" text-anchor="start">Weather Provider</text>
+<text x="1143" y="478" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">valueRef 解析</text>
+<text x="1143" y="494" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">artifact 持久化</text>
+<rect x="1300" y="185" width="216" height="104" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="1314" y="199" width="34" height="34" rx="10" fill="#ede9fe" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="1331" y="222" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">LLM</text>
+<text x="1360" y="213" font-size="14" fill="#111827" font-weight="700" text-anchor="start">ModelAdapterRegistry</text>
+<text x="1360" y="235" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">OpenAI Compatible / Anthropic</text>
+<text x="1360" y="251" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">Gemini / Ollama provider</text>
+<rect x="1300" y="315" width="216" height="88" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="1314" y="329" width="34" height="34" rx="10" fill="#f0fdfa" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="1331" y="352" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">PY</text>
+<text x="1360" y="343" font-size="14" fill="#111827" font-weight="700" text-anchor="start">Python Worker</text>
+<text x="1360" y="365" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">FastAPI /tools/{name}</text>
+<text x="1360" y="381" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">禁止绝对路径与越界路径</text>
+<rect x="1300" y="428" width="216" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="1314" y="442" width="34" height="34" rx="10" fill="#dcfce7" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="1331" y="465" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">GW</text>
+<text x="1360" y="456" font-size="14" fill="#111827" font-weight="700" text-anchor="start">gis_weather</text>
+<text x="1360" y="478" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">xarray 科学语义</text>
+<text x="1360" y="494" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">rasterio 渲染 / nowcast / DOCX</text>
+<rect x="84" y="650" width="225" height="100" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="98" y="664" width="34" height="34" rx="10" fill="#fff7ed" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="115" y="687" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">FILE</text>
+<text x="144" y="678" font-size="14" fill="#111827" font-weight="700" text-anchor="start">runtime/uploads/files</text>
+<text x="144" y="700" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">通用线程文件库</text>
+<text x="144" y="716" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">NC/GRIB/HDF5/GeoTIFF</text>
+<text x="144" y="732" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">气象输入事实源</text>
+<rect x="335" y="650" width="230" height="100" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="349" y="664" width="34" height="34" rx="10" fill="#fff7ed" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="366" y="687" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">ART</text>
+<text x="395" y="678" font-size="14" fill="#111827" font-weight="700" text-anchor="start">runtime/artifacts</text>
+<text x="395" y="700" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">GeoJSON / PNG / DOCX</text>
+<text x="395" y="716" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">按 runId + artifactId 落盘</text>
+<text x="395" y="732" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">HTTP 数据面读取</text>
+<path d="M596,654 C596,641 856,641 856,654 L856,744 C856,757 596,757 596,744 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<ellipse cx="726.0" cy="654" rx="130.0" ry="18" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="726.0" y="659" font-size="13.5" fill="#111827" font-weight="700" text-anchor="middle">runtime/conversations/</text>
+<text x="612" y="688" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">thread / run / event</text>
+<text x="612" y="704" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">conversation item / context</text>
+<text x="612" y="720" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">Agent 会话事实源</text>
+<path d="M888,654 C888,641 1148,641 1148,654 L1148,744 C1148,757 888,757 888,744 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<ellipse cx="1018.0" cy="654" rx="130.0" ry="18" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="1018.0" y="659" font-size="13.5" fill="#111827" font-weight="700" text-anchor="middle">Postgres / PostGIS</text>
+<text x="904" y="688" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">session 投影、artifact 元数据</text>
+<text x="904" y="704" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">runtime config、tool catalog</text>
+<text x="904" y="720" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">图层 metadata 与空间表</text>
+<rect x="1180" y="650" width="225" height="100" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="1194" y="664" width="34" height="34" rx="10" fill="#ecfeff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="1211" y="687" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">DEV</text>
+<text x="1240" y="678" font-size="14" fill="#111827" font-weight="700" text-anchor="start">开发启动边界</text>
+<text x="1240" y="700" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">PostGIS: Docker</text>
+<text x="1240" y="716" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">Worker/API/Web: 宿主机进程</text>
+<text x="1240" y="732" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">dev.ps1 / dev.sh 编排</text>
+<rect x="84" y="800" width="310" height="84" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="98" y="814" width="34" height="34" rx="10" fill="#ecfeff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="115" y="837" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">API</text>
+<text x="144" y="828" font-size="14" fill="#111827" font-weight="700" text-anchor="start">HTTP 数据面保留项</text>
+<text x="144" y="850" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">文件上传、图层注册/替换、artifact 元数据/GeoJSON/下载、底图资源</text>
+<text x="144" y="866" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">不承载会话、线程、运行、工具命令</text>
+<rect x="430" y="800" width="350" height="84" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="444" y="814" width="34" height="34" rx="10" fill="#eff6ff" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="461" y="837" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">CMD</text>
+<text x="490" y="828" font-size="14" fill="#111827" font-weight="700" text-anchor="start">WebSocket 命令族</text>
+<text x="490" y="850" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">session/thread/run/tool/config/provider/system/file/layer</text>
+<text x="490" y="866" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">连接恢复后重订阅当前 run 并拉完整快照</text>
+<rect x="815" y="800" width="310" height="84" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="829" y="814" width="34" height="34" rx="10" fill="#ede9fe" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="846" y="837" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">REF</text>
+<text x="875" y="828" font-size="14" fill="#111827" font-weight="700" text-anchor="start">valueRef 黑板</text>
+<text x="875" y="850" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">dataset_ref / variable_ref / bbox_ref / sequence_ref</text>
+<text x="875" y="866" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">未知引用硬失败，不让模型复制事实</text>
+<rect x="1160" y="800" width="245" height="84" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
+<rect x="1174" y="814" width="34" height="34" rx="10" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.0"/>
+<text x="1191" y="837" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">OUT</text>
+<text x="1220" y="828" font-size="14" fill="#111827" font-weight="700" text-anchor="start">结果消费</text>
+<text x="1220" y="850" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">地图图层、水合详情、下载报告</text>
+<text x="1220" y="866" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">DebugPage 可见 provider 不可用原因</text>
+<line x1="354" y1="230" x2="460" y2="230" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+<rect x="374.0" y="207.0" width="66" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="407.0" y="223.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">/ws 命令</text>
+<line x1="460" y1="252" x2="354" y2="252" stroke="#9333ea" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#arrow-purple)"/>
+<rect x="376.0" y="229.0" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="407.0" y="245.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">实时推送</text>
+<path d="M 354 350 L 390 350 L 390 230 L 664 230" fill="none" stroke="#16a34a" stroke-width="2.0" marker-end="url(#arrow-green)"/>
+<rect x="410.5" y="257.0" width="98" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="459.5" y="273.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">HTTP 上传/下载</text>
+<path d="M 640 230 L 890 230 L 945 230" fill="none" stroke="#2563eb" stroke-width="2.0" marker-end="url(#arrow-blue)"/>
+<rect x="780.0" y="207.0" width="90" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="825.0" y="223.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">run:start</text>
+<line x1="1030" y1="185" x2="1030" y2="130" stroke="#2563eb" stroke-width="0" marker-end="url(#arrow-blue)"/>
+<line x1="1195" y1="230" x2="1300" y2="230" stroke="#9333ea" stroke-width="2.0" marker-end="url(#arrow-purple)"/>
+<rect x="1170.5" y="207.0" width="154" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1247.5" y="223.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">stream/tool calls</text>
+<line x1="1070" y1="289" x2="1070" y2="315" stroke="#2563eb" stroke-width="2.0" marker-end="url(#arrow-blue)"/>
+<rect x="1039.0" y="279.0" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1070.0" y="295.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">执行</text>
+<line x1="1195" y1="360" x2="1300" y2="360" stroke="#9333ea" stroke-width="1.7" stroke-dasharray="5 3" marker-end="url(#arrow-purple)"/>
+<rect x="1202.5" y="337.0" width="90" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1247.5" y="353.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">LLM 结构化解读</text>
+<line x1="1139" y1="428" x2="1139" y2="403" stroke="#ea580c" stroke-width="1.7" marker-end="url(#arrow-orange)"/>
+<rect x="1098.0" y="392.5" width="82" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1139.0" y="408.5" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">Provider</text>
+<path d="M 1195 460 L 1238 460 L 1238 360 L 1300 360" fill="none" stroke="#ea580c" stroke-width="2.0" marker-end="url(#arrow-orange)"/>
+<rect x="1205.75" y="399.0" width="106" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1258.75" y="415.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">worker call</text>
+<line x1="1408" y1="403" x2="1408" y2="428" stroke="#16a34a" stroke-width="1.8" marker-end="url(#arrow-green)"/>
+<rect x="1377.0" y="392.5" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1408.0" y="408.5" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">科学计算</text>
+<path d="M 550 397 L 550 560 L 716 560 L 716 636" fill="none" stroke="#16a34a" stroke-width="2.0" stroke-dasharray="5 3" marker-end="url(#arrow-green)"/>
+<rect x="602.0" y="507.25" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="633.0" y="523.25" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">写/回放</text>
+<path d="M 550 397 L 590 540 L 1018 540 L 1018 636" fill="none" stroke="#16a34a" stroke-width="2.0" stroke-dasharray="5 3" marker-end="url(#arrow-green)"/>
+<rect x="781.0" y="499.25" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="812.0" y="515.25" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">投影/配置</text>
+<path d="M 752 397 L 752 560 L 1018 560 L 1018 636" fill="none" stroke="#16a34a" stroke-width="2.0" marker-end="url(#arrow-green)"/>
+<rect x="834.0" y="535.25" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="865.0" y="551.25" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">图层/空间</text>
+<path d="M 548 492 L 548 560 L 196 560 L 196 650" fill="none" stroke="#16a34a" stroke-width="2.0" marker-end="url(#arrow-green)"/>
+<rect x="341.0" y="538.5" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="372.0" y="554.5" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">保存/列举</text>
+<path d="M 752 492 L 752 580 L 450 580 L 450 650" fill="none" stroke="#16a34a" stroke-width="2.0" marker-end="url(#arrow-green)"/>
+<rect x="570.0" y="548.5" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="601.0" y="564.5" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">产物水合</text>
+<path d="M 1139 492 L 1139 548 L 450 548 L 450 650" fill="none" stroke="#16a34a" stroke-width="2.0" marker-end="url(#arrow-green)"/>
+<rect x="741.5" y="528.5" width="146" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="814.5" y="544.5" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">PNG/GeoJSON/DOCX</text>
+<path d="M 1139 492 L 1139 610 L 970 610 L 970 800" fill="none" stroke="#9333ea" stroke-width="2.0" marker-end="url(#arrow-purple)"/>
+<rect x="1013.5" y="603.0" width="82" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1054.5" y="619.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">valueRef</text>
+<path d="M 970 800 L 970 760 L 1245 760 L 1245 403 L 1070 403" fill="none" stroke="#9333ea" stroke-width="2.0" stroke-dasharray="4 3" marker-end="url(#arrow-purple)"/>
+<rect x="1129.0" y="622.2" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1160.0" y="638.2" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">解析引用</text>
+<path d="M 664 845 L 810 845 L 810 277 L 664 277" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-red)"/>
+<rect x="767.0" y="546.0" width="90" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="812.0" y="562.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">命令不走 HTTP</text>
+<line x1="1240" y1="750" x2="1018" y2="762" stroke="#ea580c" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+<rect x="1044.0" y="733.0" width="170" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1129.0" y="749.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">只有 PostGIS 在 Docker</text>
+<path d="M 1195 850 L 1500 850 L 1500 550 L 354 550 L 354 458" fill="none" stroke="#16a34a" stroke-width="2.0" marker-end="url(#arrow-green)"/>
+<rect x="863.6" y="626.6" width="74" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="900.6" y="642.6" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">前端展示/下载</text>
+<line x1="219" y1="277" x2="219" y2="300" stroke="#6b7280" stroke-width="1.4" stroke-dasharray="4 2" marker-end="url(#arrow-gray)"/>
+<rect x="188.0" y="265.5" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="219.0" y="281.5" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">拆分状态</text>
+<line x1="210" y1="458" x2="228" y2="458" stroke="#6b7280" stroke-width="1.2" marker-end="url(#arrow-gray)"/>
+<line x1="640" y1="351" x2="664" y2="351" stroke="#6b7280" stroke-width="1.3" marker-end="url(#arrow-gray)"/>
+<rect x="621.0" y="328.0" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="652.0" y="344.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">layer</text>
+<line x1="640" y1="456" x2="664" y2="456" stroke="#6b7280" stroke-width="1.3" marker-end="url(#arrow-gray)"/>
+<rect x="611.0" y="433.0" width="82" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="652.0" y="449.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">artifact</text>
+<line x1="1057" y1="460" x2="1083" y2="460" stroke="#6b7280" stroke-width="1.3" marker-end="url(#arrow-gray)"/>
+<rect x="1033.0" y="437.0" width="74" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1070.0" y="453.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">weather</text>
+<line x1="1057" y1="450" x2="945" y2="450" stroke="#6b7280" stroke-width="1.3" marker-end="url(#arrow-gray)"/>
+<rect x="970.0" y="427.0" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1001.0" y="443.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">通用工具</text>
+<line x1="1516" y1="360" x2="1516" y2="428" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+<rect x="1483.0" y="371.0" width="66" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="1516.0" y="387.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">domain</text>
+<rect x="60" y="960" width="1480" height="98" rx="20" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2"/>
+<text x="86" y="990" font-size="15" fill="#0f172a" font-weight="800" text-anchor="start">关键边界</text>
+<text x="86" y="1018" font-size="12.5" fill="#334155" font-weight="400" text-anchor="start">1. /ws 是业务控制与实时状态唯一主线；断线期间的写命令失败，不自动重放，恢复后订阅 run 并获取完整快照。</text>
+<text x="86" y="1038" font-size="12.5" fill="#334155" font-weight="400" text-anchor="start">2. Weather 不再有专用 REST/数据库状态：NC 等文件进入通用线程文件库，工具链靠 valueRef 传递 dataset、变量、时次、bbox、阈值和解释结果。</text>
+<text x="86" y="1058" font-size="12.5" fill="#334155" font-weight="400" text-anchor="start">3. 分片文件是 thread/run/event/context 的事实源；PostGIS 存 artifact 索引、工具目录、运行配置和图层 metadata。</text>
+<rect x="1110" y="952" width="410" height="90" rx="16" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.0"/>
+<text x="1130" y="978" font-size="13" fill="#0f172a" font-weight="700" text-anchor="start">图例</text>
+<line x1="1130" y1="1000" x2="1184" y2="1000" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<text x="1194" y="1004" font-size="11.5" fill="#475569" font-weight="400" text-anchor="start">控制/请求</text>
+<line x1="1130" y1="1024" x2="1184" y2="1024" stroke="#16a34a" stroke-width="2" marker-end="url(#arrow-green)"/>
+<text x="1194" y="1028" font-size="11.5" fill="#475569" font-weight="400" text-anchor="start">数据/持久化</text>
+<line x1="1310" y1="1000" x2="1364" y2="1000" stroke="#9333ea" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arrow-purple)"/>
+<text x="1374" y="1004" font-size="11.5" fill="#475569" font-weight="400" text-anchor="start">流式/引用</text>
+<line x1="1310" y1="1024" x2="1364" y2="1024" stroke="#ea580c" stroke-width="2" marker-end="url(#arrow-orange)"/>
+<text x="1374" y="1028" font-size="11.5" fill="#475569" font-weight="400" text-anchor="start">外部/worker</text>
+</svg>
