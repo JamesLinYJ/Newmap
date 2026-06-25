@@ -49,7 +49,7 @@
     background:
       linear-gradient(115deg, transparent 0 24%, rgb(255 255 255 / 0.48) 28%, transparent 34% 100%),
       radial-gradient(ellipse at 30% 20%, rgb(255 255 255 / 0.9), transparent 28%);
-    animation: dc-liquid-drift 18s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+    transform: translateZ(0);
   }
 
   .dc-route-loading {
@@ -146,6 +146,7 @@
     -webkit-backdrop-filter: var(--liquid-filter, var(--liquid-filter-panel)) blur(var(--liquid-blur, 18px)) saturate(230%) contrast(1.16) brightness(1.07);
   }
 
+  /* 玻璃膜是静态材质层，运行态动画只保留给加载、输入流和明确交互反馈。 */
   .glass::before,
   .glass-subtle::before,
   .glass-strong::before,
@@ -218,8 +219,7 @@
       radial-gradient(ellipse at 100% 100%, rgb(255 255 255 / 0.13), transparent 38%);
     filter: blur(0.35px);
     mix-blend-mode: screen;
-    transform: translate3d(-7%, -4%, 0) rotate(0deg);
-    animation: dc-liquid-film 9s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+    transform: translate3d(-7%, -4%, 0) rotate(-6deg) scale(1.02);
   }
 
   .glass::after,
@@ -2229,6 +2229,7 @@
     -webkit-backdrop-filter: blur(10px) saturate(185%) contrast(1.06) brightness(1.06);
   }
 
+  /* 主按钮与用户气泡共享静态折射膜，避免提交后对话区持续闪动。 */
   .btn-primary::before,
   .send-btn::before,
   .msg-user::before {
@@ -2241,7 +2242,7 @@
     background:
       conic-gradient(from 170deg at 50% 50%, transparent 0 18%, rgb(255 255 255 / 0.40) 28%, rgb(199 199 204 / 0.20) 42%, transparent 58%, rgb(255 255 255 / 0.28) 76%, transparent 100%);
     mix-blend-mode: screen;
-    animation: dc-liquid-film 8s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+    transform: translate3d(-6%, -4%, 0) rotate(-6deg) scale(1.02);
   }
 
   .btn-primary > *,
@@ -2332,33 +2333,6 @@
   .dc-map-stage__basemap,
   .dc-map-stage__zoom {
     @apply bg-white shadow-none backdrop-blur-none;
-  }
-}
-
-@keyframes dc-liquid-drift {
-  0% {
-    transform: translate3d(-1.5%, -1%, 0) scale(1);
-  }
-  100% {
-    transform: translate3d(1.5%, 1%, 0) scale(1.04);
-  }
-}
-
-@keyframes dc-liquid-film {
-  0% {
-    opacity: var(--liquid-film-opacity, 0.56);
-    transform: translate3d(-8%, -5%, 0) rotate(-8deg) scale(1);
-    filter: blur(0.5px) hue-rotate(0deg);
-  }
-  55% {
-    opacity: 0.78;
-    transform: translate3d(5%, 2%, 0) rotate(5deg) scale(1.04);
-    filter: blur(0.7px) hue-rotate(12deg);
-  }
-  100% {
-    opacity: var(--liquid-film-opacity, 0.60);
-    transform: translate3d(9%, 5%, 0) rotate(10deg) scale(1.07);
-    filter: blur(0.55px) hue-rotate(-10deg);
   }
 }
 
@@ -3781,24 +3755,59 @@
   .digital-cartographer {
     --dc-topbar-height: 68px;
     --dc-sidebar-width: 232px;
-    --dc-accent: #0f5f6d;
-    --dc-accent-2: #4b7f8c;
-    --dc-ink: #10252c;
-    --dc-muted: #58707a;
+    --dc-accent: #102a32;
+    --dc-accent-2: #50636c;
+    --dc-ink: #101820;
+    --dc-muted: #5e6d76;
+    --liquid-alpha: 0.062;
+    --liquid-blur: 24px;
+    --liquid-film-opacity: 0.42;
+    --liquid-edge: rgb(255 255 255 / 0.50);
+    --liquid-filter-panel: url("#dc-liquid-glass-panel");
+    --liquid-filter-strong: url("#dc-liquid-glass-strong");
+    --liquid-filter-chip: url("#dc-liquid-glass-chip");
+    --liquid-filter: var(--liquid-filter-panel);
+    --glass-panel-bg:
+      radial-gradient(circle at 12% -10%, rgb(255 255 255 / 0.46), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0.065) 52%, rgb(36 48 56 / 0.10));
+    --glass-strong-bg:
+      radial-gradient(circle at 12% -12%, rgb(255 255 255 / 0.56), transparent 36%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.30), rgb(255 255 255 / 0.085) 54%, rgb(28 38 46 / 0.13));
+    --glass-chip-bg:
+      radial-gradient(circle at 24% 12%, rgb(255 255 255 / 0.44), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.24), rgb(255 255 255 / 0.07) 58%, rgb(26 34 42 / 0.16));
+    --glass-control-bg:
+      radial-gradient(circle at 28% 10%, rgb(255 255 255 / 0.58), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.31), rgb(255 255 255 / 0.09) 58%, rgb(24 32 40 / 0.18));
+    --glass-control-hover:
+      radial-gradient(circle at 30% 10%, rgb(255 255 255 / 0.72), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.13) 58%, rgb(24 32 40 / 0.14));
+    --glass-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.78),
+      inset 0 -1px 0 rgb(18 27 35 / 0.14),
+      inset 0 0 34px rgb(255 255 255 / 0.055),
+      0 24px 70px rgb(20 31 41 / 0.16);
+    --glass-shadow-soft:
+      inset 0 1px 0 rgb(255 255 255 / 0.68),
+      inset 0 -1px 0 rgb(18 27 35 / 0.10),
+      0 12px 32px rgb(20 31 41 / 0.11);
+    --glass-highlight: rgb(255 255 255 / 0.74);
+    --glass-dark: rgb(21 28 35 / 0.74);
     color: var(--dc-ink);
     background:
-      radial-gradient(circle at 8% 4%, rgb(255 255 255 / 0.94), transparent 26%),
-      radial-gradient(circle at 82% 7%, rgb(194 229 233 / 0.54), transparent 28%),
-      radial-gradient(circle at 54% 88%, rgb(177 207 224 / 0.34), transparent 36%),
-      linear-gradient(145deg, #edf4f5 0%, #e7eef3 44%, #dfe6ec 100%);
+      radial-gradient(circle at 10% 4%, rgb(255 255 255 / 0.78), transparent 25%),
+      radial-gradient(circle at 82% 9%, rgb(132 158 168 / 0.36), transparent 28%),
+      radial-gradient(circle at 44% 94%, rgb(42 56 68 / 0.18), transparent 38%),
+      linear-gradient(145deg, #dfe8eb 0%, #ced9df 48%, #bac5cc 100%);
   }
 
+  /* 大面积底纹保持静态；液体感来自折射与高光，不能在 idle 状态漂移闪烁。 */
   .digital-cartographer::before {
-    opacity: 0.88;
+    opacity: 0.74;
     background:
-      radial-gradient(ellipse at 15% 12%, rgb(255 255 255 / 0.88), transparent 25%),
-      radial-gradient(ellipse at 80% 16%, rgb(195 239 236 / 0.32), transparent 28%),
-      linear-gradient(118deg, transparent 0 27%, rgb(255 255 255 / 0.4) 34%, transparent 42% 100%);
+      radial-gradient(ellipse at 15% 12%, rgb(255 255 255 / 0.74), transparent 25%),
+      radial-gradient(ellipse at 80% 16%, rgb(210 224 229 / 0.28), transparent 28%),
+      linear-gradient(118deg, transparent 0 27%, rgb(255 255 255 / 0.30) 34%, transparent 42% 100%);
   }
 
   .digital-cartographer::after {
@@ -3807,7 +3816,7 @@
     inset: 0;
     z-index: -9;
     pointer-events: none;
-    opacity: 0.42;
+    opacity: 0.30;
     background-image:
       linear-gradient(rgb(255 255 255 / 0.22) 1px, transparent 1px),
       linear-gradient(90deg, rgb(255 255 255 / 0.18) 1px, transparent 1px);
@@ -3827,31 +3836,25 @@
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    border: 1px solid rgb(255 255 255 / 0.58);
-    background:
-      radial-gradient(circle at 12% 0%, rgb(255 255 255 / 0.54), transparent 31%),
-      linear-gradient(145deg, rgb(255 255 255 / 0.34), rgb(255 255 255 / 0.11) 54%, rgb(212 234 238 / 0.13));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.9),
-      inset 1px 0 0 rgb(255 255 255 / 0.34),
-      inset 0 -1px 0 rgb(45 79 88 / 0.12),
-      0 20px 54px rgb(42 68 78 / 0.12);
-    backdrop-filter: var(--liquid-filter) blur(18px) saturate(190%) contrast(1.08) brightness(1.04) !important;
-    -webkit-backdrop-filter: var(--liquid-filter) blur(18px) saturate(190%) contrast(1.08) brightness(1.04) !important;
+    border: 1px solid var(--liquid-edge);
+    background: var(--glass-panel-bg);
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: var(--liquid-filter) blur(var(--liquid-blur, 24px)) saturate(220%) contrast(1.15) brightness(1.06) !important;
+    -webkit-backdrop-filter: var(--liquid-filter) blur(var(--liquid-blur, 24px)) saturate(220%) contrast(1.15) brightness(1.06) !important;
   }
 
+  /* LiquidGlassSurface 的内部高光同样静态，防止大面板产生背景呼吸感。 */
   .liquid-glass-surface::before {
     content: "";
     position: absolute;
     inset: -45%;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.46;
+    opacity: var(--liquid-film-opacity, 0.42);
     background:
-      conic-gradient(from 145deg at 50% 50%, transparent 0 18%, rgb(255 255 255 / 0.55) 28%, rgb(151 215 221 / 0.12) 42%, transparent 58%, rgb(255 255 255 / 0.36) 76%, transparent 100%);
+      conic-gradient(from 145deg at 50% 50%, transparent 0 18%, rgb(255 255 255 / 0.48) 28%, rgb(137 151 160 / 0.15) 42%, transparent 58%, rgb(255 255 255 / 0.30) 76%, transparent 100%);
     mix-blend-mode: screen;
-    transform: translate3d(-5%, -4%, 0);
-    animation: dc-liquid-film 12s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+    transform: translate3d(-5%, -4%, 0) rotate(-6deg) scale(1.02);
   }
 
   .liquid-glass-surface::after {
@@ -3863,7 +3866,7 @@
     border-radius: inherit;
     padding: 1px;
     background:
-      linear-gradient(145deg, rgb(255 255 255 / 0.96), rgb(255 255 255 / 0.12) 34%, rgb(176 229 233 / 0.34) 68%, rgb(32 75 85 / 0.16)),
+      linear-gradient(145deg, rgb(255 255 255 / 0.88), rgb(255 255 255 / 0.10) 34%, rgb(194 207 214 / 0.26) 68%, rgb(25 34 42 / 0.18)),
       linear-gradient(180deg, rgb(255 255 255 / 0.22), transparent);
     -webkit-mask:
       linear-gradient(#000 0 0) content-box,
@@ -3878,18 +3881,19 @@
   }
 
   .liquid-glass-surface--strong {
-    background:
-      radial-gradient(circle at 12% -8%, rgb(255 255 255 / 0.68), transparent 34%),
-      linear-gradient(145deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.15) 54%, rgb(179 218 225 / 0.16));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.94),
-      inset 0 -1px 0 rgb(35 76 86 / 0.13),
-      0 26px 64px rgb(43 70 82 / 0.15);
+    --liquid-blur: 26px;
+    --liquid-film-opacity: 0.48;
+    background: var(--glass-strong-bg);
+    box-shadow: var(--glass-shadow);
   }
 
   .liquid-glass-surface--chip {
-    backdrop-filter: var(--liquid-filter) blur(12px) saturate(185%) contrast(1.06) brightness(1.04) !important;
-    -webkit-backdrop-filter: var(--liquid-filter) blur(12px) saturate(185%) contrast(1.06) brightness(1.04) !important;
+    --liquid-blur: 16px;
+    --liquid-film-opacity: 0.34;
+    background: var(--glass-chip-bg);
+    box-shadow: var(--glass-shadow-soft);
+    backdrop-filter: var(--liquid-filter) blur(16px) saturate(210%) contrast(1.12) brightness(1.06) !important;
+    -webkit-backdrop-filter: var(--liquid-filter) blur(16px) saturate(210%) contrast(1.12) brightness(1.06) !important;
   }
 
   .nav-bar {
@@ -3899,13 +3903,8 @@
     padding: 0 10px 0 12px;
     border-radius: 24px;
     border-bottom-width: 1px;
-    background:
-      radial-gradient(circle at 8% -10%, rgb(255 255 255 / 0.72), transparent 32%),
-      linear-gradient(145deg, rgb(255 255 255 / 0.46), rgb(236 249 249 / 0.18));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.94),
-      inset 0 -1px 0 rgb(51 86 96 / 0.1),
-      0 18px 46px rgb(43 68 79 / 0.14);
+    background: var(--glass-strong-bg);
+    box-shadow: var(--glass-shadow);
   }
 
   .nav-bar__identity {
@@ -3913,8 +3912,9 @@
   }
 
   .nav-bar__mark {
-    @apply grid size-9 shrink-0 place-items-center rounded-[14px] border border-white/60 text-[#164f5b];
-    background: linear-gradient(145deg, rgb(255 255 255 / 0.58), rgb(180 224 228 / 0.22));
+    @apply grid size-9 shrink-0 place-items-center rounded-[14px] border border-white/55 text-[#1f3038];
+    background: var(--glass-control-bg);
+    box-shadow: var(--glass-shadow-soft);
   }
 
   .nav-bar__brand {
@@ -3922,11 +3922,11 @@
   }
 
   .nav-bar__brand strong {
-    @apply text-[14px] font-bold tracking-[-0.02em] text-[#15313a];
+    @apply text-[14px] font-bold tracking-[-0.02em] text-[#101820];
   }
 
   .nav-bar__brand span {
-    @apply mt-1 text-[9px] font-semibold tracking-[0.08em] text-[#71868d];
+    @apply mt-1 text-[9px] font-semibold tracking-[0.08em] text-[#5f7078];
   }
 
   .nav-bar__nav {
@@ -3934,11 +3934,13 @@
   }
 
   .nav-bar__nav-item {
-    @apply flex h-9 cursor-pointer items-center gap-1.5 rounded-[13px] border border-transparent px-3 text-[13px] font-semibold text-[#688087] transition-[color,background-color,border-color,box-shadow] duration-200 hover:bg-white/35 hover:text-[#17343d];
+    @apply flex h-9 cursor-pointer items-center gap-1.5 rounded-[13px] border border-transparent px-3 text-[13px] font-semibold text-[#52626b] transition-[color,background-color,border-color,box-shadow,transform] duration-200 hover:text-[#111a21] active:scale-[0.97];
   }
 
   .nav-bar__nav-item--active {
-    @apply border-white/65 bg-white/44 text-[#0f515f] shadow-[inset_0_1px_0_rgb(255_255_255/0.82),0_8px_20px_rgb(42_76_85/0.09)];
+    @apply border-white/60 text-[#111a21];
+    background: var(--glass-control-bg);
+    box-shadow: var(--glass-shadow-soft);
   }
 
   .nav-bar__status {
@@ -3946,16 +3948,17 @@
   }
 
   .nav-bar__status-chip {
-    @apply h-8 items-center gap-1.5 rounded-[12px] border border-white/48 bg-white/22 px-2.5 text-[11px] font-semibold text-[#61777f];
+    @apply h-8 items-center gap-1.5 rounded-[12px] border border-white/42 px-2.5 text-[11px] font-semibold text-[#58666f];
+    background: var(--glass-chip-bg);
   }
 
   .btn-primary {
     background:
-      radial-gradient(circle at 18% 0%, rgb(255 255 255 / 0.24), transparent 30%),
-      linear-gradient(135deg, #116675, #17434d);
+      radial-gradient(circle at 18% 0%, rgb(255 255 255 / 0.30), transparent 30%),
+      linear-gradient(135deg, rgb(24 32 40 / 0.86), rgb(54 64 72 / 0.66));
     box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.32),
-      0 12px 28px rgb(17 84 97 / 0.26);
+      inset 0 1px 0 rgb(255 255 255 / 0.42),
+      0 12px 28px rgb(18 27 35 / 0.24);
   }
 
   .app-shell-grid {
@@ -3983,11 +3986,11 @@
   }
 
   .app-sidebar-copy h2 {
-    @apply mt-1.5 text-[20px] font-bold tracking-[-0.025em] text-[#15313a];
+    @apply mt-1.5 text-[20px] font-bold tracking-[-0.025em] text-[#101820];
   }
 
   .app-sidebar-copy p {
-    @apply mt-2 text-[12px] leading-relaxed text-[#657a82];
+    @apply mt-2 text-[12px] leading-relaxed text-[#5c6a73];
   }
 
   .app-sidebar-nav {
@@ -3996,15 +3999,14 @@
 
   .sidebar-btn,
   .dc-sidebar__item {
-    @apply min-h-11 rounded-[15px] px-3.5 text-[14px] font-semibold text-[#536b73];
+    @apply min-h-11 rounded-[15px] px-3.5 text-[14px] font-semibold text-[#4f5d66] transition-[background-color,color,box-shadow,transform] duration-200 active:scale-[0.98];
   }
 
   .sidebar-btn-active,
   .dc-sidebar__item--active {
-    color: #104f5b;
-    background:
-      radial-gradient(circle at 12% 0%, rgb(255 255 255 / 0.72), transparent 34%),
-      linear-gradient(145deg, rgb(255 255 255 / 0.48), rgb(177 222 226 / 0.2));
+    color: #111a21;
+    background: var(--glass-control-bg);
+    box-shadow: var(--glass-shadow-soft);
   }
 
   .app-sidebar-metrics {
@@ -4017,7 +4019,7 @@
 
   .app-sidebar-metrics p,
   .workspace-overview__card p {
-    @apply mt-1 truncate text-[11px] text-[#748991];
+    @apply mt-1 truncate text-[11px] text-[#66747d];
   }
 
   .app-main {
@@ -4030,19 +4032,18 @@
 
   .workspace-overview__card {
     @apply min-w-0 rounded-[20px] px-4 py-3.5;
-    background:
-      radial-gradient(circle at 10% 0%, rgb(255 255 255 / 0.62), transparent 38%),
-      linear-gradient(145deg, rgb(255 255 255 / 0.36), rgb(255 255 255 / 0.12));
+    background: var(--glass-chip-bg);
+    box-shadow: var(--glass-shadow-soft);
   }
 
   .detail-label,
   .dc-card__eyebrow,
   .dc-panel-section__title {
-    color: #748990;
+    color: #68757e;
   }
 
   .detail-value {
-    color: #18343c;
+    color: #111a21;
   }
 
   .workspace-grid {
@@ -4061,9 +4062,8 @@
 
   .cc-panel,
   .dc-card {
-    background:
-      radial-gradient(circle at 10% -4%, rgb(255 255 255 / 0.62), transparent 32%),
-      linear-gradient(145deg, rgb(255 255 255 / 0.4), rgb(255 255 255 / 0.15));
+    background: var(--glass-strong-bg);
+    box-shadow: var(--glass-shadow);
   }
 
   .dc-map-stage {
@@ -4352,6 +4352,361 @@
 
   .debug-pre {
     @apply rounded-[16px] border-white/52 bg-[#eaf1f2]/65 text-[#35535b];
+  }
+
+  /* ---- smoke liquid glass unification pass ---- */
+
+  .debug-shell {
+    --dc-accent: #102a32;
+    --dc-accent-2: #50636c;
+    --dc-ink: #101820;
+    --dc-muted: #5e6d76;
+    --liquid-alpha: 0.062;
+    --liquid-blur: 24px;
+    --liquid-film-opacity: 0.42;
+    --liquid-edge: rgb(255 255 255 / 0.50);
+    --liquid-filter-panel: url("#dc-liquid-glass-panel");
+    --liquid-filter-strong: url("#dc-liquid-glass-strong");
+    --liquid-filter-chip: url("#dc-liquid-glass-chip");
+    --liquid-filter: var(--liquid-filter-panel);
+    --glass-panel-bg:
+      radial-gradient(circle at 12% -10%, rgb(255 255 255 / 0.46), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0.065) 52%, rgb(36 48 56 / 0.10));
+    --glass-strong-bg:
+      radial-gradient(circle at 12% -12%, rgb(255 255 255 / 0.56), transparent 36%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.30), rgb(255 255 255 / 0.085) 54%, rgb(28 38 46 / 0.13));
+    --glass-chip-bg:
+      radial-gradient(circle at 24% 12%, rgb(255 255 255 / 0.44), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.24), rgb(255 255 255 / 0.07) 58%, rgb(26 34 42 / 0.16));
+    --glass-control-bg:
+      radial-gradient(circle at 28% 10%, rgb(255 255 255 / 0.58), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.31), rgb(255 255 255 / 0.09) 58%, rgb(24 32 40 / 0.18));
+    --glass-control-hover:
+      radial-gradient(circle at 30% 10%, rgb(255 255 255 / 0.72), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.13) 58%, rgb(24 32 40 / 0.14));
+    --glass-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.78),
+      inset 0 -1px 0 rgb(18 27 35 / 0.14),
+      inset 0 0 34px rgb(255 255 255 / 0.055),
+      0 24px 70px rgb(20 31 41 / 0.16);
+    --glass-shadow-soft:
+      inset 0 1px 0 rgb(255 255 255 / 0.68),
+      inset 0 -1px 0 rgb(18 27 35 / 0.10),
+      0 12px 32px rgb(20 31 41 / 0.11);
+    color: var(--dc-ink);
+    background:
+      radial-gradient(circle at 10% 4%, rgb(255 255 255 / 0.78), transparent 25%),
+      radial-gradient(circle at 82% 9%, rgb(132 158 168 / 0.36), transparent 28%),
+      radial-gradient(circle at 44% 94%, rgb(42 56 68 / 0.18), transparent 38%),
+      linear-gradient(145deg, #dfe8eb 0%, #ced9df 48%, #bac5cc 100%);
+  }
+
+  :where(
+    .nav-bar,
+    .app-sidebar,
+    .workspace-overview__card,
+    .dc-card,
+    .cc-panel,
+    .panel,
+    .overview-card,
+    .debug-transcript__entry,
+    .tool-management__hero,
+    .tool-management__overview-card,
+    .tool-management__sidebar,
+    .tool-management__detail .panel,
+    .tool-provider-row,
+    .tool-management__schema-column,
+    .tool-mini-app,
+    .tool-mini-console,
+    .tool-mini-console__card,
+    .tool-mini-app__step,
+    .tool-mini-app__workflow-step,
+    .tool-mini-app__state,
+    .tool-mini-app__contract,
+    .tool-mini-result,
+    .tool-mini-result__facts div,
+    .tool-mini-result__preview,
+    .artifact-list__item
+  ) {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border-color: var(--liquid-edge);
+    background: var(--glass-panel-bg);
+    box-shadow: var(--glass-shadow-soft);
+    backdrop-filter: var(--liquid-filter, var(--liquid-filter-panel)) blur(var(--liquid-blur, 22px)) saturate(215%) contrast(1.14) brightness(1.06);
+    -webkit-backdrop-filter: var(--liquid-filter, var(--liquid-filter-panel)) blur(var(--liquid-blur, 22px)) saturate(215%) contrast(1.14) brightness(1.06);
+  }
+
+  :where(.cc-panel, .dc-card, .panel, .tool-management__hero, .tool-management__sidebar, .tool-mini-app) {
+    background: var(--glass-strong-bg);
+    box-shadow: var(--glass-shadow);
+  }
+
+  :where(
+    .nav-bar__nav-item--active,
+    .nav-bar__status-chip,
+    .sidebar-btn-active,
+    .dc-sidebar__item--active,
+    .cc-icon-button,
+    .cc-mini-button,
+    .cc-mode-trigger,
+    .cc-mode-option,
+    .cc-composer-tool,
+    .cc-send,
+    .toolbar-button,
+    .tool-doc-card,
+    .tool-card,
+    .tool-card__icon,
+    .tool-management__search,
+    .tool-mini-console__field,
+    .tool-mini-console__picker span,
+    .tool-mini-console__algo span,
+    .tool-mini-console__tabs span,
+    .tool-mini-palette span,
+    .tool-mini-style-grid span,
+    .tool-mini-result__downloads a,
+    .tool-mini-result__map-actions button,
+    .dc-map-stage__legend-item,
+    .dc-map-stage__zoom,
+    .dc-map-stage__icon,
+    .dc-map-stage__basemap,
+    .dc-map-stage__canvas .maplibregl-ctrl-scale
+  ) {
+    border-color: rgb(255 255 255 / 0.46);
+    background: var(--glass-chip-bg);
+    box-shadow: var(--glass-shadow-soft);
+    backdrop-filter: var(--liquid-filter, var(--liquid-filter-chip)) blur(16px) saturate(210%) contrast(1.12) brightness(1.06);
+    -webkit-backdrop-filter: var(--liquid-filter, var(--liquid-filter-chip)) blur(16px) saturate(210%) contrast(1.12) brightness(1.06);
+  }
+
+  :where(
+    .nav-bar__nav-item:hover,
+    .cc-icon-button:hover,
+    .cc-mini-button:hover,
+    .cc-composer-tool:hover,
+    .toolbar-button:hover,
+    .tool-card:hover,
+    .tool-doc-card:hover,
+    .tool-mini-result__downloads a:hover,
+    .tool-mini-result__map-actions button:hover,
+    .dc-map-stage__icon:hover,
+    .dc-map-stage__basemap:hover,
+    .dc-map-stage__zoom button:hover
+  ) {
+    background: var(--glass-control-hover);
+  }
+
+  .cc-panel {
+    border-radius: 28px;
+    color: #151d24;
+  }
+
+  .cc-panel-header {
+    border-bottom-color: rgb(255 255 255 / 0.28);
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.12), transparent);
+  }
+
+  .cc-user-prompt {
+    border-radius: 26px 26px 8px 26px;
+    border-color: rgb(255 255 255 / 0.52);
+    background:
+      radial-gradient(circle at 18% 0%, rgb(255 255 255 / 0.58), transparent 34%),
+      linear-gradient(145deg, rgb(214 241 255 / 0.34), rgb(255 255 255 / 0.12) 58%, rgb(44 63 76 / 0.08));
+    box-shadow: var(--glass-shadow-soft);
+    backdrop-filter: var(--liquid-filter-chip) blur(18px) saturate(220%) contrast(1.12);
+    -webkit-backdrop-filter: var(--liquid-filter-chip) blur(18px) saturate(220%) contrast(1.12);
+  }
+
+  .cc-timeline-item--answer .cc-assistant-copy:not(.cc-assistant-copy--thought) {
+    display: inline-block;
+    max-width: min(100%, 760px);
+    border: 1px solid rgb(255 255 255 / 0.40);
+    border-radius: 22px;
+    padding: 10px 14px;
+    background:
+      radial-gradient(circle at 10% 0%, rgb(255 255 255 / 0.38), transparent 34%),
+      linear-gradient(145deg, rgb(255 255 255 / 0.18), rgb(255 255 255 / 0.055));
+    box-shadow: var(--glass-shadow-soft);
+    backdrop-filter: var(--liquid-filter-panel) blur(18px) saturate(205%) contrast(1.10);
+    -webkit-backdrop-filter: var(--liquid-filter-panel) blur(18px) saturate(205%) contrast(1.10);
+  }
+
+  .cc-thought-toggle {
+    border-radius: 999px;
+    padding: 4px 9px;
+    background: rgb(255 255 255 / 0.08);
+  }
+
+  .cc-tool-row {
+    border-radius: 18px;
+  }
+
+  .cc-tool-row-head {
+    min-height: 42px;
+    border-radius: 18px;
+    padding-inline: 10px;
+  }
+
+  .cc-tool-io-card,
+  .cc-tool-detail,
+  .cc-result-card,
+  .cc-plan-panel,
+  .cc-task-progress,
+  .cc-system-card {
+    border-radius: 20px;
+    border-color: rgb(255 255 255 / 0.42);
+    background: var(--glass-panel-bg);
+    box-shadow: var(--glass-shadow-soft);
+  }
+
+  .cc-approval-card {
+    border-radius: 22px;
+    border-color: rgb(245 158 11 / 0.32);
+    background:
+      radial-gradient(circle at 10% 0%, rgb(255 255 255 / 0.42), transparent 34%),
+      linear-gradient(145deg, rgb(245 158 11 / 0.18), rgb(255 255 255 / 0.08));
+  }
+
+  .cc-error-card {
+    border-radius: 22px;
+    border-color: rgb(239 68 68 / 0.34);
+    background:
+      radial-gradient(circle at 10% 0%, rgb(255 255 255 / 0.38), transparent 34%),
+      linear-gradient(145deg, rgb(239 68 68 / 0.16), rgb(255 255 255 / 0.08));
+  }
+
+  .cc-composer {
+    margin: 18px;
+    border-radius: 28px;
+    border-color: rgb(255 255 255 / 0.52);
+    background: var(--glass-strong-bg);
+    box-shadow:
+      var(--glass-shadow),
+      0 0 0 1px rgb(255 255 255 / 0.08);
+  }
+
+  .cc-composer:focus-within {
+    border-color: rgb(255 255 255 / 0.72);
+    box-shadow:
+      var(--glass-shadow),
+      0 0 0 4px rgb(255 255 255 / 0.16);
+  }
+
+  .cc-composer-input {
+    height: 58px;
+    border-radius: 28px 28px 18px 18px;
+    background: transparent;
+    color: #151d24;
+    padding-inline: 22px;
+  }
+
+  .cc-composer-toolbar {
+    min-height: 52px;
+    border-top-color: rgb(255 255 255 / 0.30);
+    border-radius: 0 0 28px 28px;
+    padding-inline: 14px;
+  }
+
+  .cc-composer-tool,
+  .cc-send,
+  .cc-mode-trigger {
+    border-radius: 999px;
+  }
+
+  .cc-composer-tool {
+    width: 38px;
+    height: 38px;
+  }
+
+  .cc-send {
+    width: 42px;
+    height: 42px;
+    color: #fff;
+    background:
+      radial-gradient(circle at 26% 10%, rgb(255 255 255 / 0.72), transparent 34%),
+      linear-gradient(145deg, rgb(255 190 204 / 0.88), rgb(244 116 141 / 0.72));
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.62),
+      0 12px 30px rgb(244 116 141 / 0.24);
+  }
+
+  .cc-send--interrupt {
+    background:
+      radial-gradient(circle at 26% 10%, rgb(255 255 255 / 0.36), transparent 34%),
+      linear-gradient(145deg, rgb(23 31 38 / 0.88), rgb(55 65 73 / 0.76));
+  }
+
+  .cc-mode-trigger--auto,
+  .cc-composer-mode-note--auto {
+    border-color: rgb(245 158 11 / 0.34);
+    background:
+      radial-gradient(circle at 18% 0%, rgb(255 255 255 / 0.44), transparent 34%),
+      linear-gradient(145deg, rgb(245 158 11 / 0.20), rgb(255 255 255 / 0.08));
+  }
+
+  .cc-mode-trigger--plan,
+  .cc-composer-mode-note--plan {
+    border-color: rgb(14 165 233 / 0.30);
+    background:
+      radial-gradient(circle at 18% 0%, rgb(255 255 255 / 0.44), transparent 34%),
+      linear-gradient(145deg, rgb(14 165 233 / 0.18), rgb(255 255 255 / 0.08));
+  }
+
+  .cc-mode-menu,
+  .cc-task-search,
+  .cc-task-row,
+  .cc-context-drawer,
+  .cc-memory-editor textarea {
+    border-color: rgb(255 255 255 / 0.46);
+    background: var(--glass-panel-bg);
+    box-shadow: var(--glass-shadow-soft);
+    backdrop-filter: var(--liquid-filter-panel) blur(20px) saturate(210%) contrast(1.12);
+    -webkit-backdrop-filter: var(--liquid-filter-panel) blur(20px) saturate(210%) contrast(1.12);
+  }
+
+  .dc-map-stage__hud,
+  .dc-map-popup {
+    border-color: rgb(255 255 255 / 0.44);
+    background: var(--glass-panel-bg);
+    box-shadow: var(--glass-shadow-soft);
+  }
+
+  .tool-mini-result__preview img,
+  .tool-mini-slider__canvas > img,
+  .tool-mini-slider__overlay img,
+  .tool-mini-table-preview {
+    background: rgb(255 255 255 / 0.82);
+  }
+
+  .debug-pre {
+    border-color: rgb(255 255 255 / 0.44);
+    background:
+      linear-gradient(145deg, rgb(255 255 255 / 0.24), rgb(255 255 255 / 0.08));
+    color: #26323a;
+  }
+
+  @media (prefers-contrast: more) {
+    .digital-cartographer,
+    .debug-shell {
+      --glass-panel-bg: rgb(255 255 255 / 0.94);
+      --glass-strong-bg: rgb(255 255 255 / 0.96);
+      --glass-chip-bg: rgb(255 255 255 / 0.92);
+      --glass-control-bg: rgb(255 255 255 / 0.94);
+      --glass-control-hover: rgb(255 255 255 / 0.98);
+      --liquid-edge: rgb(15 23 42 / 0.30);
+    }
+
+    :where(.glass, .glass-subtle, .glass-strong, .liquid-glass-surface, .cc-panel, .dc-card, .panel, .tool-mini-app) {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :where(.glass, .glass-subtle, .glass-strong, .liquid-glass-surface)::before {
+      animation: none;
+    }
   }
 }
 

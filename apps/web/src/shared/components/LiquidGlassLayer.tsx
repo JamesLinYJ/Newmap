@@ -27,10 +27,10 @@ interface LiquidGlassSurfaceProps extends Omit<HTMLAttributes<HTMLElement>, 'chi
 }
 
 const FILTERS: Record<GlassVariant, { id: string; href: string; scale: number }> = {
-  panel: { id: 'dc-liquid-glass-panel', href: panelMap, scale: 0.072 },
-  strong: { id: 'dc-liquid-glass-strong', href: strongMap, scale: 0.105 },
-  chip: { id: 'dc-liquid-glass-chip', href: chipMap, scale: 0.062 },
-  bar: { id: 'dc-liquid-glass-bar', href: barMap, scale: 0.052 },
+  panel: { id: 'dc-liquid-glass-panel', href: panelMap, scale: 0.09 },
+  strong: { id: 'dc-liquid-glass-strong', href: strongMap, scale: 0.132 },
+  chip: { id: 'dc-liquid-glass-chip', href: chipMap, scale: 0.078 },
+  bar: { id: 'dc-liquid-glass-bar', href: barMap, scale: 0.068 },
 }
 
 export function LiquidGlassLayer() {
