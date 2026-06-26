@@ -8,14 +8,21 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
-// 计划模式只改变运行约束，不执行数据写入；开放的 plan 对象由上层协议校验，
-// 工具本身不补写或猜测计划内容。
+// 计划模式只改变运行约束，不执行业务写入。
+// exit_plan_mode 必须先经过 Agents SDK approval，批准后才会写回 executionPlan。
 import type { ToolDef } from '../../framework/types.js'
 import { makeId } from '../../utils/ids.js'
+import {
+  ENTER_PLAN_MODE_DESCRIPTION,
+  ENTER_PLAN_MODE_PROMPT,
+  EXIT_PLAN_MODE_DESCRIPTION,
+  EXIT_PLAN_MODE_PROMPT,
+} from './prompts.js'
 
 export const enterPlanModeTool: ToolDef = {
   name: 'enter_plan_mode', label: '进入计划模式',
-  description: '进入只读探索模式，只允许查询和分析操作，不能修改数据。',
+  description: ENTER_PLAN_MODE_DESCRIPTION,
+  prompt: ENTER_PLAN_MODE_PROMPT,
   group: '系统',  tags: ['plan', 'system'],
   isReadOnly: true, isDestructive: false, 
 
@@ -37,20 +44,65 @@ export const enterPlanModeTool: ToolDef = {
 
 export const exitPlanModeTool: ToolDef = {
   name: 'exit_plan_mode', label: '退出计划模式',
-  description: '退出只读探索模式，恢复完整工具访问权限。',
+  description: EXIT_PLAN_MODE_DESCRIPTION,
+  prompt: EXIT_PLAN_MODE_PROMPT,
   group: '系统',  tags: ['plan', 'system'],
   isReadOnly: true, isDestructive: false, 
+  requiresApproval: true,
 
   jsonSchema: {
     type: 'object',
-    properties: { plan: { type: 'object', additionalProperties: true, description: '执行计划' } },
-    required: [],
+    properties: {
+      plan: {
+        type: 'object',
+        additionalProperties: false,
+        description: '待用户批准的执行计划。',
+        properties: {
+          goal: { type: 'string', description: '本轮实施目标。' },
+          steps: {
+            type: 'array',
+            description: '按执行顺序排列的计划步骤。',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string', description: '步骤 ID，例如 step_1。' },
+                tool: { type: 'string', description: '预计使用的工具或 manual。' },
+                args: { type: 'object', additionalProperties: true, description: '预计工具参数；无法确定时使用空对象。' },
+                reason: { type: 'string', description: '为什么需要这一步。' },
+              },
+              required: ['id', 'tool', 'reason'],
+            },
+          },
+        },
+        required: ['goal', 'steps'],
+      },
+      allowedPrompts: {
+        type: 'array',
+        description: '计划获批后建议允许的动作类别。',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            tool: { type: 'string', description: '工具名称，例如 Bash。' },
+            prompt: { type: 'string', description: '动作类别，例如运行测试。' },
+          },
+          required: ['tool', 'prompt'],
+        },
+      },
+    },
+    required: ['plan'],
   },
 
   async handler(args, runtime) {
     return {
-      message: `已退出计划模式`,
-      payload: { planMode: false, plan: args.plan, runId: runtime.runId },
+      message: '计划已批准，已退出计划模式。',
+      payload: {
+        planMode: false,
+        plan: args.plan,
+        allowedPrompts: Array.isArray(args.allowedPrompts) ? args.allowedPrompts : [],
+        runId: runtime.runId,
+      },
       warnings: [], valueRefs: [],
       resultId: makeId('result'), source: 'system',
     }

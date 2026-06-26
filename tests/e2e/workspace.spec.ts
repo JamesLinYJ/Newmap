@@ -72,25 +72,104 @@ test.describe('workspace browser acceptance', () => {
     expect(errors).toEqual([])
   })
 
-  test('shows third-party weather mini-app consoles in the debug workbench', async ({ page }) => {
+  test('shows scoped GIS and meteorology developer tools without shell or background task tools', async ({ page }) => {
+    const errors = collectUnexpectedErrors(page)
+    await page.goto('/debug')
+    await expect(page.locator('.panel__eyebrow').filter({ hasText: '工具工作台' })).toBeVisible()
+
+    await expect.poll(async () => (
+      page.locator('#debug-tool-select option').evaluateAll(nodes => nodes.map(node => (node as HTMLOptionElement).value))
+    )).toContainEqual('read_file')
+    const optionValues = await page.locator('#debug-tool-select option')
+      .evaluateAll(nodes => nodes.map(node => (node as HTMLOptionElement).value))
+
+    expect(optionValues).toEqual(expect.arrayContaining([
+      'read_file',
+      'write_file',
+      'edit_file',
+      'glob_files',
+      'grep_files',
+      'todo_write',
+    ]))
+    expect(optionValues).not.toEqual(expect.arrayContaining([
+      'run_powershell',
+      'run_bash',
+      'task_create',
+      'task_list',
+    ]))
+
+    await page.locator('#debug-tool-select').selectOption('read_file')
+    await expect(page.locator('.tool-lab__meta')).toContainText('读取允许根目录')
+    await expect(page.getByText('文件路径', { exact: true })).toBeVisible()
+    await expect(page.getByText('页面遇到问题')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+
+  test('supports mobile panel tabs and multiline composer without horizontal overflow', async ({ page }) => {
+    const errors = collectUnexpectedErrors(page)
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+
+    const composer = page.getByRole('textbox', { name: '输入空间分析需求' })
+    await expect(composer).toBeVisible()
+    await composer.fill('帮我看看杭州今天的短时强降水风险')
+    await composer.press('Shift+Enter')
+    await composer.pressSequentially('重点看主城区和西湖周边。')
+    await expect(composer).toHaveValue(/短时强降水风险\n重点看/)
+
+    const mobileTabs = page.getByRole('navigation', { name: '移动端工作台面板' })
+    await expect(mobileTabs).toBeVisible()
+    await mobileTabs.getByRole('button', { name: '地图' }).click()
+    await expect(page.locator('.workspace-pane--map')).toBeVisible()
+    await mobileTabs.getByRole('button', { name: '结果' }).click()
+    await expect(page.locator('.workspace-pane--results')).toBeVisible()
+    await mobileTabs.getByRole('button', { name: '工具' }).click()
+    await expect(page.locator('.workspace-pane--tools')).toBeVisible()
+    await mobileTabs.getByRole('button', { name: '对话' }).click()
+    await expect(page.locator('.workspace-pane--chat')).toBeVisible()
+
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+    expect(overflow).toBeLessThanOrEqual(1)
+    await expect(page.getByText('页面遇到问题')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+
+  test('opens ArcGIS-style layer manager from the layer navigation', async ({ page }) => {
+    const errors = collectUnexpectedErrors(page)
+    await page.goto('/')
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: /图层/ }).click()
+
+    const panel = page.getByRole('region', { name: '图层管理' })
+    await expect(panel).toBeVisible()
+    await expect(panel.getByRole('heading', { name: '内容' })).toBeVisible()
+    await expect(panel.getByPlaceholder('搜索')).toBeVisible()
+    await expect(panel.getByText('绘制顺序', { exact: true })).toBeVisible()
+    await expect(panel.getByRole('tree', { name: '地图图层树' })).toBeVisible()
+    await expect(panel.getByText('世界地形图')).toBeVisible()
+    await expect(panel.getByText('全球山影')).toBeVisible()
+    await expect(page.getByText('页面遇到问题')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+
+  test('shows third-party meteorology mini-app consoles in the debug workbench', async ({ page }) => {
     const errors = collectUnexpectedErrors(page)
     await page.goto('/debug')
     await expect(page.locator('.panel__eyebrow').filter({ hasText: '工具工作台' })).toBeVisible()
 
     const select = page.locator('#debug-tool-select')
     await select.selectOption('render_radar_mosaic')
-    await expect(page.getByRole('heading', { name: '雷达拼图控制台' })).toBeVisible()
-    const radarWorkflow = page.getByLabel('雷达拼图控制台 流程台')
+    await expect(page.getByRole('heading', { name: '天气雷达组网拼图控制台' })).toBeVisible()
+    const radarWorkflow = page.getByLabel('天气雷达组网拼图控制台 流程台')
     await expect(radarWorkflow).toContainText('站点与时次')
     await expect(radarWorkflow).toContainText('radar_station_collection')
 
     await select.selectOption('render_rainfall_risk_map')
-    await expect(page.getByRole('heading', { name: '降雨风险区划图' })).toBeVisible()
-    await expect(page.getByLabel('降雨风险区划图 流程台')).toContainText('阈值调色板')
+    await expect(page.getByRole('heading', { name: '短时强降水风险区划图' })).toBeVisible()
+    await expect(page.getByLabel('短时强降水风险区划图 流程台')).toContainText('阈值调色板')
 
     await select.selectOption('generate_area_rainfall_table')
-    await expect(page.getByRole('heading', { name: '面雨量表格' })).toBeVisible()
-    await expect(page.getByLabel('面雨量表格 流程台')).toContainText('Excel 下载件')
+    await expect(page.getByRole('heading', { name: '区域累计面雨量排行表' })).toBeVisible()
+    await expect(page.getByLabel('区域累计面雨量排行表 流程台')).toContainText('Excel 下载件')
     expect(errors).toEqual([])
   })
 })

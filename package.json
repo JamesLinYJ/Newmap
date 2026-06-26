@@ -7,7 +7,7 @@
     "apps/web",
     "packages/shared-types"
   ],
-  "//": "Python worker only hosts packages/gis-weather scientific execution.",
+  "//": "Python worker only hosts packages/gis-meteorology scientific execution.",
   "scripts": {
     "dev": "bash ./dev.sh",
     "dev:windows": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./dev.ps1 start",
@@ -25,14 +25,14 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "lint:web": "npm run lint --workspace apps/web",
+    "lint:terminology": "node scripts/check-meteorology-terminology.mjs",
     "generate:glass": "node scripts/generate-liquid-glass-maps.mjs",
     "check:bundle": "node scripts/check-web-bundle-budget.mjs",
     "reset:conversations": "node scripts/reset-conversation-store.mjs --confirm"
   },
   "dependencies": {
     "@openai/agents": "^0.11.8",
-    "openai": "^6.42.0",
-    "remark-gfm": "^4.0.1"
+    "openai": "^6.42.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0"

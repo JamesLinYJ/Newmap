@@ -210,6 +210,71 @@ export function ConversationEntryView({
 }
 
 function ApprovalCard({ entry, onResolve }: { entry: ConversationEntry; onResolve: (id: string, approved: boolean) => void }) {
+  const plan = extractApprovalPlan(entry.details)
+  if (plan) {
+    const allowedPrompts = extractAllowedPrompts(entry.details)
+    return (
+      <div className="cc-plan-review-card" aria-label="计划审核">
+        <div className="cc-plan-review-card__status">
+          <strong>Ready for review</strong>
+          <span>请先审阅计划。批准后系统才会退出只读计划模式并继续执行。</span>
+        </div>
+        <div className="cc-plan-document">
+          <div className="cc-plan-document__eyebrow">Newmap Plan</div>
+          <h2>{plan.goal}</h2>
+          <section>
+            <h3>执行步骤</h3>
+            <ol className="cc-plan-document__steps">
+              {plan.steps.map((step, index) => (
+                <li key={step.id || `${step.tool}:${index}`}>
+                  <span className="cc-plan-document__index">{index + 1}</span>
+                  <div>
+                    <strong>{step.reason || step.tool || `步骤 ${index + 1}`}</strong>
+                    <small>{step.tool || 'manual'}</small>
+                    {step.args && Object.keys(step.args).length > 0 ? (
+                      <code>{JSON.stringify(step.args)}</code>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+          {allowedPrompts.length > 0 ? (
+            <section>
+              <h3>批准后允许的动作</h3>
+              <ul className="cc-plan-document__allowlist">
+                {allowedPrompts.map((item, index) => (
+                  <li key={`${item.tool}:${index}`}>
+                    <strong>{item.tool}</strong>
+                    <span>{item.prompt}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+        <div className="cc-plan-approval-box">
+          <div>
+            <strong>{entry.title || '接受这个计划？'}</strong>
+            <span>{entry.body}</span>
+          </div>
+          {entry.approvalId ? (
+            <div className="cc-plan-approval-box__actions">
+              <button className="cc-plan-choice cc-plan-choice--primary" type="button" onClick={() => onResolve(entry.approvalId!, true)}>
+                <span>1</span>
+                批准，开始执行
+              </button>
+              <button className="cc-plan-choice" type="button" onClick={() => onResolve(entry.approvalId!, false)}>
+                <span>2</span>
+                退回，继续规划
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="cc-approval-card">
       <span className="cc-approval-card__icon"><ShieldCheck size={18} /></span>
@@ -231,6 +296,49 @@ function ApprovalCard({ entry, onResolve }: { entry: ConversationEntry; onResolv
       </div>
     </div>
   )
+}
+
+interface ReviewPlan {
+  goal: string
+  steps: Array<{ id: string; tool: string; args: Record<string, unknown>; reason: string }>
+}
+
+function extractApprovalPlan(details: Record<string, unknown> | null | undefined): ReviewPlan | null {
+  const args = isRecord(details?.args) ? details.args : null
+  const rawPlan = isRecord(args?.plan) ? args.plan : null
+  if (!rawPlan) return null
+  const goal = typeof rawPlan.goal === 'string' && rawPlan.goal.trim()
+    ? rawPlan.goal.trim()
+    : '待审批执行计划'
+  const steps = Array.isArray(rawPlan.steps)
+    ? rawPlan.steps.map((step, index) => normalizeReviewPlanStep(step, index)).filter(Boolean)
+    : []
+  if (!steps.length) return null
+  return { goal, steps }
+}
+
+function normalizeReviewPlanStep(value: unknown, index: number): ReviewPlan['steps'][number] | null {
+  if (!isRecord(value)) return null
+  const tool = typeof value.tool === 'string' && value.tool.trim() ? value.tool.trim() : 'manual'
+  const reason = typeof value.reason === 'string' && value.reason.trim() ? value.reason.trim() : tool
+  const id = typeof value.id === 'string' && value.id.trim() ? value.id.trim() : `plan_step_${index + 1}`
+  return {
+    id,
+    tool,
+    reason,
+    args: isRecord(value.args) ? value.args : {},
+  }
+}
+
+function extractAllowedPrompts(details: Record<string, unknown> | null | undefined): Array<{ tool: string; prompt: string }> {
+  const args = isRecord(details?.args) ? details.args : null
+  const raw = Array.isArray(args?.allowedPrompts) ? args.allowedPrompts : []
+  return raw.flatMap((item) => {
+    if (!isRecord(item)) return []
+    const tool = typeof item.tool === 'string' ? item.tool.trim() : ''
+    const prompt = typeof item.prompt === 'string' ? item.prompt.trim() : ''
+    return tool && prompt ? [{ tool, prompt }] : []
+  })
 }
 
 function ToolCommandCard({

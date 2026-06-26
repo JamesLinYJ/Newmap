@@ -23,6 +23,7 @@ import {
   unsubscribeRun,
 } from '../../api/client'
 import { wsClient } from '../../ws/client'
+import { projectTimeline } from '../conversation/timelineProjector'
 
 // 运行状态所有权
 //
@@ -63,28 +64,12 @@ function formatHydrationError(error: unknown) {
   return '刷新运行状态失败。'
 }
 
-function itemTime(item: ConversationItem) {
-  const value = new Date(item.timestamp || 0).getTime()
-  return Number.isFinite(value) ? value : 0
-}
-
-function upsertConversationItem(current: ConversationItem[], item: ConversationItem) {
+function mergeConversationItems(current: ConversationItem[], incoming: ConversationItem[]) {
   // ConversationItem 是聊天事实源。
   //
-  // started/delta/completed 可能反复更新同一个 itemId；这里必须 upsert，
-  // 不能像 RunEvent 那样按“已见过”去重，否则流式正文会停在首帧。
-  const next = [...current]
-  const index = next.findIndex((existing) => existing.itemId === item.itemId)
-  if (index >= 0) {
-    next[index] = item
-  } else {
-    next.push(item)
-  }
-  return next.sort((left, right) => itemTime(left) - itemTime(right))
-}
-
-function mergeConversationItems(current: ConversationItem[], incoming: ConversationItem[]) {
-  return incoming.reduce(upsertConversationItem, current)
+  // started/delta/completed 可能反复更新同一个 itemId；TimelineProjector 统一负责
+  // upsert、transcript 去重和稳定排序，避免直播与刷新后的展示规则分叉。
+  return projectTimeline(current, incoming)
 }
 
 // Reducer 只做纯状态转移
@@ -149,7 +134,7 @@ function runReducer(state: RunState, action: RunAction): RunState {
     case 'APPEND_ITEM': {
       return {
         ...state,
-        items: upsertConversationItem(state.items, action.item),
+        items: mergeConversationItems(state.items, [action.item]),
       }
     }
     case 'SET_SUBMITTING':

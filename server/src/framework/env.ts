@@ -41,6 +41,7 @@ const envSchema = z.object({
   WORKER_URL: z.string().optional(),
   MEDIA_WORKER_URL: z.string().optional(),
   ENABLED_TOOL_PROVIDERS: z.string(),
+  DEVELOPER_TOOL_ALLOWED_ROOTS: z.string().optional(),
   VALHALLA_BASE_URL: z.string().url().optional(),
   ROUTING_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
   // Tianditu

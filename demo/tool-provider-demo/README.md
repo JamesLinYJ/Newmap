@@ -98,7 +98,7 @@ export const demoProvider: ToolProvider = {
 4. 在 `.env` 或启动脚本中加入 allowlist：
 
 ```env
-ENABLED_TOOL_PROVIDERS=weather,spatial,my_domain
+ENABLED_TOOL_PROVIDERS=geo-platform-meteorology,spatial,my_domain
 ```
 
 5. 启动服务后进入主页面顶部“工具”，检查 Provider 状态、工具详情、参数 schema 和试运行入口。

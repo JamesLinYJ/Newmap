@@ -40,6 +40,40 @@ function pickLayerColor(metadata: Record<string, unknown> | undefined, index: nu
   return LAYER_PALETTE[index % LAYER_PALETTE.length]
 }
 
+function rasterPaintFromMetadata(metadata: Record<string, unknown> | undefined, opacity: number): Record<string, number> {
+  const color = metadata?.layerColorOverride === true && typeof metadata.color === 'string'
+    ? metadata.color
+    : null
+  const hue = color ? colorToHueDegrees(color) : 0
+  return {
+    'raster-opacity': opacity,
+    'raster-fade-duration': 120,
+    'raster-hue-rotate': hue,
+    'raster-saturation': color ? 0.32 : 0,
+    'raster-contrast': color ? 0.08 : 0,
+  }
+}
+
+function colorToHueDegrees(color: string) {
+  const hex = color.replace('#', '').trim()
+  const normalized = hex.length === 3
+    ? hex.split('').map(char => char + char).join('')
+    : hex
+  if (!/^[0-9a-f]{6}$/iu.test(normalized)) return 0
+  const r = Number.parseInt(normalized.slice(0, 2), 16) / 255
+  const g = Number.parseInt(normalized.slice(2, 4), 16) / 255
+  const b = Number.parseInt(normalized.slice(4, 6), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const delta = max - min
+  if (delta === 0) return 0
+  let hue = 0
+  if (max === r) hue = ((g - b) / delta) % 6
+  else if (max === g) hue = (b - r) / delta + 2
+  else hue = (r - g) / delta + 4
+  return Math.round((hue * 60 + 360) % 360)
+}
+
 type GeoJsonPayload = GeoJSON.FeatureCollection
 type MapManualDragState = {
   pointerId: number
@@ -583,7 +617,7 @@ export function MapCanvas({
       {layers.length && showLayerLegend ? (
         <m.div className="dc-map-stage__legend" aria-label="地图图层摘要" layout {...buildFadeUpMotion(reducedMotion, 0.14, 10)}>
           {layers.map(({ artifact, visible, featureCount, data }, idx) => {
-            const color = artifact.artifactId === selectedArtifactId ? '#0f172a' : pickLayerColor(artifact.metadata as Record<string, unknown> | undefined, idx)
+            const color = pickLayerColor(artifact.metadata as Record<string, unknown> | undefined, idx)
             const routeInfo = data ? extractRouteLegendInfo(data) : null
             return (
               <m.button
@@ -764,7 +798,7 @@ function syncArtifactLayers(
       map,
       layer,
       sourceId,
-      color: artifact.artifactId === selectedArtifactId ? '#0f172a' : pickLayerColor(artifact.metadata as Record<string, unknown> | undefined, index),
+      color: pickLayerColor(artifact.metadata as Record<string, unknown> | undefined, index),
       selected: artifact.artifactId === selectedArtifactId,
       visible,
       opacity,
@@ -834,21 +868,21 @@ function syncRasterLayerSet(
     })
   }
   const layerId = `${sourceId}-raster`
+  const rasterPaint = rasterPaintFromMetadata(layer.artifact.metadata as Record<string, unknown> | undefined, opacity)
   if (!map.getLayer(layerId)) {
     map.addLayer({
       id: layerId,
       type: 'raster',
       source: sourceId,
-      paint: {
-        'raster-opacity': opacity,
-        'raster-fade-duration': 120,
-      },
+      paint: rasterPaint,
       layout: { visibility },
     })
     return
   }
   map.setLayoutProperty(layerId, 'visibility', visibility)
-  map.setPaintProperty(layerId, 'raster-opacity', opacity)
+  Object.entries(rasterPaint).forEach(([property, value]) => {
+    map.setPaintProperty(layerId, property, value)
+  })
 }
 
 function syncArtifactLayerSet({

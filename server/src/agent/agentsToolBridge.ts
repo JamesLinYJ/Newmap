@@ -46,7 +46,7 @@ export function createAgentsTools(
         const args = requireArguments(definition.name, input)
         if (!callId) throw new Error(`工具 '${definition.name}' 缺少 callId`)
         await context.prepareToolCall(definition.name, args, callId)
-        return definition.isDestructive || approvalTools.has(definition.name)
+        return definition.requiresApproval === true || definition.isDestructive || approvalTools.has(definition.name)
       },
       execute: async (input, runContext, details) => {
         const context = requireContext(runContext)
@@ -74,9 +74,15 @@ function normalizeObjectSchema(toolName: string, schema: Record<string, unknown>
 // Agent 看到的是 Chat Completions 函数 schema，而不是 DebugPage 的参数面板。
 // 因此 valueRef kind 约束必须写进模型可读描述里，避免把相邻工具产生的 ref 混用。
 function describeToolForAgent(definition: ToolDef): string {
+  const parts = [definition.description]
+  if (typeof definition.prompt === 'string' && definition.prompt.trim()) {
+    parts.push(`工具使用说明：\n${definition.prompt.trim()}`)
+  }
   const rules = valueRefRules(definition.jsonSchema)
-  if (!rules.length) return definition.description
-  return `${definition.description}\nValueRef 参数规则：${rules.join('；')}。调用前必须确认 refId 的 kind 匹配，不能用其它 kind 的 valueRef 代替。`
+  if (rules.length) {
+    parts.push(`ValueRef 参数规则：${rules.join('；')}。调用前必须确认 refId 的 kind 匹配，不能用其它 kind 的 valueRef 代替。`)
+  }
+  return parts.join('\n\n')
 }
 
 function valueRefRules(schema: Record<string, unknown>, prefix = ''): string[] {

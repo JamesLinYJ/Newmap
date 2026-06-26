@@ -191,6 +191,9 @@ function buildTerminalEntry(item: ConversationItem): ConversationEntry | undefin
   if (!resultType || resultType === 'success' || resultType === 'completed') {
     return undefined
   }
+  if (resultType === 'waiting_approval') {
+    return buildApprovalEntry(item)
+  }
   const isFailure = resultType === 'failed'
   const body = itemText(item) || (isFailure ? terminalFailureMessage(item.metadata) : '运行已暂停，等待下一步。')
   return {
@@ -201,6 +204,29 @@ function buildTerminalEntry(item: ConversationItem): ConversationEntry | undefin
     body,
     status: isFailure ? 'failed' : 'blocked',
     details: item.metadata ?? null,
+  }
+}
+
+function buildApprovalEntry(item: ConversationItem): ConversationEntry {
+  const metadata = item.metadata ?? {}
+  const approvalId = typeof metadata.approvalId === 'string' && metadata.approvalId.trim()
+    ? metadata.approvalId.trim()
+    : null
+  const title = typeof metadata.title === 'string' && metadata.title.trim()
+    ? metadata.title.trim()
+    : '需要你的确认'
+  const description = typeof metadata.description === 'string' && metadata.description.trim()
+    ? metadata.description.trim()
+    : '本次运行暂停，等待你批准后继续。'
+  return {
+    id: item.itemId,
+    kind: 'approval',
+    timestamp: item.timestamp,
+    title,
+    body: description,
+    status: 'blocked',
+    approvalId,
+    details: metadata,
   }
 }
 

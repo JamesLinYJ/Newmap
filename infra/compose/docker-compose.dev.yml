@@ -1,0 +1,32 @@
+# +-------------------------------------------------------------------------
+#
+#   地理智能平台 - 本地 PostGIS 开发编排
+#
+#   文件:       docker-compose.dev.yml
+#
+#   日期:       2026年06月25日
+#   作者:       OpenAI Codex
+# --------------------------------------------------------------------------
+
+services:
+  postgis:
+    image: ${POSTGIS_IMAGE:-postgis/postgis:16-3.5}
+    container_name: newmap-postgis-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: geo_agent
+      POSTGRES_USER: geo_agent
+      POSTGRES_PASSWORD: geo_agent
+    ports:
+      - "${POSTGIS_PORT:-55432}:5432"
+    volumes:
+      - newmap-postgis-dev:/var/lib/postgresql/data
+      - ../migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geo_agent -d geo_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  newmap-postgis-dev:

@@ -33,7 +33,7 @@ import {
   pointsWithinPolygon,
   union,
 } from '@turf/turf'
-import type { Feature, LineString } from 'geojson'
+import type { Feature, FeatureCollection, LineString, MultiPolygon, Polygon } from 'geojson'
 import type { ToolDef } from '../../framework/types.js'
 import {
   combinePolygonFeatures,
@@ -202,12 +202,15 @@ function relationship(
   return success(result ? yes : no, { operation, [operation]: result })
 }
 
-function polygonPair(source: ReturnType<typeof parseGeoJsonEntity>, target: ReturnType<typeof parseGeoJsonEntity> | null) {
+function polygonPair(
+  source: ReturnType<typeof parseGeoJsonEntity>,
+  target: ReturnType<typeof parseGeoJsonEntity> | null,
+): FeatureCollection<Polygon | MultiPolygon> {
   if (!target) throw new Error('面运算需要 targetGeojson')
   return combinePolygonFeatures(
     requirePolygonFeature(source, 'sourceGeojson'),
     requirePolygonFeature(target, 'targetGeojson'),
-  )
+  ) as FeatureCollection<Polygon | MultiPolygon>
 }
 
 function requireTargetPoint(target: ReturnType<typeof parseGeoJsonEntity> | null) {

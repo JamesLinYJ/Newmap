@@ -1,0 +1,106 @@
+/* Shared markdown renderer styles. */
+
+@reference "tailwindcss";
+
+.markdown-renderer {
+  @apply space-y-2 text-[15px] leading-relaxed text-[#3a3a3c];
+}
+
+.markdown-renderer p {
+  @apply my-1.5 first:mt-0 last:mb-0;
+}
+
+.markdown-renderer h1 {
+  @apply mt-4 mb-2 text-[20px] font-bold text-[#1c1c1e] first:mt-0;
+}
+
+.markdown-renderer h2 {
+  @apply mt-3.5 mb-1.5 text-[18px] font-semibold text-[#1c1c1e] first:mt-0;
+}
+
+.markdown-renderer h3 {
+  @apply mt-3 mb-1 text-[16px] font-semibold text-[#1c1c1e] first:mt-0;
+}
+
+.markdown-renderer strong {
+  @apply font-semibold text-[#1c1c1e];
+}
+
+.markdown-renderer em {
+  @apply italic text-[#3a3a3c];
+}
+
+.markdown-renderer code {
+  @apply rounded-[6px] bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-[#1c1c1e];
+}
+
+.markdown-renderer pre {
+  @apply my-2.5 overflow-hidden rounded-[14px] bg-[#1c1c1e];
+}
+
+.markdown-renderer pre code {
+  @apply block overflow-auto p-3.5 font-mono text-[13px] leading-relaxed text-[#e5e5ea];
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-renderer ul {
+  @apply my-1.5 list-disc pl-5;
+}
+
+.markdown-renderer ol {
+  @apply my-1.5 list-decimal pl-5;
+}
+
+.markdown-renderer li {
+  @apply my-0.5 marker:text-[#8e8e93];
+}
+
+.markdown-renderer li p {
+  @apply my-0;
+}
+
+.markdown-renderer a {
+  @apply text-[#24292f] underline underline-offset-2 decoration-[0.5px] transition-colors hover:text-[#111820];
+}
+
+.markdown-renderer blockquote {
+  @apply my-2 border-l-[3px] border-black/20 bg-white/[0.18] px-3.5 py-2 text-[14px] text-[#3a3a3c] italic;
+  border-radius: 0 10px 10px 0;
+}
+
+.markdown-renderer hr {
+  @apply my-3 border-0 border-t border-black/[0.08];
+}
+
+.markdown-renderer__table-wrap {
+  @apply my-2 max-w-full overflow-x-auto rounded-[14px] border border-black/[0.06] bg-white/[0.28];
+}
+
+.markdown-renderer table {
+  @apply w-full min-w-full text-[14px] border-collapse;
+}
+
+.markdown-renderer th {
+  @apply bg-black/[0.03] px-3 py-2 text-left text-[13px] font-semibold text-[#1c1c1e] border-b border-black/[0.06];
+}
+
+.markdown-renderer td {
+  @apply px-3 py-2 border-b border-black/[0.04] text-[#3a3a3c];
+}
+
+.markdown-renderer .contains-task-list {
+  @apply list-none pl-0;
+}
+
+.markdown-renderer .task-list-item {
+  @apply flex items-start gap-2;
+}
+
+.markdown-renderer .task-list-item input[type='checkbox'] {
+  @apply mt-1 size-3.5 accent-[#24292f];
+}
+
+.markdown-renderer img {
+  @apply my-2 max-w-full rounded-[12px];
+}

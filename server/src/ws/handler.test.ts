@@ -314,7 +314,7 @@ function runEvent(runId: string, threadId: string): RunEvent {
 function previewToolProvider(): ToolProvider {
   const definition = {
     name: 'render_rainfall_risk_map',
-    label: '生成降雨风险区划图',
+    label: '生成短时强降水风险区划图',
     description: '测试 mini app 预览 artifact 回放。',
     group: '气象',
     tags: ['meteorology'],

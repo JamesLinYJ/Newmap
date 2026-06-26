@@ -161,7 +161,7 @@ function RadarMosaicConsole({
   const timeRefs = valueRefs.filter((reference) => reference.kind === 'radar_target_time')
   const strategy = selectedRefs.find((reference) => reference.kind === 'radar_mosaic_strategy')
   return (
-    <div className="tool-mini-console tool-mini-console--radar" aria-label="雷达拼图 React 控制台">
+    <div className="tool-mini-console tool-mini-console--radar" aria-label="天气雷达组网拼图 React 控制台">
       <div className="tool-mini-console__banner">
         <span className="tool-mini-console__live-dot" />
         <strong>Radar Mosaic Agent</strong>
@@ -202,7 +202,7 @@ function RainfallRiskConsole({
 }) {
   const thresholds = thresholdRows(formState)
   return (
-    <div className="tool-mini-console tool-mini-console--risk" aria-label="降雨风险区划图 React 控制台">
+    <div className="tool-mini-console tool-mini-console--risk" aria-label="短时强降水风险区划图 React 控制台">
       <div className="tool-mini-console__grid">
         <ConsoleCard index="01" title="数据与变量">
           <SelectPreview label="NC 数据" value={selectedRefs.find((reference) => reference.kind === 'meteorological_dataset')?.label ?? '等待 dataset_ref'} />
@@ -243,7 +243,7 @@ function AreaRainfallConsole({
   const style = isRecord(formState.parsed.args.style) ? formState.parsed.args.style : {}
   const topN = typeof formState.parsed.args.top_n === 'number' ? formState.parsed.args.top_n : 10
   return (
-    <div className="tool-mini-console tool-mini-console--table" aria-label="面雨量表格 React 控制台">
+    <div className="tool-mini-console tool-mini-console--table" aria-label="区域累计面雨量排行表 React 控制台">
       <div className="tool-mini-console__grid">
         <ConsoleCard index="01" title="数据配置">
           <SelectPreview label="NC 文件集合" value={selectedRefs.find((reference) => ['meteorological_file_collection', 'nowcast_sequence'].includes(reference.kind))?.label ?? '等待文件集合'} />
@@ -253,7 +253,7 @@ function AreaRainfallConsole({
         <ConsoleCard index="02" title="样式设置">
           <div className="tool-mini-style-grid">
             {[
-              ['标题', String(style.titleText ?? '区县面雨量排行')],
+              ['标题', String(style.titleText ?? '区域累计面雨量排行')],
               ['标题色', String(style.titleColor ?? '#2E72D6')],
               ['表头底色', String(style.headerBg ?? '#E8F0FA')],
               ['前三名底色', String(style.top3Bg ?? '#FFF2CC')],
@@ -486,7 +486,7 @@ function resultSummary(toolName: string | null | undefined, payload: Record<stri
   if (toolName === 'render_radar_mosaic') return '拼图 PNG 与 NPZ 数据已生成'
   if (toolName === 'compare_radar_mosaic_reference') return '参考对比图与统计已生成'
   if (toolName === 'define_rainfall_risk_thresholds') return `${Array.isArray(payload.thresholds) ? payload.thresholds.length : 0} 个风险等级`
-  if (toolName === 'render_rainfall_risk_map') return '风险区划图已在小工具中生成预览，区划图层可加入地图侧栏'
+  if (toolName === 'render_rainfall_risk_map') return '短时强降水风险区划图已在小工具中生成预览，区划图层可加入地图侧栏'
   if (toolName === 'generate_area_rainfall_table') return 'Excel 与 PNG 表格已生成'
   return '工具执行完成'
 }
@@ -495,24 +495,24 @@ function miniAppCopy(kind: MiniAppKind) {
   if (kind === 'radar_mosaic_console') {
     return {
       eyebrow: 'Radar Mosaic',
-      title: '雷达拼图控制台',
-      description: '复刻原雷达拼图工具的站点检查、策略推荐、拼图执行和 NC 对比流程。',
+      title: '天气雷达组网拼图控制台',
+      description: '复刻原天气雷达组网拼图工具的站点检查、策略推荐、拼图执行和 NC 对比流程。',
       steps: ['选择雷达 bz2 文件集合', '检查站点与目标时次', '选择推荐策略', '生成 PNG/NPZ 或执行 NC 对比'],
     }
   }
   if (kind === 'rainfall_risk_map_console') {
     return {
       eyebrow: 'Rainfall Risk',
-      title: '降雨风险区划图',
+      title: '短时强降水风险区划图',
       description: '复刻原区划图工具的变量选择、阈值调色板、区划聚合与对比图输出。',
       steps: ['选择 NC 数据集和变量', '选择边界 valueRef', '确认风险阈值和调色板', '生成区划/渐变/对比图'],
     }
   }
   return {
     eyebrow: 'Area Rainfall',
-    title: '面雨量表格',
-    description: '复刻原短临面雨量表格的 topN、样式编辑、Excel 和 PNG 输出。',
-    steps: ['选择 NC 文件集合或短临序列', '选择区划边界', '配置 topN 和样式 JSON', '生成 XLSX 与图片预览'],
+    title: '区域累计面雨量排行表',
+    description: '复刻原短时临近预报区域累计面雨量排行表的 topN、样式编辑、Excel 和 PNG 输出。',
+    steps: ['选择 NC 文件集合或短时临近预报序列', '选择区划边界', '配置 topN 和样式 JSON', '生成 XLSX 与图片预览'],
   }
 }
 
@@ -550,7 +550,7 @@ function miniAppWorkflow(kind: MiniAppKind): WorkflowStage[] {
       },
       {
         label: '区划边界',
-        description: '边界可来自上传 GeoJSON/SHP、FeatureCollection 或短临范围。',
+        description: '边界可来自上传 GeoJSON/SHP、FeatureCollection 或短时临近预报范围。',
         anyOfKinds: ['meteorological_file', 'feature_collection', 'nowcast_area'],
       },
       {
@@ -568,12 +568,12 @@ function miniAppWorkflow(kind: MiniAppKind): WorkflowStage[] {
   return [
     {
       label: 'NC 序列',
-      description: '选择通用 NC 文件集合或短临序列。',
+      description: '选择通用 NC 文件集合或短时临近预报序列。',
       anyOfKinds: ['meteorological_file_collection', 'nowcast_sequence'],
     },
     {
       label: '区划边界',
-      description: '边界可来自上传文件、FeatureCollection 或短临范围。',
+      description: '边界可来自上传文件、FeatureCollection 或短时临近预报范围。',
       anyOfKinds: ['meteorological_file', 'feature_collection', 'nowcast_area'],
     },
     {

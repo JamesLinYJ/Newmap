@@ -1,0 +1,218 @@
+/* Tool management, DebugPage, and mini-app visual alignment. */
+
+.tool-management__hero,
+.tool-management__overview-card,
+.tool-management__sidebar,
+.tool-management__detail .panel,
+.tool-provider-row,
+.tool-management__schema-column,
+.tool-mini-app,
+.tool-mini-console,
+.tool-mini-console__card,
+.tool-mini-app__step,
+.tool-mini-app__workflow-step,
+.tool-mini-app__state,
+.tool-mini-app__contract,
+.tool-mini-result,
+.debug-transcript__entry,
+.panel {
+  border-color: var(--glass-border);
+}
+
+.tool-management__hero,
+.tool-management__sidebar,
+.tool-mini-app,
+.panel {
+  background: var(--glass-strong-bg);
+  box-shadow: var(--glass-shadow);
+}
+
+.tool-management__overview-card,
+.tool-management__detail .panel,
+.tool-provider-row,
+.tool-management__schema-column,
+.tool-mini-console,
+.tool-mini-console__card,
+.tool-mini-app__step,
+.tool-mini-app__workflow-step,
+.tool-mini-app__state,
+.tool-mini-app__contract,
+.tool-mini-result,
+.debug-transcript__entry {
+  background: var(--glass-panel-bg);
+  box-shadow: var(--glass-shadow-soft);
+}
+
+.tool-mini-result__preview img,
+.tool-mini-slider__canvas > img,
+.tool-mini-slider__overlay img,
+.tool-mini-table-preview {
+  background: rgb(255 255 255 / 0.86);
+}
+
+.debug-pre {
+  border-color: rgb(255 255 255 / 0.46);
+  background:
+    radial-gradient(circle at 12% 0%, rgb(255 255 255 / 0.34), transparent 32%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.24), rgb(255 255 255 / 0.08));
+  color: #26323a;
+}
+
+.tool-card--active {
+  border-color: rgb(255 255 255 / 0.72);
+  color: #111820;
+  background:
+    radial-gradient(circle at 12% 0%, rgb(255 255 255 / 0.72), transparent 38%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.48), rgb(255 255 255 / 0.14));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.84),
+    0 10px 24px rgb(0 0 0 / 0.08);
+}
+
+.tool-card--active .tool-card__icon,
+.tool-card__icon {
+  color: #2f3943;
+}
+
+.tool-card__status,
+.tool-card__status--ready {
+  background: rgb(93 103 112 / 0.72);
+  box-shadow: 0 0 0 3px rgb(0 0 0 / 0.08);
+}
+
+.composer__input:focus,
+.composer__select:focus,
+.composer__textarea:focus {
+  border-color: rgb(255 255 255 / 0.72);
+  background: rgb(255 255 255 / 0.58);
+  box-shadow: 0 0 0 4px rgb(255 255 255 / 0.20);
+}
+
+.toolbar-button--primary {
+  color: #111820;
+  background:
+    radial-gradient(circle at 18% 0%, rgb(255 255 255 / 0.54), transparent 30%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.40), rgb(255 255 255 / 0.12));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.64),
+    0 10px 24px rgb(0 0 0 / 0.10);
+}
+
+.tool-mini-app__run {
+  position: sticky;
+  bottom: 12px;
+  z-index: 4;
+  width: fit-content;
+  align-self: flex-end;
+}
+
+@media (max-width: 1023px) {
+  .tool-management__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tool-management__sidebar {
+    position: relative;
+    top: auto;
+    height: auto;
+    min-height: 0;
+    max-height: 420px;
+  }
+}
+
+@media (max-width: 767px) {
+  .tool-management {
+    gap: 12px;
+  }
+
+  .tool-management__hero {
+    min-height: 0;
+    border-radius: 24px;
+    padding: 18px;
+  }
+
+  .tool-management__hero-copy {
+    gap: 12px;
+  }
+
+  .tool-management__hero h1 {
+    font-size: 23px;
+    line-height: 1.15;
+  }
+
+  .tool-doc-grid,
+  .tool-management__overview,
+  .tool-provider-list,
+  .tool-schema-grid,
+  .tool-mini-console__grid,
+  .tool-mini-console__grid--three,
+  .tool-mini-app__steps,
+  .tool-mini-app__workflow {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .tool-management__overview-card {
+    min-height: 74px;
+  }
+
+  .tool-management__sidebar {
+    max-height: 330px;
+    border-radius: 22px;
+  }
+
+  .tool-management__catalog {
+    max-height: 242px;
+  }
+
+  .tool-management__detail {
+    gap: 12px;
+  }
+
+  .tool-mini-app {
+    border-radius: 24px;
+    padding: 14px;
+  }
+
+  .tool-mini-app__hero {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .tool-mini-app__hero h3 {
+    font-size: 20px;
+  }
+
+  .tool-mini-console,
+  .tool-mini-console__card,
+  .tool-mini-result {
+    border-radius: 20px;
+  }
+
+  .tool-mini-palette,
+  .tool-mini-style-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tool-mini-app__run {
+    bottom: 8px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .debug-shell {
+    padding: 14px;
+  }
+
+  .debug-shell__header {
+    gap: 12px;
+  }
+
+  .debug-shell__actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .debug-shell__actions > * {
+    flex: 1;
+  }
+}

@@ -1,0 +1,51 @@
+{
+    "id": "geo-platform-routing",
+    "name": "路径规划",
+    "version": "1.0.0",
+    "author": "geo-agent-platform",
+    "language": "typescript",
+    "description": "通过 Valhalla 和 OpenStreetMap 路网提供真实多模式路径规划",
+    "requires": {
+        "VALHALLA_BASE_URL": "required"
+    },
+    "tools": [
+        {
+            "name": "route_planner",
+            "label": "路径规划",
+            "description": "通过 Valhalla 和 OSM 路网规划真实驾车、步行或骑行路线。",
+            "group": "路径规划",
+            "tags": ["routing", "navigation", "osm", "valhalla"],
+            "isReadOnly": true,
+            "isDestructive": false,
+            "jsonSchema": {
+                "type": "object",
+                "properties": {
+                    "waypoints": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 20,
+                        "x-source": "json",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+                                "lon": { "type": "number", "minimum": -180, "maximum": 180 }
+                            },
+                            "required": ["lat", "lon"],
+                            "additionalProperties": false
+                        },
+                        "description": "途经点坐标数组"
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["driving", "walking", "cycling"],
+                        "description": "出行方式",
+                        "default": "driving"
+                    }
+                },
+                "required": ["waypoints"],
+                "additionalProperties": false
+            }
+        }
+    ]
+}

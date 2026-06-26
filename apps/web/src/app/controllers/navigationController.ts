@@ -41,7 +41,7 @@ export function useNavigationController({
   const focusQueryInput = useCallback(() => {
     window.requestAnimationFrame(() => {
       const input = document.getElementById('analysis-query-input')
-      if (input instanceof HTMLInputElement) {
+      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
         input.focus()
         input.select()
       }

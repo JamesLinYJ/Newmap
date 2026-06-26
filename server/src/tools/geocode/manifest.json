@@ -1,0 +1,27 @@
+{
+    "id": "geo-platform-geocode",
+    "name": "地理编码",
+    "version": "1.0.0",
+    "author": "geo-agent-platform",
+    "language": "typescript",
+    "description": "Nominatim 地理编码查询",
+    "tools": [
+        {
+            "name": "geocode_place",
+            "label": "地点地理编码",
+            "description": "根据地名查询经纬度和边界框。支持城市、区县、POI 等地点类型。",
+            "group": "地理",
+            "tags": ["geo", "search"],
+            "isReadOnly": true,
+            "isDestructive": false,
+            "jsonSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "要查询的地点名称" },
+                    "limit": { "type": "integer", "description": "返回结果数量上限", "default": 5 }
+                },
+                "required": ["query"]
+            }
+        }
+    ]
+}

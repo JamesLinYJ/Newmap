@@ -45,6 +45,38 @@ describe('tool result persistence', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('persists todo_write payload into AgentState.todos', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-result-'))
+    let store: PostgresPlatformStore | undefined
+    try {
+      store = new PostgresPlatformStore(noOpDb(), path.join(root, 'sessions'))
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, 'Todo 测试')
+      const run = await store.createRun(session.id, '执行 Todo', { threadId: thread.id })
+      await persistToolExecutionResult(store, run.id, 'todo_write', {}, {
+        message: '已更新 Todo',
+        payload: {
+          todos: [
+            { todoId: 'todo_1', title: '检查 GIS/气象 Agent 工具', status: 'running' },
+            { todoId: 'todo_2', title: '执行 Playwright 验收', status: 'pending' },
+          ],
+        },
+        warnings: [],
+        resultId: 'result_todo',
+        source: 'test',
+      })
+
+      expect(store.getRun(run.id).state.todos).toEqual([
+        expect.objectContaining({ todoId: 'todo_1', title: '检查 GIS/气象 Agent 工具', status: 'running' }),
+        expect.objectContaining({ todoId: 'todo_2', title: '执行 Playwright 验收', status: 'pending' }),
+      ])
+    } finally {
+      await store?.conversationStore.flush()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 function line() {

@@ -30,9 +30,9 @@ describe('tool management model', () => {
       name: 'inspect_meteorological_dataset',
       label: '检查气象数据集',
       group: 'meteorology',
-      providerId: 'weather',
+      providerId: 'geo-platform-meteorology',
       language: 'typescript',
-      tags: ['weather', 'netcdf'],
+      tags: ['meteorology', 'netcdf'],
     }),
     makeTool({
       name: 'delete_layer',
@@ -65,8 +65,8 @@ describe('tool management model', () => {
       providers: [],
       toolProviders: [
         {
-          providerId: 'weather',
-          name: 'Weather',
+          providerId: 'geo-platform-meteorology',
+          name: '气象分析',
           version: '1.0.0',
           author: 'team',
           language: 'typescript',
@@ -106,17 +106,17 @@ describe('tool management model', () => {
 
   it('groups tools with counts and stable Chinese labels', () => {
     const groups = groupToolsForManagement(tools)
-    const weatherGroup = groups.find((group) => group.key === 'meteorology')
+    const meteorologyGroup = groups.find((group) => group.key === 'meteorology')
     const catalogGroup = groups.find((group) => group.key === 'catalog')
 
-    expect(weatherGroup).toMatchObject({ label: '气象分析', availableCount: 1, destructiveCount: 0 })
+    expect(meteorologyGroup).toMatchObject({ label: '气象分析', availableCount: 1, destructiveCount: 0 })
     expect(catalogGroup).toMatchObject({ label: '目录与图层', availableCount: 1, destructiveCount: 1 })
   })
 
   it('finds provider label and catalog override by canonical key', () => {
     const entry = { toolKind: 'provider', toolName: 'delete_layer', payload: { label: '删除图层 Pro' } }
 
-    expect(providerLabel(tools[0])).toBe('weather')
+    expect(providerLabel(tools[0])).toBe('geo-platform-meteorology')
     expect(findToolCatalogEntry([entry], tools[1])).toBe(entry)
   })
 })

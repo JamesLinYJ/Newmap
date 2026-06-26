@@ -146,9 +146,10 @@
   padding: 16px;
   box-sizing: border-box;
   background:
-    radial-gradient(circle at 72% 18%, rgb(159 227 239 / 24%), transparent 34%),
-    linear-gradient(145deg, #f7fbfc 0%, #e8f1f4 100%);
-  color: #16323d;
+    linear-gradient(180deg, rgb(255 255 255 / 0.18), rgb(255 255 255 / 0.04) 48%, rgb(255 255 255 / 0.16)),
+    url("./assets/backgrounds/liquid-map-background.png") center / cover no-repeat,
+    #eef4f8;
+  color: #151d24;
 }
 
 .dc-boot__bar,
@@ -171,8 +172,8 @@
 }
 
 .dc-boot__bar strong { font-size: 17px; }
-.dc-boot__bar span { color: #5d737c; font-size: 12px; }
-.dc-boot__bar i { margin-left: auto; color: #567079; font-size: 12px; font-style: normal; }
+.dc-boot__bar span { color: #626b73; font-size: 12px; }
+.dc-boot__bar i { margin-left: auto; color: #626b73; font-size: 12px; font-style: normal; }
 
 .dc-boot__side {
   position: fixed;
@@ -185,7 +186,7 @@
   gap: 18px;
 }
 
-.dc-boot__side span { color: #6b7f87; font-size: 13px; }
+.dc-boot__side span { color: #687078; font-size: 13px; }
 
 .dc-boot__main {
   margin: 16px 0 0 236px;
@@ -205,8 +206,12 @@
 }
 
 .dc-boot__panel span,
-.dc-boot__map span { color: #71868d; font-size: 13px; }
-.dc-boot__map { background: linear-gradient(145deg, rgb(214 233 233 / 72%), rgb(239 247 245 / 60%)); }
+.dc-boot__map span { color: #687078; font-size: 13px; }
+.dc-boot__map {
+  background:
+    radial-gradient(circle at 18% 0%, rgb(255 255 255 / 0.46), transparent 34%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.30), rgb(255 255 255 / 0.10));
+}
 
 @media (max-width: 900px) {
   .dc-boot__side { display: none; }

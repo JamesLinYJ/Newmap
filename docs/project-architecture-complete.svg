@@ -33,7 +33,7 @@ text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsof
 <text x="935" y="182" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">tool-calling、审批、valueRef、artifact</text>
 <rect x="1270" y="130" width="276" height="390" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="8 6"/>
 <text x="1290" y="160" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">外部与科学计算</text>
-<text x="1290" y="182" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">模型 provider + Python weather worker</text>
+<text x="1290" y="182" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">模型 provider + Python meteorological worker</text>
 <rect x="54" y="580" width="1492" height="350" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="8 6"/>
 <text x="74" y="610" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">事实源、数据面与部署边界</text>
 <text x="74" y="632" font-size="12" fill="#64748b" font-weight="400" text-anchor="start">JSONL 记录运行事实；PostGIS 保存投影和元数据；runtime 根目录保存上传与产物</text>
@@ -102,7 +102,7 @@ text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsof
 <text x="976" y="222" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">AG</text>
 <text x="1005" y="213" font-size="14" fill="#111827" font-weight="700" text-anchor="start">GeoAgentRuntime</text>
 <text x="1005" y="235" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">模型流式输出、工具循环</text>
-<text x="1005" y="251" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">审批恢复、取消、确定性短临链</text>
+<text x="1005" y="251" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">审批恢复、取消、确定性短时临近预报（短临）链</text>
 <rect x="945" y="315" width="250" height="88" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
 <rect x="959" y="329" width="34" height="34" rx="10" fill="#fef2f2" stroke="#cbd5e1" stroke-width="1.0"/>
 <text x="976" y="352" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">TR</text>
@@ -118,7 +118,7 @@ text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsof
 <rect x="1083" y="428" width="112" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
 <rect x="1097" y="442" width="34" height="34" rx="10" fill="#dbeafe" stroke="#cbd5e1" stroke-width="1.0"/>
 <text x="1114" y="465" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">W</text>
-<text x="1143" y="456" font-size="14" fill="#111827" font-weight="700" text-anchor="start">Weather Provider</text>
+<text x="1143" y="456" font-size="14" fill="#111827" font-weight="700" text-anchor="start">气象 ToolProvider</text>
 <text x="1143" y="478" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">valueRef 解析</text>
 <text x="1143" y="494" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">artifact 持久化</text>
 <rect x="1300" y="185" width="216" height="104" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
@@ -136,7 +136,7 @@ text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsof
 <rect x="1300" y="428" width="216" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
 <rect x="1314" y="442" width="34" height="34" rx="10" fill="#dcfce7" stroke="#cbd5e1" stroke-width="1.0"/>
 <text x="1331" y="465" font-size="15" fill="#0f172a" font-weight="700" text-anchor="middle">GW</text>
-<text x="1360" y="456" font-size="14" fill="#111827" font-weight="700" text-anchor="start">gis_weather</text>
+<text x="1360" y="456" font-size="14" fill="#111827" font-weight="700" text-anchor="start">gis_meteorology</text>
 <text x="1360" y="478" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">xarray 科学语义</text>
 <text x="1360" y="494" font-size="11.5" fill="#4b5563" font-weight="400" text-anchor="start">rasterio 渲染 / nowcast / DOCX</text>
 <rect x="84" y="650" width="225" height="100" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" class="node"/>
@@ -272,7 +272,7 @@ text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsof
 <text x="652.0" y="449.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">artifact</text>
 <line x1="1057" y1="460" x2="1083" y2="460" stroke="#6b7280" stroke-width="1.3" marker-end="url(#arrow-gray)"/>
 <rect x="1033.0" y="437.0" width="74" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
-<text x="1070.0" y="453.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">weather</text>
+<text x="1070.0" y="453.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">meteorology</text>
 <line x1="1057" y1="450" x2="945" y2="450" stroke="#6b7280" stroke-width="1.3" marker-end="url(#arrow-gray)"/>
 <rect x="970.0" y="427.0" width="62" height="23" rx="11" fill="#ffffff" stroke="#e5e7eb" stroke-width="0.8"/>
 <text x="1001.0" y="443.0" font-size="11" fill="#374151" font-weight="600" text-anchor="middle">通用工具</text>
@@ -282,7 +282,7 @@ text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsof
 <rect x="60" y="960" width="1480" height="98" rx="20" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2"/>
 <text x="86" y="990" font-size="15" fill="#0f172a" font-weight="800" text-anchor="start">关键边界</text>
 <text x="86" y="1018" font-size="12.5" fill="#334155" font-weight="400" text-anchor="start">1. /ws 是业务控制与实时状态唯一主线；断线期间的写命令失败，不自动重放，恢复后订阅 run 并获取完整快照。</text>
-<text x="86" y="1038" font-size="12.5" fill="#334155" font-weight="400" text-anchor="start">2. Weather 不再有专用 REST/数据库状态：NC 等文件进入通用线程文件库，工具链靠 valueRef 传递 dataset、变量、时次、bbox、阈值和解释结果。</text>
+<text x="86" y="1038" font-size="12.5" fill="#334155" font-weight="400" text-anchor="start">2. 气象不再有专用 REST/数据库状态：NC 等文件进入通用线程文件库，工具链靠 valueRef 传递 dataset、变量、时次、bbox、阈值和解释结果。</text>
 <text x="86" y="1058" font-size="12.5" fill="#334155" font-weight="400" text-anchor="start">3. 分片文件是 thread/run/event/context 的事实源；PostGIS 存 artifact 索引、工具目录、运行配置和图层 metadata。</text>
 <rect x="1110" y="952" width="410" height="90" rx="16" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.0"/>
 <text x="1130" y="978" font-size="13" fill="#0f172a" font-weight="700" text-anchor="start">图例</text>

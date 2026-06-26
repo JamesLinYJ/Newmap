@@ -1,6 +1,6 @@
 // +-------------------------------------------------------------------------
 //
-//   地理智能平台 - 确定性短临运行器
+//   地理智能平台 - 确定性短时临近预报（短临）运行器
 //
 //   文件:       deterministicNowcastRunner.ts
 //
@@ -43,7 +43,7 @@ export async function runDeterministicNowcast(options: {
   const listed = await options.coordinator.executeDirect('list_meteorological_files', {})
   const collectionRef = requiredResultRef(listed, ['meteorological_file_collection'])
   const files = isRecord(collectionRef.value) && Array.isArray(collectionRef.value.files) ? collectionRef.value.files : []
-  if (files.length < 2) throw new Error(`杭州短临分析至少需要两个气象文件，当前线程找到 ${files.length} 个`)
+  if (files.length < 2) throw new Error(`杭州短时临近预报（短临）分析至少需要两个气象文件，当前线程找到 ${files.length} 个`)
 
   const sequence = await options.coordinator.executeDirect('create_nowcast_sequence', {
     file_collection_ref: collectionRef.refId,
@@ -61,7 +61,7 @@ export async function runDeterministicNowcast(options: {
     question: options.query,
   })
   if (typeof answered.payload.answer !== 'string' || !answered.payload.answer.trim()) {
-    throw new Error('短临回答工具未返回可交付文本')
+    throw new Error('短时临近预报（短临）回答工具未返回可交付文本')
   }
   const answer = answered.payload.answer.trim()
   const answerEntry = await options.store.appendTranscript({
@@ -76,7 +76,7 @@ export async function runDeterministicNowcast(options: {
 
 function isNowcastQuestion(query: string): boolean {
   const normalized = query.replace(/\s+/gu, '')
-  return /(天气怎么样|天气如何|会不会下雨|会下雨吗|下雨吗|短临|未来.{0,8}(降水|降雨|天气)|接下来.{0,8}(天气|降水|降雨|下雨))/u.test(normalized)
+  return /(天气怎么样|天气如何|会不会下雨|会下雨吗|下雨吗|短时临近预报（短临）|未来.{0,8}(降水|降雨|天气)|接下来.{0,8}(天气|降水|降雨|下雨))/u.test(normalized)
 }
 
 function requiredResultRef(result: ToolResult, kinds: string[]): ValueRef {

@@ -1,0 +1,144 @@
+/* Liquid glass stabilization and shared surface tokens. */
+
+.digital-cartographer,
+.debug-shell {
+  --glass-panel-bg:
+    radial-gradient(circle at 12% -10%, rgb(255 255 255 / 0.46), transparent 34%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0.065) 54%, rgb(255 255 255 / 0.12));
+  --glass-strong-bg:
+    radial-gradient(circle at 12% -12%, rgb(255 255 255 / 0.58), transparent 36%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.33), rgb(255 255 255 / 0.10) 56%, rgb(255 255 255 / 0.16));
+  --glass-chip-bg:
+    radial-gradient(circle at 22% 10%, rgb(255 255 255 / 0.46), transparent 32%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.30), rgb(255 255 255 / 0.09) 60%, rgb(255 255 255 / 0.14));
+  --glass-control-bg:
+    radial-gradient(circle at 26% 10%, rgb(255 255 255 / 0.62), transparent 32%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.38), rgb(255 255 255 / 0.13) 58%, rgb(255 255 255 / 0.18));
+  --glass-control-hover:
+    radial-gradient(circle at 28% 10%, rgb(255 255 255 / 0.76), transparent 34%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.48), rgb(255 255 255 / 0.17) 58%, rgb(255 255 255 / 0.14));
+  --glass-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.78),
+    inset 0 -1px 0 rgb(0 0 0 / 0.10),
+    0 22px 64px rgb(0 0 0 / 0.12);
+  --glass-shadow-soft:
+    inset 0 1px 0 rgb(255 255 255 / 0.68),
+    inset 0 -1px 0 rgb(0 0 0 / 0.07),
+    0 10px 28px rgb(0 0 0 / 0.08);
+  --glass-border: rgb(255 255 255 / 0.54);
+}
+
+/* SVG displacement stays on stable shell surfaces only. Frequently scrolling
+   rows use plain CSS backdrop blur to avoid repaint shimmer. */
+.cc-timeline .cc-user-prompt,
+.cc-timeline .cc-result-card,
+.cc-timeline .cc-tool-io-card,
+.cc-timeline .cc-tool-detail,
+.cc-timeline .cc-plan-panel,
+.cc-timeline .cc-plan-review-card__status,
+.cc-timeline .cc-plan-document,
+.cc-timeline .cc-plan-approval-box,
+.cc-timeline .cc-task-progress,
+.cc-timeline .cc-approval-card,
+.cc-timeline .cc-error-card,
+.cc-timeline .cc-system-card,
+.tool-management__catalog .tool-card,
+.tool-mini-console__card,
+.tool-mini-app__workflow-step,
+.tool-mini-app__state,
+.tool-mini-app__contract,
+.tool-mini-result,
+.artifact-list__item {
+  border-color: var(--glass-border);
+  background: var(--glass-panel-bg);
+  box-shadow: var(--glass-shadow-soft);
+  backdrop-filter: blur(14px) saturate(190%) contrast(1.08) brightness(1.04);
+  -webkit-backdrop-filter: blur(14px) saturate(190%) contrast(1.08) brightness(1.04);
+}
+
+.cc-timeline .cc-user-prompt::before,
+.cc-timeline .cc-user-prompt::after,
+.cc-timeline .cc-result-card::before,
+.cc-timeline .cc-result-card::after,
+.cc-timeline .cc-tool-io-card::before,
+.cc-timeline .cc-tool-io-card::after,
+.cc-timeline .cc-tool-detail::before,
+.cc-timeline .cc-tool-detail::after,
+.cc-timeline .cc-plan-panel::before,
+.cc-timeline .cc-plan-panel::after,
+.cc-timeline .cc-plan-review-card__status::before,
+.cc-timeline .cc-plan-review-card__status::after,
+.cc-timeline .cc-plan-document::before,
+.cc-timeline .cc-plan-document::after,
+.cc-timeline .cc-plan-approval-box::before,
+.cc-timeline .cc-plan-approval-box::after,
+.cc-timeline .cc-task-progress::before,
+.cc-timeline .cc-task-progress::after,
+.cc-timeline .cc-approval-card::before,
+.cc-timeline .cc-approval-card::after,
+.cc-timeline .cc-error-card::before,
+.cc-timeline .cc-error-card::after,
+.cc-timeline .cc-system-card::before,
+.cc-timeline .cc-system-card::after {
+  opacity: 0.16;
+  transform: none;
+}
+
+.cc-icon-button,
+.cc-mini-button,
+.cc-plan-choice,
+.cc-composer-tool,
+.cc-mode-trigger,
+.toolbar-button,
+.dc-map-stage__zoom,
+.dc-map-stage__icon,
+.dc-map-stage__basemap,
+.nav-bar__status-chip,
+.dc-mobile-tab {
+  border-color: rgb(255 255 255 / 0.48);
+  background: var(--glass-chip-bg);
+  box-shadow: var(--glass-shadow-soft);
+}
+
+.cc-icon-button:hover,
+.cc-mini-button:hover,
+.cc-plan-choice:hover,
+.cc-composer-tool:hover,
+.cc-mode-trigger:hover,
+.toolbar-button:hover,
+.dc-map-stage__icon:hover,
+.dc-map-stage__basemap:hover,
+.dc-mobile-tab:hover {
+  background: var(--glass-control-hover);
+}
+
+@media (prefers-contrast: more) {
+  .digital-cartographer,
+  .debug-shell {
+    --glass-panel-bg: rgb(255 255 255 / 0.94);
+    --glass-strong-bg: rgb(255 255 255 / 0.96);
+    --glass-chip-bg: rgb(255 255 255 / 0.92);
+    --glass-control-bg: rgb(255 255 255 / 0.94);
+    --glass-control-hover: rgb(255 255 255 / 0.98);
+    --glass-border: rgb(15 23 42 / 0.30);
+  }
+
+  .liquid-glass-surface,
+  .cc-panel,
+  .dc-card,
+  .panel,
+  .tool-mini-app {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass-surface::before,
+  .glass::before,
+  .glass-subtle::before,
+  .glass-strong::before {
+    animation: none !important;
+    transform: none !important;
+  }
+}

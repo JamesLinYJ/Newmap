@@ -73,7 +73,7 @@ describe('deriveEntriesFromItems', () => {
     expect(entries[0].commands?.[0].details?.resultId).toBe('res_1')
   })
 
-  it('把短临回答工具的结构化输出投影成标准纯文本', () => {
+  it('把短时临近预报（短临）回答工具的结构化输出投影成标准纯文本', () => {
     const entries = deriveEntriesFromItems([
       item({ itemId: 'call', itemType: 'function_call', callId: 'call1', name: 'answer_nowcast_question', arguments: '{}' }),
       item({
@@ -131,6 +131,35 @@ describe('deriveEntriesFromItems', () => {
     expect(entries[0].kind).toBe('error')
     expect(entries[0].status).toBe('failed')
     expect(entries[0].body).toBe('工具失败')
+  })
+
+  it('把等待审批的 plan result 投影为可操作审批条目', () => {
+    const plan = {
+      goal: '生成短时强降水风险区划图',
+      steps: [{ id: 'step_1', tool: 'render_rainfall_risk_map', args: {}, reason: '生成风险图' }],
+    }
+    const entries = deriveEntriesFromItems([
+      item({
+        itemId: 'result:approval',
+        itemType: 'result',
+        metadata: {
+          resultType: 'waiting_approval',
+          approvalId: 'approval_1',
+          title: '接受这个执行计划？',
+          description: '批准后继续执行。',
+          args: { plan },
+        },
+      }),
+    ])
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      kind: 'approval',
+      approvalId: 'approval_1',
+      title: '接受这个执行计划？',
+      status: 'blocked',
+    })
+    expect(entries[0].details?.args).toEqual({ plan })
   })
 
   it('把旧运行里的 terminated 显示为可恢复的模型连接错误', () => {

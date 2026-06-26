@@ -139,9 +139,10 @@ function Set-DefaultEnvironment {
     Set-ProcessDefault 'DATABASE_URL' "postgresql://geo_agent:geo_agent@127.0.0.1:$($env:POSTGIS_PORT)/geo_agent"
     Set-ProcessDefault 'WORKER_URL' "http://127.0.0.1:$($env:WORKER_PORT)"
     Set-ProcessDefault 'API_PROXY_TARGET' "http://127.0.0.1:$($env:API_PORT)"
-    $devToolProviders = 'geo-platform-chart,geo-platform-geocode,geo-platform-plan,geo-platform-task,geo-platform-spatial,geo-platform-routing,geo-platform-meteorology'
+    $devToolProviders = 'geo-platform-chart,geo-platform-geocode,geo-platform-plan,geo-platform-developer-tools,geo-platform-spatial,geo-platform-routing,geo-platform-meteorology'
     Set-ProcessDefault 'ENABLED_TOOL_PROVIDERS' $devToolProviders
     Ensure-ProcessCsvIncludes 'ENABLED_TOOL_PROVIDERS' $devToolProviders.Split(',')
+    Set-ProcessDefault 'DEVELOPER_TOOL_ALLOWED_ROOTS' "$Root;$RuntimeRoot"
     Set-ProcessDefault 'VALHALLA_BASE_URL' 'https://valhalla1.openstreetmap.de'
     Set-ProcessDefault 'ROUTING_TIMEOUT_MS' '20000'
 
@@ -328,7 +329,7 @@ function Get-ServiceDefinition {
     switch ($Name) {
         'worker' {
             return [pscustomobject]@{
-                Name = 'worker'; Label = 'Weather Worker'; Port = [int]$env:WORKER_PORT
+                Name = 'worker'; Label = '气象计算 Worker'; Port = [int]$env:WORKER_PORT
                 Url = "http://127.0.0.1:$($env:WORKER_PORT)/health"
                 FilePath = (Resolve-SystemPython)
                 Arguments = @('-m', 'uvicorn', 'worker_app.sidecar:app', '--app-dir', 'apps/worker/src', '--host', '127.0.0.1', '--port', $env:WORKER_PORT, '--reload')

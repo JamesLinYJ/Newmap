@@ -90,6 +90,7 @@ export class ToolExecutionCoordinator {
     await this.prepare(toolName, args, callId)
     const itemId = this.callItems.get(callId)
     try {
+      this.assertPlanModeAllows(toolName)
       await this.appendLedger(callId, toolName, 'started')
       this.options.eventSink.emit('tool.started', toolName, { tool: toolName, callId })
       const result = await this.options.registry.execute(toolName, args, this.createToolContext())
@@ -133,6 +134,17 @@ export class ToolExecutionCoordinator {
       })
       throw error
     }
+  }
+
+  // 计划模式是硬运行边界：模型可以读、查、分析和提交退出计划，
+  // 但不能在审批前写文件、导出、导入、执行破坏性工具或产生业务副作用。
+  private assertPlanModeAllows(toolName: string): void {
+    const run = this.options.store.getRun(this.options.runId)
+    if (!run.state.planMode) return
+    const tool = this.options.registry.get(toolName)
+    if (!tool) throw new Error(`工具 '${toolName}' 未注册`)
+    if (tool.isReadOnly || toolName === 'exit_plan_mode' || toolName === 'enter_plan_mode') return
+    throw new Error(`计划模式禁止执行写入或副作用工具 '${toolName}'。请先用 exit_plan_mode 提交计划并等待批准。`)
   }
 
   private createToolContext(): ToolContext {

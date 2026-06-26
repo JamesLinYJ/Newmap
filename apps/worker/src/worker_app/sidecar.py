@@ -8,7 +8,7 @@
 #   作者:       JamesLinYJ
 # --------------------------------------------------------------------------
 
-"""只承载 gis_weather 科学计算，不保存平台业务状态。"""
+"""只承载 gis_meteorology 科学计算，不保存平台业务状态。"""
 
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ logger = logging.getLogger("worker")
 #
 # 把科学计算源码根加入导入路径，避免 /health 假绿而首次工具调用才暴露缺包。
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
-GIS_WEATHER_SOURCE = REPOSITORY_ROOT / "packages" / "gis-weather" / "src"
-if GIS_WEATHER_SOURCE.is_dir() and str(GIS_WEATHER_SOURCE) not in sys.path:
-    sys.path.insert(0, str(GIS_WEATHER_SOURCE))
+GIS_METEOROLOGY_SOURCE = REPOSITORY_ROOT / "packages" / "gis-meteorology" / "src"
+if GIS_METEOROLOGY_SOURCE.is_dir() and str(GIS_METEOROLOGY_SOURCE) not in sys.path:
+    sys.path.insert(0, str(GIS_METEOROLOGY_SOURCE))
 
 app = FastAPI(title="geo-agent-science-worker", version="0.2.0")
 RUNTIME_ROOT = Path(os.environ.get("RUNTIME_ROOT", "runtime")).resolve()
@@ -42,10 +42,10 @@ class ToolRequest(BaseModel):
 
 
 @app.post("/tools/{tool_name}")
-async def run_weather_tool(tool_name: str, request: ToolRequest) -> dict[str, Any]:
+async def run_meteorology_tool(tool_name: str, request: ToolRequest) -> dict[str, Any]:
     """执行无状态科学计算；所有路径都必须是 runtime 根目录内的相对引用。"""
     try:
-        payload = execute_weather_tool(tool_name, request.args)
+        payload = execute_meteorology_tool(tool_name, request.args)
         return {"message": f"{tool_name} 执行完成", "payload": payload, "warnings": payload.get("warnings", [])}
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -54,11 +54,11 @@ async def run_weather_tool(tool_name: str, request: ToolRequest) -> dict[str, An
         raise HTTPException(500, str(exc)) from exc
 
 
-def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-    from gis_weather import NowcastAnalysisService, NowcastSequenceService, NowcastTextService
-    from gis_weather.service import WeatherDataService
+def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    from gis_meteorology import NowcastAnalysisService, NowcastSequenceService, NowcastTextService
+    from gis_meteorology.service import MeteorologicalDataService
 
-    service = WeatherDataService()
+    service = MeteorologicalDataService()
     if tool_name == "inspect_meteorological_dataset":
         source = input_path(args)
         return service.inspect(source, filename=input_filename(args, source))
@@ -153,21 +153,21 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             raise ValueError("analysis 必须是对象")
         return NowcastTextService().build_draft_answer(
             facts=analysis,
-            question="生成正式短临预报文字",
+            question="生成正式短时临近预报（短临）预报文字",
         )
     if tool_name == "inspect_radar_station_collection":
-        from gis_weather.third_party.radar_mosaic_agent.adapter import inspect_radar_station_collection
+        from gis_meteorology.third_party.radar_mosaic_agent.adapter import inspect_radar_station_collection
 
         return inspect_radar_station_collection(referenced_paths(args, "files"))
     if tool_name == "recommend_radar_mosaic_strategy":
-        from gis_weather.third_party.radar_mosaic_agent.adapter import recommend_radar_mosaic_strategy
+        from gis_meteorology.third_party.radar_mosaic_agent.adapter import recommend_radar_mosaic_strategy
 
         return recommend_radar_mosaic_strategy(
             goal_mode=optional_text(args, "goal_mode") or "quicklook",
             time_strategy=optional_text(args, "time_strategy") or "nearest",
         )
     if tool_name == "render_radar_mosaic":
-        from gis_weather.third_party.radar_mosaic_agent.adapter import render_radar_mosaic
+        from gis_meteorology.third_party.radar_mosaic_agent.adapter import render_radar_mosaic
 
         output_png = output_path(args, key="output_png_relative_path")
         output_npz = output_path(args, key="output_npz_relative_path")
@@ -193,7 +193,7 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             **({"outputMapPngRelativePath": relative_runtime_path(output_map_png)} if output_map_png is not None else {}),
         }
     if tool_name == "compare_radar_mosaic_reference":
-        from gis_weather.third_party.radar_mosaic_agent.adapter import compare_radar_mosaic_reference
+        from gis_meteorology.third_party.radar_mosaic_agent.adapter import compare_radar_mosaic_reference
 
         output_png = output_path(args, key="output_png_relative_path")
         output_ref_png = output_path(args, key="output_reference_png_relative_path")
@@ -214,7 +214,7 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             "outputReferencePngRelativePath": relative_runtime_path(output_ref_png),
         }
     if tool_name == "render_rainfall_risk_map":
-        from gis_weather.third_party.rainfall_risk_map.adapter import render_rainfall_risk_map
+        from gis_meteorology.third_party.rainfall_risk_map.adapter import render_rainfall_risk_map
 
         output = output_path(args)
         output_geojson_value = optional_text(args, "output_geojson_relative_path")
@@ -237,7 +237,7 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
             **({"outputGeojsonRelativePath": relative_runtime_path(output_geojson)} if output_geojson is not None else {}),
         }
     if tool_name == "generate_area_rainfall_table":
-        from gis_weather.third_party.short_term_forecast.adapter import generate_area_rainfall_table
+        from gis_meteorology.third_party.short_term_forecast.adapter import generate_area_rainfall_table
 
         file_items = sequence_items(args)
         nc_paths = [referenced_path(item) for item in file_items]
@@ -263,12 +263,12 @@ def execute_weather_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]
 
 
 def create_nowcast_sequence(args: dict[str, Any]) -> Any:
-    from gis_weather import NowcastProductProfile, NowcastSequenceService
-    from gis_weather.service import WeatherDataService
+    from gis_meteorology import NowcastProductProfile, NowcastSequenceService
+    from gis_meteorology.service import MeteorologicalDataService
 
     variable = optional_text(args, "variable")
     datasets = []
-    inspector = WeatherDataService()
+    inspector = MeteorologicalDataService()
     for index, item in enumerate(sequence_items(args)):
         source = referenced_path(item)
         filename = referenced_filename(item, source)
@@ -287,7 +287,7 @@ def create_nowcast_sequence(args: dict[str, Any]) -> Any:
 
 
 def nowcast_sequence_from_reference(args: dict[str, Any], *, variable_override: str | None = None) -> Any:
-    from gis_weather import NowcastProductProfile, NowcastSequenceService
+    from gis_meteorology import NowcastProductProfile, NowcastSequenceService
 
     raw = args.get("sequence")
     if not isinstance(raw, dict):
@@ -466,7 +466,7 @@ def optional_number_list(args: dict[str, Any], key: str) -> list[float] | None:
 @app.get("/health")
 async def health():
     try:
-        import gis_weather  # noqa: F401
+        import gis_meteorology  # noqa: F401
         import geopandas  # noqa: F401
         import matplotlib  # noqa: F401
         import numpy  # noqa: F401
@@ -474,5 +474,5 @@ async def health():
         import pandas  # noqa: F401
         import scipy  # noqa: F401
     except ImportError as exc:
-        raise HTTPException(503, f"gis_weather 不可用：{exc}") from exc
-    return {"status": "ok", "runtimeRoot": str(RUNTIME_ROOT), "gisWeatherAvailable": True}
+        raise HTTPException(503, f"gis_meteorology 不可用：{exc}") from exc
+    return {"status": "ok", "runtimeRoot": str(RUNTIME_ROOT), "gisMeteorologyAvailable": True}

@@ -28,7 +28,7 @@
     {
       "name": "exit_plan_mode",
       "label": "退出计划模式",
-      "description": "退出只读探索模式，恢复完整工具访问权限。",
+      "description": "提交结构化执行计划并请求用户批准；批准后退出只读计划模式。",
       "group": "系统",
       "tags": ["plan", "system"],
       "isReadOnly": true,
@@ -38,11 +38,65 @@
         "properties": {
           "plan": {
             "type": "object",
-            "additionalProperties": true,
-            "description": "执行计划"
+            "additionalProperties": false,
+            "description": "待用户批准的执行计划。",
+            "properties": {
+              "goal": {
+                "type": "string",
+                "description": "本轮实施目标。"
+              },
+              "steps": {
+                "type": "array",
+                "description": "按执行顺序排列的计划步骤。",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "步骤 ID，例如 step_1。"
+                    },
+                    "tool": {
+                      "type": "string",
+                      "description": "预计使用的工具或 manual。"
+                    },
+                    "args": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "description": "预计工具参数；无法确定时使用空对象。"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "为什么需要这一步。"
+                    }
+                  },
+                  "required": ["id", "tool", "reason"]
+                }
+              }
+            },
+            "required": ["goal", "steps"]
+          },
+          "allowedPrompts": {
+            "type": "array",
+            "description": "计划获批后建议允许的动作类别。",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "description": "工具名称，例如 Bash。"
+                },
+                "prompt": {
+                  "type": "string",
+                  "description": "动作类别，例如运行测试。"
+                }
+              },
+              "required": ["tool", "prompt"]
+            }
           }
         },
-        "required": []
+        "required": ["plan"]
       }
     }
   ]

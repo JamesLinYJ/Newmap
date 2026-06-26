@@ -233,7 +233,7 @@ export class CompatibleChatCompletionsModel implements Model {
       if (RESERVED_PROVIDER_FIELDS.has(key)) throw new UserError(`providerData 不得覆盖保留字段 '${key}'`)
     }
     const responseFormat = toResponseFormat(request.outputType)
-    return {
+    return ({
       model: this.model,
       messages,
       tools: tools.length ? tools : undefined,
@@ -249,7 +249,7 @@ export class CompatibleChatCompletionsModel implements Model {
       ...(responseFormat ? { response_format: responseFormat } : {}),
       ...(request.modelSettings.reasoning?.effort ? { reasoning_effort: request.modelSettings.reasoning.effort } : {}),
       ...providerData,
-    } as ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming
+    } as unknown) as ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming
   }
 }
 

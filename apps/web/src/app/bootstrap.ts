@@ -15,6 +15,7 @@
 
 import type { ConversationItem, TranscriptEntry } from '@geo-agent-platform/shared-types'
 import { runController } from './controllers'
+export { mergeConversationItems } from '../features/conversation/timelineProjector'
 
 const { getRunItems } = runController
 
@@ -79,7 +80,7 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
         isError: false,
         phase: null,
         status: 'completed',
-        metadata: { transcriptEntryId: entry.entryId, canonical: true },
+        metadata: { transcriptEntryId: entry.entryId, transcriptSeq: entry.seq, canonical: true },
         timestamp: entry.timestamp,
       }]
     }
@@ -108,7 +109,7 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
           isError: false,
           phase: null,
           status: 'completed',
-          metadata: { transcriptEntryId: entry.entryId, assistantContentForCallId: callId, canonical: true },
+          metadata: { transcriptEntryId: entry.entryId, transcriptSeq: entry.seq, assistantContentForCallId: callId, canonical: true },
           timestamp: entry.timestamp,
         })
       }
@@ -127,7 +128,7 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
         isError: false,
         phase: null,
         status: 'completed',
-        metadata: { transcriptEntryId: entry.entryId, canonical: true },
+        metadata: { transcriptEntryId: entry.entryId, transcriptSeq: entry.seq, canonical: true },
         timestamp: entry.timestamp,
       })
       return items
@@ -150,7 +151,7 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
         isError: entry.payload.ledgerStatus === 'failed',
         phase: null,
         status: entry.payload.ledgerStatus === 'failed' ? 'failed' : 'completed',
-        metadata: { transcriptEntryId: entry.entryId, canonical: true, contentRef: entry.payload.contentRef ?? null },
+        metadata: { transcriptEntryId: entry.entryId, transcriptSeq: entry.seq, canonical: true, contentRef: entry.payload.contentRef ?? null },
         timestamp: entry.timestamp,
       }]
     }
@@ -173,23 +174,6 @@ function assistantToolContentByCallId(entries: TranscriptEntry[]): Map<string, s
     if (callId && content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
   }
   return contentByCallId
-}
-
-export function mergeConversationItems(canonical: ConversationItem[], replayed: ConversationItem[]): ConversationItem[] {
-  const replayedEntryIds = new Set(replayed.flatMap(item => {
-    const entryId = item.metadata?.transcriptEntryId
-    return typeof entryId === 'string' ? [entryId] : []
-  }))
-  const combined = [
-    ...canonical.filter(item => {
-      const entryId = item.metadata?.transcriptEntryId
-      return typeof entryId !== 'string' || !replayedEntryIds.has(entryId)
-    }),
-    ...replayed,
-  ]
-  const latest = new Map<string, ConversationItem>()
-  for (const item of combined) latest.set(item.itemId, item)
-  return [...latest.values()].sort((left, right) => left.timestamp.localeCompare(right.timestamp))
 }
 
 export async function retryAsync<T>(task: () => Promise<T>, retries: number, delayMs: number): Promise<T> {

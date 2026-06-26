@@ -1,6 +1,6 @@
 # geo-agent-platform
 
-中文优先的 GIS Agent 平台。Node/TypeScript Server 承载 Agent 运行时、WebSocket 控制面和 HTTP 数据面；Python Worker 只承载 `gis_weather` 科学计算；React + MapLibre 提供工作台。
+中文优先的 GIS Agent 平台。Node/TypeScript Server 承载 Agent 运行时、WebSocket 控制面和 HTTP 数据面；Python Worker 只承载 `gis_meteorology` 科学计算；React + MapLibre 提供工作台。
 
 ## 架构
 
@@ -17,13 +17,13 @@ HTTP 只保留 `/health`、文件/图层上传替换、artifact 元数据/GeoJSO
 
 气象分析从通用线程文件开始，后续工具只消费当前 run 中的 `valueRef`。Worker 只接受共享 `RUNTIME_ROOT` 内的相对文件引用，拒绝绝对路径和越界路径。
 
-完整工具链覆盖数据检查、模型解读、栅格渲染、统计、阈值区域、等值线、DOCX 报告，以及短临序列检查、降水分析、问题回答、预报文本和栅格渲染。
+完整工具链覆盖数据检查、模型解读、栅格渲染、统计、阈值区域、等值线、DOCX 报告，以及短时临近预报序列检查、降水分析、问题回答、预报文本和栅格渲染。
 
 ## 本地开发
 
 ### Windows 一键启动
 
-首次运行先复制 `.env.example` 为 `.env` 并执行 `npm install`。之后双击 `start-dev.cmd`，脚本会自动启动 Docker Desktop、PostGIS、Weather Worker、Node API/WebSocket 和 Vite Web，并在全部健康后打开浏览器。
+首次运行先复制 `.env.example` 为 `.env` 并执行 `npm install`。之后双击 `start-dev.cmd`，脚本会自动启动 Docker Desktop、PostGIS、气象计算 Worker、Node API/WebSocket 和 Vite Web，并在全部健康后打开浏览器。
 
 ```powershell
 .\dev.ps1 start -OpenBrowser
@@ -53,7 +53,7 @@ make dev-server
 make dev-web
 ```
 
-主要配置为 `API_HOST`、`API_PORT`、`WORKER_URL`、`DATABASE_URL`、`RUNTIME_ROOT` 和 `ENABLED_TOOL_PROVIDERS`。安装到仓库的 Provider 不会自动启用。
+主要配置为 `API_HOST`、`API_PORT`、`WORKER_URL`、`DATABASE_URL`、`RUNTIME_ROOT`、`ENABLED_TOOL_PROVIDERS` 和 `DEVELOPER_TOOL_ALLOWED_ROOTS`。安装到仓库的 Provider 不会自动启用。`geo-platform-developer-tools` 只用于维护 Newmap GIS/气象 Agent，必须显式配置允许访问的绝对根目录；缺失时 Provider 会在 DebugPage 显示不可用原因。
 
 开发数据结构变更后使用 `npm run reset:conversations` 显式清空旧会话、上传、artifact 与对象文件。该命令保留 PostGIS 图层、工具目录和运行配置，不做旧 payload 兼容回填。
 

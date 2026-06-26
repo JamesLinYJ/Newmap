@@ -1,0 +1,158 @@
+/* Workspace layout and mobile panel navigation. */
+
+.workspace-pane {
+  min-width: 0;
+}
+
+.dc-mobile-tabs {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .digital-cartographer {
+    overflow-x: clip;
+    --dc-mobile-tabs-height: 64px;
+    --dc-mobile-tabs-offset: max(10px, env(safe-area-inset-bottom));
+    --dc-mobile-tabs-reserved: calc(var(--dc-mobile-tabs-height) + var(--dc-mobile-tabs-offset) + 12px);
+  }
+
+  .nav-bar {
+    inset-inline: 8px;
+    top: max(8px, env(safe-area-inset-top));
+    height: 56px;
+    border-radius: 22px;
+    padding-inline: 9px;
+  }
+
+  .nav-bar__identity {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .nav-bar__nav {
+    max-width: calc(100vw - 126px);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nav-bar__nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-bar__nav-item {
+    width: 38px;
+    min-width: 38px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .nav-bar__status {
+    gap: 6px;
+  }
+
+  .nav-bar__status .btn {
+    min-height: 38px;
+    border-radius: 16px;
+    padding-inline: 12px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .digital-cartographer .app-shell-grid {
+    display: block;
+    padding: 74px 8px var(--dc-mobile-tabs-reserved);
+  }
+
+  .digital-cartographer .app-sidebar {
+    display: none;
+  }
+
+  .digital-cartographer .workspace-overview {
+    display: none;
+  }
+
+  .digital-cartographer .workspace-grid {
+    display: block;
+    min-height: calc(100dvh - 154px);
+  }
+
+  .workspace-grid[data-mobile-panel="chat"] .workspace-pane:not(.workspace-pane--chat),
+  .workspace-grid[data-mobile-panel="map"] .workspace-pane:not(.workspace-pane--map),
+  .workspace-grid[data-mobile-panel="results"] .workspace-pane:not(.workspace-pane--results),
+  .workspace-grid[data-mobile-panel="tools"] .workspace-pane:not(.workspace-pane--tools) {
+    display: none;
+  }
+
+  .workspace-pane--chat,
+  .workspace-pane--map,
+  .workspace-pane--results,
+  .workspace-pane--tools {
+    width: 100%;
+  }
+
+  .workspace-pane--map .dc-map-stage,
+  .workspace-pane--map .dc-map-stage--loading {
+    min-height: calc(100dvh - 160px);
+    height: calc(100dvh - 160px);
+    border-radius: 24px;
+  }
+
+  .workspace-pane--results .dc-detail-column {
+    max-height: calc(100dvh - 160px);
+    overflow-y: auto;
+    padding-bottom: 6px;
+  }
+
+  .tool-management-host {
+    padding-bottom: 8px;
+  }
+
+  .dc-mobile-tabs {
+    position: fixed;
+    inset-inline: 10px;
+    bottom: var(--dc-mobile-tabs-offset);
+    z-index: 70;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
+    border: 1px solid rgb(255 255 255 / 0.52);
+    border-radius: 26px;
+    padding: 7px;
+    background: var(--glass-strong-bg);
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(22px) saturate(210%) contrast(1.12) brightness(1.05);
+    -webkit-backdrop-filter: blur(22px) saturate(210%) contrast(1.12) brightness(1.05);
+  }
+
+  .dc-mobile-tab {
+    display: flex;
+    min-width: 0;
+    min-height: 48px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid transparent;
+    border-radius: 19px;
+    color: #4d6068;
+    font-size: 12px;
+    font-weight: 700;
+    transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease, transform 180ms ease;
+  }
+
+  .dc-mobile-tab:active {
+    transform: scale(0.98);
+  }
+
+  .dc-mobile-tab--active {
+    border-color: rgb(255 255 255 / 0.68);
+    color: #101820;
+    background: var(--glass-control-bg);
+  }
+}
+
+@media (min-width: 768px) {
+  .workspace-grid[data-mobile-panel] .workspace-pane {
+    display: block;
+  }
+}

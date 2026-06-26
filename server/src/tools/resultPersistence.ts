@@ -14,7 +14,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ToolResult, ValueRef } from '../framework/types.js'
-import type { ArtifactRef, ToolValueRef } from '../schemas/types.js'
+import type { ArtifactRef, ExecutionPlan, TodoItem, ToolValueRef } from '../schemas/types.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
 import { makeId, nowUtc } from '../utils/ids.js'
 
@@ -45,9 +45,11 @@ export async function persistToolExecutionResult(
   }))
   const generatedArtifacts = await createGeoArtifacts(result, runId, store.runtimeRoot)
   const artifacts = dedupeArtifacts([...explicitArtifacts, ...generatedArtifacts])
+  const controlState = { ...planControlState(result.payload), ...todoControlState(result.payload) }
   await store.updateRunState(runId, {
     toolValueRefs: dedupeValueRefs([...run.state.toolValueRefs, ...refs]),
     artifacts: dedupeArtifacts([...run.state.artifacts, ...artifacts]),
+    ...controlState,
     toolResults: [...run.state.toolResults, {
       stepId: makeId('step'),
       tool: toolName,
@@ -69,6 +71,58 @@ export async function persistToolExecutionResult(
   })
   for (const ref of refs) store.conversationStore.appendValue(runId, ref)
   await Promise.all(artifacts.map(artifact => store.persistArtifact(artifact)))
+}
+
+// 计划模式是运行状态，不是普通工具 payload。
+// enter/exit 工具返回控制字段后，必须在同一条持久化路径内写回 run state。
+function planControlState(payload: Record<string, unknown>): Partial<{ planMode: boolean; executionPlan: ExecutionPlan | null }> {
+  const updates: Partial<{ planMode: boolean; executionPlan: ExecutionPlan | null }> = {}
+  if (typeof payload.planMode === 'boolean') updates.planMode = payload.planMode
+  if (isRecord(payload.plan)) updates.executionPlan = normalizeExecutionPlan(payload.plan)
+  return updates
+}
+
+function normalizeExecutionPlan(value: Record<string, unknown>): ExecutionPlan {
+  const steps = Array.isArray(value.steps)
+    ? value.steps.map((step, index) => normalizePlanStep(step, index))
+    : []
+  return {
+    goal: typeof value.goal === 'string' && value.goal.trim() ? value.goal.trim() : '执行已批准计划',
+    steps,
+  }
+}
+
+function normalizePlanStep(value: unknown, index: number): ExecutionPlan['steps'][number] {
+  const raw = isRecord(value) ? value : {}
+  return {
+    id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `plan_step_${index + 1}`,
+    tool: typeof raw.tool === 'string' && raw.tool.trim() ? raw.tool.trim() : 'manual',
+    args: isRecord(raw.args) ? raw.args : {},
+    reason: typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : '按计划执行',
+  }
+}
+
+// todo_write 的 payload 是运行状态更新，不是普通文本结果。统一在工具持久化
+// 入口写回 AgentState，确保时间线、右侧结果和 DebugPage 看到同一份 Todo。
+function todoControlState(payload: Record<string, unknown>): Partial<{ todos: TodoItem[] }> {
+  if (!Array.isArray(payload.todos)) return {}
+  return { todos: payload.todos.map((todo, index) => normalizeTodoItem(todo, index)) }
+}
+
+function normalizeTodoItem(value: unknown, index: number): TodoItem {
+  const raw = isRecord(value) ? value : {}
+  const status = typeof raw.status === 'string' && ['pending', 'running', 'completed', 'failed', 'blocked'].includes(raw.status)
+    ? raw.status as TodoItem['status']
+    : 'pending'
+  return {
+    todoId: typeof raw.todoId === 'string' && raw.todoId.trim() ? raw.todoId.trim() : `todo_${index + 1}`,
+    title: typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim() : `Todo ${index + 1}`,
+    status,
+    description: typeof raw.description === 'string' && raw.description.trim() ? raw.description.trim() : null,
+    activeForm: typeof raw.activeForm === 'string' && raw.activeForm.trim() ? raw.activeForm.trim() : null,
+    ownerAgentId: typeof raw.ownerAgentId === 'string' && raw.ownerAgentId.trim() ? raw.ownerAgentId.trim() : null,
+    stepId: typeof raw.stepId === 'string' && raw.stepId.trim() ? raw.stepId.trim() : null,
+  }
 }
 
 export function resolveRuntimeValueRef(state: Map<string, unknown>, refId: string): ValueRef {

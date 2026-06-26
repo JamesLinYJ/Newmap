@@ -23,6 +23,13 @@ import type {
 } from '@geo-agent-platform/shared-types'
 
 import './AppShell.css'
+import './styles/glass.css'
+import './styles/markdown.css'
+import './styles/conversation.css'
+import './styles/map.css'
+import './styles/layers.css'
+import './styles/layout.css'
+import './styles/tools-debug.css'
 import { pickPreferredArtifactId } from '../features/artifacts/artifactSelection'
 import { buildListItemVariants, buildListVariants, motionSpring } from '../shared/motion'
 import { pickConversationHeadline } from '../features/conversation/items'
@@ -34,11 +41,11 @@ import { supportsAgentSdkLiveSupervisor } from '../shared/providerCapabilities'
 import { MapErrorBoundary } from '../features/map/MapErrorBoundary'
 import {
   formatUiError,
-  mergeConversationItems,
   reportNonBlockingError,
   retryAsync,
   transcriptEntriesToConversationItems,
 } from './bootstrap'
+import { projectTimeline } from '../features/conversation/timelineProjector'
 import {
   useConnectionController,
   useNavigationController,
@@ -157,7 +164,7 @@ function AppShell() {
   const deferredItems = useDeferredValue(items)
   // 当前 run 快照只负责实时变化；完整 thread transcript 由 canonical history 投影补齐。
   const threadConversationItems = useMemo(
-    () => mergeConversationItems(canonicalThreadItems, deferredItems),
+    () => projectTimeline(canonicalThreadItems, deferredItems),
     [canonicalThreadItems, deferredItems],
   )
   const reducedMotion = useReducedMotion() ?? false
@@ -603,7 +610,7 @@ function AppShell() {
           setCanonicalThreadItems([])
         } else if (targetThreadId) {
           // 新 run 的首个 snapshot 会替换当前 run items，先把已完成协议项固化到 thread 投影。
-          setCanonicalThreadItems(current => mergeConversationItems(
+          setCanonicalThreadItems(current => projectTimeline(
             current,
             items.filter(item => item.status !== 'running' && [
               'message', 'function_call', 'function_call_output',
@@ -1010,7 +1017,7 @@ function AppShell() {
                 workspaceItemVariants={workspaceItemVariants}
               >
                 {activeNav === 'tools' ? (
-                  <m.div className="tool-management-host min-w-0" layout variants={workspaceItemVariants}>
+                  <m.div className="tool-management-host workspace-pane workspace-pane--tools min-w-0" layout variants={workspaceItemVariants}>
                     <ToolManagementPage
                       tools={availableTools}
                       artifacts={artifacts}
@@ -1034,7 +1041,7 @@ function AppShell() {
                   </m.div>
                 ) : (
                   <>
-                    <m.div className="min-w-0" layout variants={workspaceItemVariants}>
+                    <m.div className="workspace-pane workspace-pane--chat min-w-0" layout variants={workspaceItemVariants}>
                       <ChatPanel
                         artifactCount={artifacts.length}
                         runStatus={run?.status}
@@ -1091,7 +1098,7 @@ function AppShell() {
                     </m.div>
 
                     <m.div
-                      className="min-w-0"
+                      className="workspace-pane workspace-pane--map min-w-0"
                       layout
                       variants={workspaceItemVariants}
                       onPointerEnter={preloadMap}
@@ -1127,7 +1134,7 @@ function AppShell() {
                       )}
                     </m.div>
 
-                    <m.div className="min-w-0" layout variants={workspaceItemVariants} transition={motionSpring.gentle}>
+                    <m.div className="workspace-pane workspace-pane--results min-w-0" layout variants={workspaceItemVariants} transition={motionSpring.gentle}>
                       <Suspense fallback={<DetailPanelFallback />}>
                         <DetailPanel
                         panelMode={panelMode}

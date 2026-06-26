@@ -22,6 +22,7 @@ if (!process.argv.includes('--confirm')) {
 }
 
 const root = path.resolve(process.cwd(), process.env.RUNTIME_ROOT || 'runtime')
+const legacyMeteorologyId = ['wea', 'ther'].join('')
 for (const name of ['sessions', 'conversations', 'uploads', 'artifacts', 'objects']) {
   const target = path.resolve(root, name)
   if (target !== root && target.startsWith(`${root}${path.sep}`)) {
@@ -40,6 +41,26 @@ if (process.env.DATABASE_URL) {
         END IF;
       END $$;
     `)
+    await client.query(
+      `
+      DELETE FROM platform_runtime_config
+      WHERE config_key = $1
+         OR payload_json::text LIKE '%' || $1 || '%';
+      `,
+      [legacyMeteorologyId],
+    ).catch((error) => {
+      if (error?.code !== '42P01') throw error
+    })
+    await client.query(
+      `
+      DELETE FROM tool_catalog_entries
+      WHERE tool_name = $1
+         OR payload_json::text LIKE '%' || $1 || '%';
+      `,
+      [legacyMeteorologyId],
+    ).catch((error) => {
+      if (error?.code !== '42P01') throw error
+    })
   } finally {
     await client.end()
   }

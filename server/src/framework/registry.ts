@@ -103,7 +103,7 @@ export class ToolRegistry {
         language: t.language,
         isReadOnly: t.isReadOnly,
         isDestructive: t.isDestructive,
-        approvalRecommended: t.isDestructive,
+        approvalRecommended: t.isDestructive || t.requiresApproval === true,
         jsonSchema: t.jsonSchema,
       },
     }))

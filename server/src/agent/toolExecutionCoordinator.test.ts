@@ -32,7 +32,7 @@ describe('formatToolResultForModel', () => {
       source: 'test',
       valueRefs: [
         { refId: 'ref_dataset', kind: 'meteorological_dataset', label: 'lead_000.nc', value: {} },
-        { refId: 'ref_sequence', kind: 'nowcast_sequence', label: '短临气象序列', value: {} },
+        { refId: 'ref_sequence', kind: 'nowcast_sequence', label: '短时临近预报（短临）气象序列', value: {} },
       ],
     }
 
@@ -40,7 +40,7 @@ describe('formatToolResultForModel', () => {
 
     expect(formatted.valueRefs).toEqual([
       { refId: 'ref_dataset', kind: 'meteorological_dataset', label: 'lead_000.nc', unit: null },
-      { refId: 'ref_sequence', kind: 'nowcast_sequence', label: '短临气象序列', unit: null },
+      { refId: 'ref_sequence', kind: 'nowcast_sequence', label: '短时临近预报（短临）气象序列', unit: null },
     ])
     expect(formatted.payloadSummary).toMatchObject({
       datasets: {

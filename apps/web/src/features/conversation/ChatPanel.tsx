@@ -112,7 +112,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const [showTrash, setShowTrash] = useState(false)
   const triggerRef = useRef<HTMLElement | null>(null)
   const firstClarificationOptionRef = useRef<HTMLButtonElement | null>(null)
-  const composerInputRef = useRef<HTMLInputElement | null>(null)
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
   const submittingRef = useRef(false)
   const reducedMotion = useReducedMotion() ?? false
 
@@ -128,7 +128,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const feedVariants = buildListVariants(reducedMotion, 0.02, 0.008)
   const entryVariants = buildListItemVariants(reducedMotion, 8)
   const isTaskMode = taskView === 'history'
-  const showSamples = !isSubmitting && conversation.length === 0 && !isTaskMode
+  const showSamples = !isSubmitting && !query.trim() && conversation.length === 0 && !isTaskMode
   const currentThread = useMemo(
     () => sessionThreads.find((task) => task.id === currentThreadId),
     [currentThreadId, sessionThreads],
@@ -217,7 +217,7 @@ export function ChatPanel(props: ChatPanelProps) {
     setModeMenuOpen(false)
     onSubmit(composerMode)
   }
-  const handleKey = (event: KeyboardEvent<HTMLInputElement>) => {
+  const handleKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
       setComposerMode((current) => {
@@ -226,7 +226,7 @@ export function ChatPanel(props: ChatPanelProps) {
       })
       return
     }
-    if (event.key === 'Enter' && !event.nativeEvent.isComposing && !composing) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing) {
       event.preventDefault()
       handleSubmit()
     }

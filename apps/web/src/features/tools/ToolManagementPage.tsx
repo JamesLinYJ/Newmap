@@ -167,7 +167,7 @@ export function ToolManagementPage({
                     onClick={() => setSelectedToolName(tool.name)}
                   >
                     <span className="tool-card__icon">
-                      {tool.group === '气象' || tool.tags.some((tag) => tag.includes('weather') || tag.includes('气象'))
+                      {tool.group === '气象' || tool.tags.some((tag) => tag.includes('meteorology') || tag.includes('气象'))
                         ? <CloudSun size={15} aria-hidden="true" />
                         : <Wrench size={15} aria-hidden="true" />}
                     </span>

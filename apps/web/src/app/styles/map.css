@@ -1,0 +1,260 @@
+/* Map canvas, HUD, controls, legend, and popup styles. */
+
+@reference "tailwindcss";
+
+.dc-map-stage__canvas,
+.dc-map-stage__canvas .maplibregl-map {
+  @apply absolute inset-0 z-[2] size-full;
+  pointer-events: auto;
+}
+
+.dc-map-stage__canvas > div {
+  @apply absolute inset-0 size-full;
+}
+
+.dc-map-stage__canvas,
+.dc-map-stage__canvas .maplibregl-canvas-container,
+.dc-map-stage__canvas .maplibregl-canvas {
+  cursor: grab;
+  pointer-events: auto !important;
+  touch-action: none;
+  user-select: none;
+}
+
+.dc-map-stage__canvas .maplibregl-canvas-container {
+  z-index: 1;
+}
+
+.dc-map-stage__canvas .maplibregl-control-container {
+  z-index: 4;
+  pointer-events: none !important;
+}
+
+.dc-map-stage__canvas .maplibregl-ctrl,
+.dc-map-stage__canvas .maplibregl-ctrl button {
+  pointer-events: auto;
+}
+
+.dc-map-stage__canvas.is-map-dragging,
+.dc-map-stage__canvas.is-map-dragging .maplibregl-canvas-container,
+.dc-map-stage__canvas.is-map-dragging .maplibregl-canvas {
+  cursor: grabbing !important;
+}
+
+.dc-map-stage {
+  --liquid-alpha: 0.07;
+  --liquid-blur: 12px;
+  --liquid-film-opacity: 0.16;
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 0.055), rgb(255 255 255 / 0.018)),
+    #f2f2f7;
+}
+
+.dc-map-stage--loading {
+  @apply grid min-h-[min(72vh,760px)] place-items-center text-[15px] font-semibold text-slate-500;
+}
+
+.dc-map-stage__wash {
+  @apply pointer-events-none absolute inset-0 z-[3];
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 26%, rgb(15 23 42 / 0.025)),
+    radial-gradient(circle at 28% 18%, rgb(255 255 255 / 0.045), transparent 30%);
+}
+
+.dc-map-stage__hud {
+  @apply pointer-events-none absolute left-3 top-3 z-10 grid max-w-[min(520px,calc(100%-96px))] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border border-white/30 bg-white/22 px-3.5 py-2.5 text-[#1c1c1e] shadow-[0_10px_28px_rgb(15_23_42/0.055),inset_0_1px_0_rgb(255_255_255/0.52)] backdrop-blur-2xl backdrop-saturate-200;
+  --liquid-alpha: 0.045;
+  --liquid-blur: 10px;
+  --liquid-film-opacity: 0.14;
+}
+
+.dc-map-stage__hud strong {
+  @apply hidden font-mono text-[12px] font-semibold text-[#3a3a3c] sm:block;
+}
+
+.dc-map-stage__status-copy {
+  @apply min-w-0;
+}
+
+.dc-map-stage__status-copy span {
+  @apply block truncate text-[14px] font-semibold text-[#1c1c1e];
+}
+
+.dc-map-stage__status-copy small {
+  @apply mt-0.5 block truncate text-[12px] text-[#6b7280];
+}
+
+.map-tool {
+  @apply inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border border-white/38 bg-white/34 px-3 text-[12px] font-semibold text-[#3a3a3c] shadow-[inset_0_1px_0_rgb(255_255_255/0.60)] transition-[transform,background-color,color,box-shadow] duration-200 hover:bg-white/52 hover:text-[#1c1c1e] active:scale-[0.95] disabled:cursor-not-allowed disabled:opacity-45;
+  touch-action: manipulation;
+}
+
+.map-tool-active {
+  @apply bg-[#1c1c1e] text-white shadow-[0_10px_22px_rgb(28_28_30/0.22)];
+}
+
+.dc-map-stage__legend {
+  @apply pointer-events-none absolute bottom-[68px] left-4 right-24 z-10 flex max-h-32 flex-wrap gap-2 overflow-auto;
+}
+
+.dc-map-stage__legend-item {
+  @apply inline-flex min-h-9 max-w-[260px] cursor-pointer items-center gap-2 rounded-full border border-white/42 bg-white/40 px-3 text-left text-[12px] font-semibold text-[#1c1c1e] shadow-[0_10px_24px_rgb(15_23_42/0.07),inset_0_1px_0_rgb(255_255_255/0.62)] backdrop-blur-2xl transition-[transform,background-color,border-color] duration-200 active:scale-[0.97];
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.dc-map-stage__legend-item strong {
+  @apply truncate max-w-[160px];
+}
+
+.dc-map-stage__legend-dot {
+  @apply size-2.5 shrink-0 rounded-full bg-[#1c1c1e] shadow-[0_0_0_4px_rgb(28_28_30/0.10)];
+}
+
+.dc-map-stage__legend-count {
+  @apply ml-auto rounded-full bg-black/[0.06] px-1.5 py-px text-[10px] font-medium text-[#6e7681];
+}
+
+.dc-map-stage__legend-route {
+  @apply ml-auto truncate max-w-[120px] rounded-full bg-[#00a3bf]/10 px-1.5 py-px text-[10px] font-medium text-[#00687a];
+}
+
+.dc-map-stage__legend-item em {
+  @apply text-[11px] font-semibold not-italic text-[#8e8e93];
+}
+
+.dc-map-stage__legend-item--active {
+  @apply border-black/10 bg-white/34 text-[#1c1c1e];
+}
+
+.dc-map-stage__controls {
+  @apply pointer-events-none absolute bottom-4 right-4 z-10 flex flex-col gap-2;
+}
+
+.dc-map-stage__controls > * {
+  pointer-events: auto;
+}
+
+.dc-map-stage__zoom {
+  @apply overflow-hidden rounded-full border border-white/42 bg-white/42 shadow-[0_12px_26px_rgb(15_23_42/0.09),inset_0_1px_0_rgb(255_255_255/0.62)] backdrop-blur-2xl;
+}
+
+.dc-map-stage__zoom button,
+.dc-map-stage__icon,
+.dc-map-stage__basemap {
+  @apply grid size-11 cursor-pointer place-items-center border-0 bg-transparent text-[#1c1c1e] transition-[transform,background-color,color,opacity] duration-200 hover:bg-white/42 hover:text-[#3a3a3c] active:scale-90 disabled:cursor-not-allowed disabled:opacity-40;
+  touch-action: manipulation;
+}
+
+.dc-map-stage__zoom-divider {
+  @apply mx-2 h-px bg-black/10;
+}
+
+.dc-map-stage__icon,
+.dc-map-stage__basemap {
+  @apply rounded-full border border-white/42 bg-white/42 shadow-[0_12px_26px_rgb(15_23_42/0.09),inset_0_1px_0_rgb(255_255_255/0.62)] backdrop-blur-2xl;
+}
+
+.dc-map-stage__icon--active {
+  @apply border-black/10 bg-[#1c1c1e] text-white shadow-[0_10px_22px_rgb(28_28_30/0.20)];
+}
+
+.dc-map-stage__canvas .maplibregl-ctrl-bottom-left {
+  left: 16px;
+  bottom: 16px;
+  z-index: 5;
+}
+
+.dc-map-stage__canvas .maplibregl-ctrl-scale {
+  @apply rounded-full border border-white/42 bg-white/38 px-3 py-1.5 font-mono text-[11px] font-semibold text-[#1c1c1e] shadow-[0_8px_18px_rgb(15_23_42/0.08),inset_0_1px_0_rgb(255_255_255/0.58)] backdrop-blur-2xl;
+  border-bottom-width: 1px;
+  line-height: 1;
+}
+
+.dc-map-stage__basemap-chip {
+  @apply absolute left-4 bottom-4 z-10;
+}
+
+.dc-map-stage__basemap {
+  @apply h-10 w-auto px-4 text-[12px] font-semibold;
+}
+
+.dc-map-popup {
+  @apply grid min-w-48 gap-2 rounded-[18px] border border-white/38 bg-white/46 p-3 text-[#1c1c1e] shadow-[0_18px_40px_rgb(15_23_42/0.14)] backdrop-blur-2xl;
+}
+
+.dc-map-popup h4 {
+  @apply text-[14px] font-bold;
+}
+
+.dc-map-popup div {
+  @apply grid grid-cols-[80px_1fr] gap-2 text-[12px];
+}
+
+.dc-map-popup span {
+  @apply text-[#6b7280];
+}
+
+.dc-map-popup strong {
+  @apply truncate font-semibold text-[#1c1c1e];
+}
+
+.dc-map-stage__popup {
+  @apply z-20;
+}
+
+.dc-map-stage__popup .maplibregl-popup-tip {
+  @apply hidden;
+}
+
+.dc-map-stage__hover-popup {
+  @apply z-10 pointer-events-none;
+}
+
+.dc-map-stage__hover-popup .maplibregl-popup-content {
+  @apply rounded-[10px] border border-white/30 bg-white/82 px-2.5 py-1.5 text-[12px] leading-tight text-[#1c1c1e] shadow-[0_4px_12px_rgb(15_23_42/0.10)] backdrop-blur-lg;
+}
+
+.dc-map-stage__hover-popup .maplibregl-popup-tip {
+  @apply hidden;
+}
+
+.dc-hover-popup {
+  @apply flex items-center gap-1.5 whitespace-nowrap;
+}
+
+.dc-hover-popup strong {
+  @apply font-semibold;
+}
+
+.dc-hover-category {
+  @apply rounded-full bg-black/[0.06] px-1.5 py-px text-[11px] text-[#6e7681];
+}
+
+.dc-null {
+  @apply text-[#8e8e93] not-italic;
+}
+
+.maplibregl-popup-content {
+  @apply rounded-[20px] bg-transparent p-0 shadow-none;
+}
+
+@media (max-width: 767px) {
+  .dc-map-stage__hud {
+    left: 10px;
+    right: 10px;
+    max-width: none;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dc-map-stage__legend {
+    left: 10px;
+    right: 72px;
+    bottom: 66px;
+  }
+
+  .dc-map-stage__controls {
+    right: 10px;
+    bottom: 10px;
+  }
+}

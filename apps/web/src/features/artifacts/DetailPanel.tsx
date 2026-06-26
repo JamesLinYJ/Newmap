@@ -842,7 +842,6 @@ export const DetailPanel = memo(function DetailPanel({
           onRemoveLayer={onLayerRemove ?? (() => {})}
           onCreateGroup={onLayerCreateGroup ?? (() => {})}
           onToggleGroup={onLayerToggleGroup ?? (() => {})}
-          layers={layers}
           onSetSearchQuery={onLayerSetSearchQuery ?? (() => {})}
           onSetColor={onLayerSetColor ?? (() => {})}
           onZoomToLayer={onLayerZoomTo ?? (() => {})}

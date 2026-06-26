@@ -25,7 +25,7 @@
 第三方源码必须先作为只读快照复制到每个工具目录的 `source/original/` 子目录，例如：
 
 ```text
-packages/gis-weather/src/gis_weather/third_party/radar_mosaic_agent/source/original/
+packages/gis-meteorology/src/gis_meteorology/third_party/radar_mosaic_agent/source/original/
 ```
 
 不能为了接入平台去修改 `source/original/` 内原文件。可复用的纯算法文件可以复制到 `source/` 顶层作为运行快照，但平台运行时只能调用旁路 `adapter.py`。无法直接接入的 Flask 路由、bat 启动、本机目录浏览、浏览器截图、本地 session cache 或 key 输入页面，必须在旁路 adapter 中重写包装。

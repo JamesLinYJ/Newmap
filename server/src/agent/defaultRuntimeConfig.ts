@@ -7,7 +7,7 @@ export function defaultRuntimeConfig(): AgentRuntimeConfig {
     supervisor: {
       name: 'geo_agent_supervisor',
       systemPrompt: '',
-      approvalInterruptTools: ['import_managed_layer', 'export_collection', 'generate_meteorological_report'],
+      approvalInterruptTools: ['exit_plan_mode', 'write_file', 'edit_file', 'import_managed_layer', 'export_collection', 'generate_meteorological_report'],
       permissionRules: [],
     },
     subAgents: [

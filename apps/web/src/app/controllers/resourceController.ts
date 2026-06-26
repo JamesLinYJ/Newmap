@@ -387,7 +387,7 @@ export function useResourceController({
     }))
   }, [])
 
-  const mapLayers = useMemo(() => artifacts
+  const baseMapLayers = useMemo(() => artifacts
     .filter(artifact => runStatus === 'running' || !artifact.isIntermediate)
     .flatMap<MapRenderLayer>(artifact => {
       const visible = mapLayerPreferences[artifact.artifactId]?.visible ?? true
@@ -424,10 +424,26 @@ export function useResourceController({
     }), [artifactData, artifactMetadata, artifacts, mapLayerPreferences, runStatus])
 
   const layerManager = useLayerManager({
-    mapLayers,
+    mapLayers: baseMapLayers,
     onToggleVisibility: toggleArtifactVisibility,
     onChangeOpacity: changeArtifactOpacity,
   })
+
+  const mapLayers = useMemo(() => baseMapLayers.map(layer => {
+    const override = layerManager.styleOverrides[layer.artifact.artifactId]
+    if (!override?.color) return layer
+    return {
+      ...layer,
+      artifact: {
+        ...layer.artifact,
+        metadata: {
+          ...layer.artifact.metadata,
+          color: override.color,
+          layerColorOverride: true,
+        },
+      },
+    }
+  }), [baseMapLayers, layerManager.styleOverrides])
 
   const exportLayer = useCallback((id: string) => {
     const artifact = artifacts.find(item => item.artifactId === id)

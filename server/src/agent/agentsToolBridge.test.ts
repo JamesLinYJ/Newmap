@@ -18,7 +18,7 @@ describe('createAgentsTools', () => {
     const registry = new ToolRegistry()
     registry.register(providerFromTools([{
       name: 'render_rainfall_risk_map',
-      label: '生成降雨风险区划图',
+      label: '生成短时强降水风险区划图',
       description: '生成风险区划图',
       group: '气象',
       tags: ['meteorology'],

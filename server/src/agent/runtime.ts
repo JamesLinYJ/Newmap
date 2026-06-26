@@ -21,7 +21,7 @@ import {
 } from '@openai/agents'
 import type { ToolRegistry } from '../framework/registry.js'
 import type { ModelAdapter, ModelAdapterRegistry } from '../model/registry.js'
-import type { AgentRuntimeConfig, AnalysisRun, ToolValueRef } from '../schemas/types.js'
+import type { AgentRuntimeConfig, AnalysisRun, ToolValueRef, TranscriptEntry } from '../schemas/types.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
 import { ItemSink } from '../conversation/itemSink.js'
 import { makeId, nowUtc } from '../utils/ids.js'
@@ -99,6 +99,12 @@ export class OpenAIAgentsRuntime {
     const abort = new AbortController()
     this.abortControllers.set(options.runId, abort)
     await this.store.updateRunStatus(options.runId, 'running')
+    if (!options.resume && options.executionMode === 'plan') {
+      await this.store.updateRunState(options.runId, {
+        planMode: true,
+        executionPlan: null,
+      })
+    }
 
     const turnId = options.resume
       ? await this.requireExistingTurnId(threadId, options.runId)
@@ -538,6 +544,9 @@ export class OpenAIAgentsRuntime {
       await this.persistApprovals(options, interruptions, eventSink, itemSink)
       return 'waiting_approval'
     }
+    if (this.store.getRun(options.runId).state.planMode) {
+      throw new Error('计划模式必须通过 exit_plan_mode 提交结构化执行计划，不能直接结束。')
+    }
     const finalOutput = typeof stream.finalOutput === 'string' ? stream.finalOutput.trim() : ''
     if (!finalOutput) throw new Error('Agent 未返回可交付文本')
     if (!projection.lastAssistantText || projection.lastAssistantText !== finalOutput) {
@@ -771,8 +780,8 @@ export class OpenAIAgentsRuntime {
       const request = {
         approvalId: makeId('approval'),
         action: toolName,
-        title: `批准执行：${definition?.label ?? toolName}`,
-        description: definition?.description ?? `工具 ${toolName} 需要审批`,
+        title: approvalTitle(toolName, definition?.label),
+        description: approvalDescription(toolName, definition?.description),
         status: 'pending',
         artifactId: null,
         payload: {
@@ -787,7 +796,14 @@ export class OpenAIAgentsRuntime {
       }
       approvals.push(request)
       eventSink.emit('approval.required', request.title, { approvalId: request.approvalId, tool: toolName, callId })
-      itemSink.appendResult('waiting_approval', { approvalId: request.approvalId, tool: toolName, callId })
+      itemSink.appendResult('waiting_approval', {
+        approvalId: request.approvalId,
+        tool: toolName,
+        callId,
+        title: request.title,
+        description: request.description,
+        args,
+      })
     }
     await this.store.updateRunState(options.runId, { approvals })
     await this.store.completeRun(options.runId, 'waiting_approval')
@@ -943,10 +959,10 @@ function assistantText(item: Extract<AgentInputItem, { role: 'assistant' }>): st
   }).join('').trim()
 }
 
-function isAssistantContentCheckpoint(entry: {
-  kind: string
-  payload: Record<string, unknown>
-}): boolean {
+function isAssistantContentCheckpoint(entry: TranscriptEntry): entry is TranscriptEntry & {
+  kind: 'checkpoint'
+  payload: Record<string, unknown> & { callId: string; content: string }
+} {
   return entry.kind === 'checkpoint'
     && entry.payload.type === 'assistant_content_for_tool_call'
     && typeof entry.payload.callId === 'string'
@@ -981,6 +997,18 @@ function parseArguments(value: string | undefined): Record<string, unknown> {
   const parsed: unknown = JSON.parse(value ?? '{}')
   if (!isRecord(parsed)) throw new Error('审批工具参数必须为 JSON object')
   return parsed
+}
+
+function approvalTitle(toolName: string, label?: string): string {
+  if (toolName === 'exit_plan_mode') return '接受这个执行计划？'
+  return `批准执行：${label ?? toolName}`
+}
+
+function approvalDescription(toolName: string, description?: string): string {
+  if (toolName === 'exit_plan_mode') {
+    return '计划已准备好。批准后系统会退出只读计划模式，并按这个计划继续执行写入、导出或计算动作。'
+  }
+  return description ?? `工具 ${toolName} 需要审批`
 }
 
 function requireThreadId(threadId: string | null | undefined): string {

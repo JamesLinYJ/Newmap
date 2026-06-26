@@ -27,6 +27,7 @@ import type { ToolDef, ToolProvider, ToolResult, ValueRef } from '../framework/t
 import { ModelAdapterRegistry, type ModelAdapter } from '../model/registry.js'
 import { RuntimeFileStore } from '../store/fileStore.js'
 import { PostgresPlatformStore } from '../store/platformStore.js'
+import planProvider from '../tools/plan/index.js'
 import { defaultRuntimeConfig } from './defaultRuntimeConfig.js'
 import { OpenAIAgentsRuntime } from './runtime.js'
 
@@ -126,6 +127,141 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
       expect(transcript.filter(entry => entry.kind === 'message' && entry.payload.role === 'user')).toHaveLength(1)
       expect(transcript.filter(entry => entry.kind === 'tool_call')).toHaveLength(1)
       expect(transcript.filter(entry => entry.kind === 'tool_result')).toHaveLength(1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('starts explicit plan mode as a hard read-only boundary', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-runtime-plan-boundary-'))
+    try {
+      const store = new PostgresPlatformStore(noOpDb(), root)
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '计划模式写入边界')
+      const run = await store.createRun(session.id, '先计划再写入', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: testRuntimeConfig(),
+      })
+      let executions = 0
+      const tools = new ToolRegistry()
+      tools.register(providerFromTools('plan-boundary-writer', [{
+        ...toolDefinition('write_layer', ['value']),
+        isReadOnly: false,
+        handler: async () => {
+          executions += 1
+          return result('write', [], { ok: true })
+        },
+      }]))
+      const model = scriptedModel(() => ({
+        toolCalls: [{ id: 'call_write', name: 'write_layer', arguments: '{"value":"x"}' }],
+      }))
+
+      const failed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+        ...runOptions(run, thread.id),
+        executionMode: 'plan',
+      })
+
+      expect(failed.status).toBe('failed')
+      expect(executions).toBe(0)
+      expect(failed.state.planMode).toBe(true)
+      expect(failed.state.errors.at(-1)).toContain('计划模式禁止执行写入或副作用工具')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects text-only completion while the run is still in plan mode', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-runtime-plan-text-only-'))
+    try {
+      const store = new PostgresPlatformStore(noOpDb(), root)
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '文字计划禁止假成功')
+      const run = await store.createRun(session.id, '先给我计划', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: testRuntimeConfig(),
+      })
+      const model = scriptedModel(() => ({ text: '计划：第一步检查，第二步执行。' }))
+
+      const failed = await new OpenAIAgentsRuntime(store, new ToolRegistry(), registryWith(fakeAdapter(model))).run({
+        ...runOptions(run, thread.id),
+        executionMode: 'plan',
+      })
+
+      expect(failed.status).toBe('failed')
+      expect(failed.state.planMode).toBe(true)
+      expect(failed.state.errors.at(-1)).toContain('计划模式必须通过 exit_plan_mode')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reviews exit_plan_mode through approval and persists the approved execution plan', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-runtime-plan-approval-'))
+    try {
+      const store = new PostgresPlatformStore(noOpDb(), root)
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '计划审批')
+      const config = testRuntimeConfig()
+      config.supervisor.approvalInterruptTools = []
+      const run = await store.createRun(session.id, '给我做一个风险区划图', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: config,
+      })
+      const tools = new ToolRegistry()
+      tools.register(planProvider)
+      const plan = {
+        goal: '生成短时强降水风险区划图',
+        steps: [
+          { id: 'step_1', tool: 'list_meteorological_files', args: {}, reason: '确认线程中的气象数据' },
+          { id: 'step_2', tool: 'render_rainfall_risk_map', args: {}, reason: '生成风险区划图' },
+        ],
+      }
+      const model = scriptedModel(request => {
+        if (hasToolResultNamed(request, 'exit_plan_mode')) return { text: '计划已批准，开始执行。' }
+        return {
+          toolCalls: [{
+            id: 'call_plan',
+            name: 'exit_plan_mode',
+            arguments: JSON.stringify({ plan, allowedPrompts: [{ tool: 'tool:run', prompt: '执行计划内工具' }] }),
+          }],
+        }
+      })
+
+      const waiting = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+        ...runOptions(run, thread.id),
+        runtimeConfig: config,
+        executionMode: 'plan',
+      })
+
+      expect(waiting.status).toBe('waiting_approval')
+      expect(waiting.state.planMode).toBe(true)
+      expect(waiting.state.executionPlan).toBeNull()
+      expect(waiting.state.approvals).toHaveLength(1)
+      expect(waiting.state.approvals[0]).toMatchObject({
+        action: 'exit_plan_mode',
+        title: '接受这个执行计划？',
+        status: 'pending',
+      })
+      expect(waiting.state.approvals[0].payload.args).toMatchObject({ plan })
+      await store.conversationStore.flush()
+
+      const restoredStore = new PostgresPlatformStore(noOpDb(), root)
+      await restoredStore.initialize()
+      const completed = await new OpenAIAgentsRuntime(restoredStore, tools, registryWith(fakeAdapter(model)))
+        .resolveApproval(run.id, waiting.state.approvals[0].approvalId, true)
+
+      expect(completed.status).toBe('completed')
+      expect(completed.state.planMode).toBe(false)
+      expect(completed.state.executionPlan).toMatchObject(plan)
+      expect(completed.state.approvals[0].payload.consumed).toBe(true)
+      const items = await restoredStore.listItems(run.id)
+      expect(items.some(item => item.itemType === 'result' && item.metadata?.resultType === 'waiting_approval')).toBe(true)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -356,7 +492,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
       const store = new PostgresPlatformStore(noOpDb(), root)
       await store.initialize()
       const session = await store.createSession()
-      const thread = await store.createThread(session.id, '短临确定性路由')
+      const thread = await store.createThread(session.id, '短时临近预报（短临）确定性路由')
       const files = new RuntimeFileStore(root)
       const ncFile = (name: string) => ({ name, arrayBuffer: async () => Uint8Array.from([1]).buffer })
       await files.save(ncFile('lead_005.nc'), thread.id)
@@ -520,6 +656,14 @@ function requestTexts(request: ModelRequest): string[] {
 
 function hasToolResult(request: ModelRequest): boolean {
   return Array.isArray(request.input) && request.input.some(item => item.type === 'function_call_result')
+}
+
+function hasToolResultNamed(request: ModelRequest, name: string): boolean {
+  return Array.isArray(request.input) && request.input.some(item => (
+    item.type === 'function_call_result'
+    && isRecord(item)
+    && item.name === name
+  ))
 }
 
 function approvalProvider(onExecute: () => void): ToolProvider {

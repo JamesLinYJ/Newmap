@@ -8,7 +8,7 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,6 +32,18 @@ describe('seed layer catalog', () => {
         tags: expect.arrayContaining(['杭州', '行政区划', '区县', '边界']),
       }),
     ]))
+  })
+
+  it('keeps the repository seed catalog aligned with files on disk', async () => {
+    // catalog 是启动时导入系统图层的唯一清单；每一项都必须能解析到真实文件，
+    // 防止 API 因虚引用在监听 /ws 前失败。
+    const seedDirectory = fileURLToPath(new URL('../../../infra/seeds/layers', import.meta.url))
+    const catalog = await loadSeedLayerCatalog(seedDirectory)
+
+    for (const entry of catalog) {
+      const filename = entry.filename ?? `${entry.layer_key}.geojson`
+      await expect(access(path.join(seedDirectory, filename))).resolves.toBeUndefined()
+    }
   })
 
   it('imports every catalog entry through the PostGIS repository with stable metadata', async () => {

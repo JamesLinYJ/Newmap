@@ -76,7 +76,7 @@ Do not:
 - NetCDF / GRIB / HDF5 / GeoTIFF / radar analysis belongs to the meteorological service, not to external desktop GIS runtimes.
 - `xarray` is the source of truth for scientific semantics: variables, dimensions, time, level, units, missing values, and statistics.
 - `rasterio/GDAL` is the raster map execution layer: CRS, bounds, subdatasets, reprojection, downsampling, and PNG rendering.
-- Short-term nowcast logic belongs in `gis_weather.nowcast` domain services and `tool_registry.nowcast_tools` adapters; do not put nowcast algorithms in Agent prompts or registry glue.
+- Short-term nowcast logic belongs in `gis_meteorology.nowcast` domain services and `tool_registry.nowcast_tools` adapters; do not put nowcast algorithms in Agent prompts or registry glue.
 - Inspect metadata must state whether each variable is analysis-ready and map-ready; execution must route from those facts and fail clearly when a backend is unavailable.
 - Tool chains must pass `variable_ref`, `time_index_ref`, `level_index_ref`, `bbox_ref`, and `threshold_ref` rather than raw values when a previous tool produced a reference.
 - Nowcast tool chains must pass `sequence_ref`, `nowcast_analysis_ref`, `forecast_text_ref`, and `nowcast_map_candidate_ref`; districts, locations, variables, time steps and movement trends must come from NC data, boundaries, geocoding and spatial statistics.
