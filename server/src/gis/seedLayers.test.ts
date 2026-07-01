@@ -49,7 +49,7 @@ describe('seed layer catalog', () => {
   it('imports every catalog entry through the PostGIS repository with stable metadata', async () => {
     // 导入器只信任 catalog 中的相对文件引用，并把 seed 写成确定性 layerKey；
     // 重启重复执行时会覆盖同名系统图层，不产生新的会话临时图层。
-    const seedDirectory = await mkdtemp(path.join(tmpdir(), 'newmap-seed-layers-'))
+    const seedDirectory = await mkdtemp(path.join(tmpdir(), 'geoforge-seed-layers-'))
     await writeFile(path.join(seedDirectory, 'catalog.json'), JSON.stringify({
       layers: [{
         layer_key: 'test_boundary',
@@ -95,7 +95,7 @@ describe('seed layer catalog', () => {
   })
 
   it('rejects catalog entries that escape the seed directory', async () => {
-    const seedDirectory = await mkdtemp(path.join(tmpdir(), 'newmap-seed-layers-'))
+    const seedDirectory = await mkdtemp(path.join(tmpdir(), 'geoforge-seed-layers-'))
     await writeFile(path.join(seedDirectory, 'catalog.json'), JSON.stringify({
       layers: [{ layer_key: 'bad_layer', name: 'Bad', filename: '../bad.geojson' }],
     }), 'utf8')

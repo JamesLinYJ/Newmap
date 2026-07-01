@@ -238,7 +238,7 @@ def test_radar_mosaic_adapter_exposes_original_products_and_rejects_unknown_prod
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # 雷达原始 bz2 格式较重；这里用 fake 原算法模块验证 Newmap adapter 的边界：
+    # 雷达原始 bz2 格式较重；这里用 fake 原算法模块验证 GeoForge adapter 的边界：
     # 产品枚举来自原模块，artifact 写入由 adapter 接管，未知产品不能被原脚本隐式归一到反射率。
     timestamp = radar_adapter.datetime(2026, 4, 9, 19, 55)
     station_dir = tmp_path / "Z9001"
@@ -315,7 +315,7 @@ def test_radar_mosaic_reference_comparison_generates_slider_images(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # 对比工具的第三方模块负责 NC 插值和差值图，这里固定输出，验证 Newmap
+    # 对比工具的第三方模块负责 NC 插值和差值图，这里固定输出，验证 GeoForge
     # adapter 对 NPZ 输入、参考 NC 引用、双 PNG artifact 和统计 payload 的封装。
     mosaic_npz = tmp_path / "mosaic.npz"
     np.savez(

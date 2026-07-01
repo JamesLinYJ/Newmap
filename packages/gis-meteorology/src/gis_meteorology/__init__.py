@@ -8,7 +8,7 @@
 #   作者:       OpenAI Codex
 # --------------------------------------------------------------------------
 
-"""Public domain services for Newmap meteorological execution."""
+"""Public domain services for GeoForge meteorological execution."""
 
 from .nowcast import (
     NowcastAnalysisService,

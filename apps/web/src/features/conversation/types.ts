@@ -16,31 +16,39 @@
 import type {
   AgentRuntimeConfig,
   AgentThreadRecord,
-  ClarificationOption,
-  ClarificationState,
   ConversationItem,
   ContextAssemblyReport,
+  DecisionRequest,
+  MemoryFileRecord,
+  MemorySearchResult,
   ThreadMemoryDocument,
   ToolDescriptor,
-  UserIntent,
 } from '@geo-agent-platform/shared-types'
 import type { DataReferenceSummary } from '../../shared/constants'
 
 export type MemoryEntry = {
+  scope: 'private' | 'team'
+  relativePath: string
   name: string
   description: string
   type: 'user' | 'feedback' | 'project' | 'reference'
   age: string
 }
 
+export type MemoryWriteInput = {
+  scope: 'private' | 'team'
+  type: 'user' | 'feedback' | 'project' | 'reference'
+  name: string
+  description: string
+  content: string
+  relativePath?: string | null
+}
+
 export type ComposerMode = 'plan' | 'auto'
 export type TaskView = 'chat' | 'history'
 
-export type ActiveClarification = {
-  key: string
-  question: string
-  options: ClarificationOption[]
-  allowFreeText: boolean
+export type ActiveDecision = DecisionRequest & {
+  source: 'server' | 'local'
 }
 
 export interface ChatPanelProps {
@@ -55,8 +63,7 @@ export interface ChatPanelProps {
   isSubmitting: boolean
   errorMessage?: string
   uploadedLayerName?: string
-  intent?: UserIntent
-  clarification?: ClarificationState | null
+  decisions?: DecisionRequest[]
   sessionThreads: AgentThreadRecord[]
   items: ReadonlyArray<ConversationItem>
   runtimeConfig?: AgentRuntimeConfig
@@ -66,14 +73,13 @@ export interface ChatPanelProps {
   onInterrupt?: () => void
   onNewConversation: () => void
   onFillSample: (value: string) => void
-  onSelectClarification: (value: string, id?: string | null) => void
+  onRespondDecision: (decisionId: string, optionId?: string | null, text?: string | null) => void
   onUseTemplate: () => void
   onUploadFiles: (files: File[]) => void
   onSelectArtifact: (id: string) => void
   onSelectTask: (id: string) => void
   onRenameTask: (id: string, title: string) => void
   onDeleteTask: (id: string) => void
-  onResolveApproval: (id: string, approved: boolean) => void
   onForkMessage?: (entryId: string) => void
   dataReferences: DataReferenceSummary[]
   threadContext?: ContextAssemblyReport
@@ -88,7 +94,13 @@ export interface ChatPanelProps {
   onPurgeThread?: (threadId: string) => void
 
   memories?: MemoryEntry[]
-  onRefreshMemories?: () => void
+  memoryRecords?: MemoryFileRecord[]
+  onRefreshMemories?: () => Promise<void> | void
+  onReadMemory?: (scope: 'private' | 'team', relativePath: string) => Promise<MemoryFileRecord>
+  onWriteMemory?: (input: MemoryWriteInput) => Promise<MemoryFileRecord>
+  onDeleteMemory?: (scope: 'private' | 'team', relativePath: string) => Promise<void>
+  onSearchMemories?: (query: string) => Promise<MemorySearchResult[]>
+  onDreamMemories?: () => Promise<void>
 
   tokenBudget?: { used: number; max: number; status: 'normal' | 'warning' | 'critical' | 'exceeded' }
 
@@ -98,8 +110,6 @@ export interface ChatPanelProps {
   denialCounts?: Record<string, number>
 
   executionPlan?: { goal: string; steps: { tool: string; args: Record<string, unknown>; reason: string }[] } | null
-  onApprovePlan?: () => void
-  onEditPlan?: () => void
 
   tasks?: { id: string; content: string; status: string; activeForm: string }[]
 }

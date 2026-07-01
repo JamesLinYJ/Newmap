@@ -109,7 +109,7 @@
   .cc-tool-io-card,
   .cc-tool-detail,
   .cc-composer,
-  .cc-mode-menu,
+  .cc-decision-sheet,
   .cc-memory-panel,
   .cc-data-context,
   .cc-data-reference,
@@ -190,7 +190,7 @@
   .cc-tool-io-card::before,
   .cc-tool-detail::before,
   .cc-composer::before,
-  .cc-mode-menu::before,
+  .cc-decision-sheet::before,
   .cc-memory-panel::before,
   .cc-data-context::before,
   .cc-data-reference::before,
@@ -265,7 +265,7 @@
   .cc-tool-io-card::after,
   .cc-tool-detail::after,
   .cc-composer::after,
-  .cc-mode-menu::after,
+  .cc-decision-sheet::after,
   .cc-memory-panel::after,
   .cc-data-context::after,
   .cc-data-reference::after,
@@ -330,7 +330,7 @@
     .cc-tool-io-card,
     .cc-tool-detail,
     .cc-composer,
-    .cc-mode-menu,
+    .cc-decision-sheet,
     .cc-memory-panel,
     .cc-data-context,
     .cc-data-reference,
@@ -828,28 +828,6 @@
     @apply flex min-h-0 flex-col gap-3;
   }
 
-  .cc-expand-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 9998;
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    background: rgba(0, 0, 0, 0.28);
-  }
-
-  .cc-wrap--expanded {
-    position: fixed;
-    inset: 20px;
-    z-index: 9999;
-  }
-
-  .cc-wrap--expanded .cc-panel {
-    border-radius: 20px;
-    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(255, 255, 255, 0.15);
-    height: calc(100svh - 40px);
-    transition: border-radius 0.3s ease, box-shadow 0.3s ease, height 0.3s ease;
-  }
-
   .cc-panel {
     @apply flex flex-col overflow-hidden rounded-[10px] border border-white/45 bg-white/72 text-[#1f2328] shadow-[0_14px_42px_rgb(15_23_42/0.06)];
     height: clamp(540px, calc(100svh - 120px), 820px);
@@ -1344,50 +1322,6 @@
     @apply border-[#0969da]/25 bg-[#ddf4ff] text-[#0969da] hover:bg-[#cbefff];
   }
 
-  .cc-mode-menu {
-    @apply absolute bottom-[calc(100%+10px)] z-50 rounded-[8px] border border-white/50 bg-white/64 p-1.5 shadow-[0_18px_45px_rgb(27_31_36/0.18)];
-    right: 10px;
-    width: min(360px, calc(100% - 20px));
-    max-height: min(240px, calc(100svh - 140px));
-    overflow-y: auto;
-  }
-
-  .cc-mode-menu__header {
-    @apply flex items-center justify-between gap-3 px-2.5 py-2 text-[13px] font-medium text-[#24292f];
-  }
-
-  .cc-mode-menu__header small {
-    @apply rounded-[5px] border border-black/[0.10] bg-[#f6f8fa] px-1.5 py-0.5 text-[11px] font-normal text-[#6e7781];
-  }
-
-  .cc-mode-menu__list {
-    @apply flex flex-col gap-0.5;
-  }
-
-  .cc-mode-option {
-    @apply grid w-full cursor-pointer grid-cols-[26px_minmax(0,1fr)_18px] items-center gap-2 rounded-[6px] border-0 bg-transparent px-2.5 py-2 text-left text-[#24292f] transition-colors duration-150 hover:bg-[#f6f8fa];
-  }
-
-  .cc-mode-option--active {
-    @apply bg-black/[0.08] hover:bg-black/[0.08];
-  }
-
-  .cc-mode-option span:not(.cc-mode-option__check) {
-    @apply flex min-w-0 flex-col;
-  }
-
-  .cc-mode-option strong {
-    @apply truncate text-[14px] font-semibold leading-5;
-  }
-
-  .cc-mode-option small {
-    @apply truncate text-[12px] leading-4 text-[#57606a];
-  }
-
-  .cc-mode-option__check {
-    @apply text-center text-[17px] leading-none text-[#24292f];
-  }
-
   .cc-provider-chip {
     @apply hidden min-w-0 max-w-[150px] items-center gap-1.5 rounded-[6px] px-2 text-[13px] font-medium text-[#57606a] sm:inline-flex;
   }
@@ -1551,10 +1485,6 @@
   .cc-plan-step__args {
     @apply mt-0.5 rounded-[4px] bg-black/[0.06] px-1.5 py-0.5 font-mono text-[11px] text-[#57606a] truncate max-w-full inline-block;
   }
-  .cc-plan-actions {
-    @apply mt-3 flex items-center gap-2 border-t border-black/[0.08] pt-3;
-  }
-
   /* ── Task 进度面板 ───────────────────────── */
   .cc-task-progress {
     @apply max-w-[760px] rounded-[8px] border border-black/[0.10] bg-white px-4 py-3 shadow-[0_1px_2px_rgb(27_31_36/0.03)];
@@ -3267,7 +3197,7 @@
     .cc-composer,
     .cc-tool-io-card,
     .cc-tool-detail,
-    .cc-mode-menu,
+    .cc-decision-sheet,
     .cc-memory-panel,
     .cc-data-context,
     .cc-data-reference,

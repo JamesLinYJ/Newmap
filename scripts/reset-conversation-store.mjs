@@ -39,6 +39,12 @@ if (process.env.DATABASE_URL) {
         IF to_regclass('public.platform_artifacts') IS NOT NULL THEN
           EXECUTE 'TRUNCATE TABLE platform_artifacts';
         END IF;
+        IF to_regclass('public.platform_meteorological_datasets') IS NOT NULL THEN
+          EXECUTE 'TRUNCATE TABLE platform_meteorological_datasets';
+        END IF;
+        IF to_regclass('public.platform_meteorological_jobs') IS NOT NULL THEN
+          EXECUTE 'TRUNCATE TABLE platform_meteorological_jobs';
+        END IF;
       END $$;
     `)
     await client.query(

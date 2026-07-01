@@ -1112,15 +1112,19 @@ function appendCoordinates(bounds: LngLatBounds, coordinates: unknown) {
 }
 
 function queryRenderedArtifactFeatures(map: Map, point: maplibregl.PointLike) {
-  const layerIds =
-    map
-      .getStyle()
-      .layers?.filter((layer) => layer.id.startsWith('artifact-'))
-      .map((layer) => layer.id) ?? []
+  // MapLibre 在样式初始化、切换和销毁边界会短暂返回空 style；鼠标移动属于高频 UI 事件，
+  // 这里把未就绪状态视为“当前没有可悬停的结果图层”，避免非业务错误冒泡到页面级边界。
+  const layerIds = (map.getStyle()?.layers ?? [])
+    .filter((layer) => layer.id.startsWith('artifact-'))
+    .map((layer) => layer.id)
   if (!layerIds.length) {
     return []
   }
-  return map.queryRenderedFeatures(point, { layers: layerIds })
+  try {
+    return map.queryRenderedFeatures(point, { layers: layerIds })
+  } catch {
+    return []
+  }
 }
 
 function buildHoverPopupHtml(feature: maplibregl.MapGeoJSONFeature) {

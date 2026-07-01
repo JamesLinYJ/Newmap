@@ -13,7 +13,7 @@ import type {
   SessionRecord, AgentThreadRecord, AnalysisRun, RunSummary, AgentState,
   RunEvent, ConversationItem, AgentRuntimeConfig, ArtifactRef,
   TranscriptEntry, TranscriptEntryKind, ThreadManifest, ThreadMemoryDocument,
-  CompactionRecord,
+  CompactionRecord, MeteorologicalDatasetRecord,
 } from '../schemas/types.js'
 import { makeId, nowUtc, makeShareToken } from '../utils/ids.js'
 import { InMemoryEventBus } from './eventBus.js'
@@ -93,7 +93,7 @@ export class PostgresPlatformStore {
   async createSession(): Promise<SessionRecord> {
     const session: SessionRecord = {
       id: makeId('session'), createdAt: nowUtc(), status: 'active', shareToken: makeShareToken(),
-      latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null,
+      latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null, latestMeteorologicalDatasetId: null,
     }
     this.sessions.set(session.id, session)
     await this.conversationStore.saveSession(session)
@@ -105,7 +105,7 @@ export class PostgresPlatformStore {
     catch {
       const session: SessionRecord = {
         id: PostgresPlatformStore.DEFAULT_SESSION_ID, createdAt: nowUtc(), status: 'active', shareToken: makeShareToken(),
-        latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null,
+        latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null, latestMeteorologicalDatasetId: null,
       }
       this.sessions.set(session.id, session)
       await this.conversationStore.saveSession(session)
@@ -171,6 +171,80 @@ export class PostgresPlatformStore {
       DELETE FROM tool_catalog_entries
       WHERE tool_kind = ${toolKind} AND tool_name = ${toolName}
     `)
+  }
+
+  async listMeteorologicalDatasets(filters: {
+    sessionId?: string | null
+    threadId?: string | null
+    filename?: string | null
+    limit?: number
+  } = {}): Promise<MeteorologicalDatasetRecord[]> {
+    const limit = Math.max(1, Math.min(filters.limit ?? 100, 500))
+    if (filters.filename && filters.threadId && filters.sessionId) {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE session_id = ${filters.sessionId}
+          AND thread_id = ${filters.threadId}
+          AND lower(filename) = lower(${filters.filename})
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `)
+      return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+    }
+    if (filters.threadId && filters.sessionId) {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE session_id = ${filters.sessionId}
+          AND thread_id = ${filters.threadId}
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `)
+      return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+    }
+    if (filters.sessionId) {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE session_id = ${filters.sessionId}
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `)
+      return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+    }
+    const result = await this.db.execute(sql`
+      SELECT *
+      FROM platform_meteorological_datasets
+      ORDER BY updated_at DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+  }
+
+  async resolveMeteorologicalDataset(filters: {
+    sessionId: string
+    threadId?: string | null
+    datasetId?: string | null
+    filename?: string | null
+  }): Promise<MeteorologicalDatasetRecord | null> {
+    const explicitDatasetId = filters.datasetId?.trim()
+    if (explicitDatasetId && explicitDatasetId !== 'latest_upload') {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE dataset_id = ${explicitDatasetId}
+        LIMIT 1
+      `)
+      return result.rows[0] ? mapMeteorologicalDatasetRow(result.rows[0] as Record<string, unknown>) : null
+    }
+    const matches = await this.listMeteorologicalDatasets({
+      sessionId: filters.sessionId,
+      threadId: filters.threadId ?? null,
+      filename: filters.filename ?? null,
+      limit: 1,
+    })
+    return matches[0] ?? null
   }
 
   async persistArtifact(artifact: ArtifactRef): Promise<void> {
@@ -331,10 +405,10 @@ export class PostgresPlatformStore {
         sessionId, threadId: opts?.threadId ?? null, userQuery: query,
         modelProvider: opts?.modelProvider ?? null, modelName: opts?.modelName ?? null,
         loopTrace: [], todos: [], tasks: [], subAgents: [], approvals: [],
-        toolResults: [], toolValueRefs: [], artifacts: [], selectedDataSources: [],
+        decisions: [], toolResults: [], toolValueRefs: [], artifacts: [], selectedDataSources: [],
         warnings: [], errors: [], denialCounts: {}, runtimeStats: {},
         currentStep: 0, loopIteration: 0, loopPhase: 'idle',
-        planRepairAttempts: 0, textOnlyDelivery: false, planMode: false,
+        planRepairAttempts: 0, planMode: false,
         contextReferences: [], contextResolution: null,
         parsedIntent: null, clarification: null, placeResolution: null,
         executionPlan: null, runLifecycle: { status: 'created', reason: null, updatedAt: null },
@@ -646,6 +720,25 @@ function mapToolCatalogRow(row: Record<string, unknown>): ToolCatalogEntry {
   }
 }
 
+function mapMeteorologicalDatasetRow(row: Record<string, unknown>): MeteorologicalDatasetRecord {
+  return {
+    datasetId: String(row.dataset_id ?? ''),
+    sessionId: String(row.session_id ?? ''),
+    threadId: typeof row.thread_id === 'string' ? row.thread_id : null,
+    filename: String(row.filename ?? ''),
+    originalFilename: String(row.original_filename ?? row.filename ?? ''),
+    fileId: typeof row.file_id === 'string' ? row.file_id : null,
+    fileRelativePath: String(row.file_relative_path ?? ''),
+    sizeBytes: Number(row.size_bytes ?? 0),
+    contentHash: typeof row.content_hash === 'string' ? row.content_hash : null,
+    mediaType: String(row.media_type ?? 'application/octet-stream'),
+    status: String(row.status ?? 'ready'),
+    metadata: isRecord(row.metadata_json) ? row.metadata_json : {},
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
+  }
+}
+
 interface RunCursor {
   updatedAt: string
   id: string
@@ -673,6 +766,12 @@ function decodeRunCursor(cursor: string): RunCursor {
   } catch {
     throw new Error('cursor 无效')
   }
+}
+
+function toIsoString(value: unknown): string {
+  if (value instanceof Date) return value.toISOString()
+  const parsed = new Date(String(value ?? ''))
+  return Number.isNaN(parsed.getTime()) ? nowUtc() : parsed.toISOString()
 }
 
 function toRunSummary(run: AnalysisRun): RunSummary {

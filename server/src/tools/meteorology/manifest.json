@@ -255,9 +255,9 @@
       }
     },
     {
-      "name": "inspect_meteorological_dataset",
+      "name": "meteorological_inspect",
       "label": "检查气象数据集",
-      "description": "检查变量、维度、时间、层级和地图能力",
+      "description": "检查变量、维度、时间、层级和地图能力；未提供参数时使用当前 thread 最新上传的数据集",
       "group": "气象",
       "tags": [
         "meteorology"
@@ -275,11 +275,19 @@
             "x-value-ref-kinds": [
               "meteorological_file"
             ]
+          },
+          "dataset_id": {
+            "type": "string",
+            "title": "气象数据集 ID，latest_upload 表示当前 thread 最新上传",
+            "x-source": "text"
+          },
+          "filename": {
+            "type": "string",
+            "title": "气象数据文件名",
+            "x-source": "text"
           }
         },
-        "required": [
-          "dataset_ref"
-        ]
+        "required": []
       }
     },
     {
@@ -308,7 +316,7 @@
       }
     },
     {
-      "name": "render_meteorological_raster",
+      "name": "meteorological_render",
       "label": "渲染气象栅格",
       "description": "渲染气象变量为地图 PNG",
       "group": "气象",
@@ -408,7 +416,7 @@
       }
     },
     {
-      "name": "meteorological_threshold_area",
+      "name": "meteorological_threshold",
       "label": "气象阈值区域",
       "description": "计算超过阈值的区域",
       "group": "气象",
@@ -470,7 +478,7 @@
       }
     },
     {
-      "name": "meteorological_contours",
+      "name": "meteorological_contour",
       "label": "气象等值线",
       "description": "生成气象变量等值线",
       "group": "气象",
@@ -526,7 +534,7 @@
       }
     },
     {
-      "name": "generate_meteorological_report",
+      "name": "meteorological_report",
       "label": "生成气象报告",
       "description": "使用显式模型解读引用生成 DOCX 报告",
       "group": "气象",
@@ -650,7 +658,7 @@
     {
       "name": "render_rainfall_risk_map",
       "label": "生成短时强降水风险区划图",
-      "description": "使用单个 NC 数据集、变量、边界和阈值生成风险/渐变/对比图；dataset_ref 必须来自 inspect_meteorological_dataset 的 meteorological_dataset，不接受 nowcast_sequence",
+      "description": "使用单个 NC 数据集、变量、边界和阈值生成风险/渐变/对比图；dataset_ref 必须来自 meteorological_inspect 的 meteorological_dataset，不接受 nowcast_sequence",
       "group": "气象",
       "tags": [
         "meteorology"
@@ -945,7 +953,7 @@
       }
     },
     {
-      "name": "analyze_nowcast_precipitation",
+      "name": "meteorological_precipitation_nowcast",
       "label": "分析短时临近预报（短临）降水",
       "description": "按时次和杭州区划或地点范围计算降水统计事实",
       "group": "气象",

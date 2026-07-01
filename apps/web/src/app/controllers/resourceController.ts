@@ -32,6 +32,7 @@ import {
   updateLayer,
   uploadAnyFile,
   uploadLayer,
+  uploadMeteorologicalDataset,
 } from '../../api/client'
 import { useLayerManager } from '../../features/layers/useLayerManager'
 import { artifactHasDisplaySurface } from '../../features/artifacts/artifactDisplay'
@@ -200,6 +201,20 @@ export function useResourceController({
     setUploadReferences(current => upsertUploadReference(current, baseReference))
 
     try {
+      if (kind === 'meteorology') {
+        const { dataset } = await uploadMeteorologicalDataset(session.id, file, threadId)
+        startTransition(() => {
+          setUploadedLayerName(dataset.filename)
+          setUploadReferences(current => upsertUploadReference(current, {
+            ...baseReference,
+            name: dataset.filename,
+            status: dataset.status,
+            detail: `${formatFileSize(dataset.sizeBytes)} · 气象数据`,
+          }))
+        })
+        return { kind, name: dataset.filename }
+      }
+
       if (kind === 'file') {
         // 同一 requestId 会在服务端落到同一存储条目，允许瞬时网络失败后安全重试。
         const requestId = `upload_${crypto.randomUUID().replaceAll('-', '')}`
@@ -256,17 +271,19 @@ export function useResourceController({
     setUiError(undefined)
     onShowSources()
     let layerUploaded = false
+    let meteorologyUploaded = false
     const failures: string[] = []
     for (const file of uploadable) {
       try {
         const result = await uploadOneFile(file, resolvedThreadId)
         layerUploaded ||= result.kind === 'layer'
+        meteorologyUploaded ||= result.kind === 'meteorology'
       } catch (error) {
         failures.push(`${getUploadRelativePath(file)}：${formatUiError(error, '上传失败')}`)
       }
     }
 
-    if (layerUploaded) {
+    if (layerUploaded || meteorologyUploaded) {
       try {
         const [sessionRecord, layerList] = await Promise.all([getSession(session.id), listLayers(session.id)])
         startTransition(() => {

@@ -47,7 +47,7 @@ import {
 } from '../schemas/types.js'
 import { makeId, nowUtc } from '../utils/ids.js'
 
-const STORE_SCHEMA_VERSION = 1
+const STORE_SCHEMA_VERSION = 2
 const LOCK_STALE_MS = 30_000
 const LOCK_RETRY_COUNT = 200
 const LOCK_RETRY_MS = 25
@@ -316,7 +316,7 @@ export class FileConversationStore {
         orchestrationEngine: 'openai_agents',
         agentsSdkVersion: metadata.agentsSdkVersion,
         runtimeConfigDigest: metadata.runtimeConfigDigest,
-        sdkStateSchemaVersion: 1,
+        sdkStateSchemaVersion: 2,
         sdkStateUpdatedAt: updatedAt,
         lastPersistedAt: updatedAt,
       } satisfies RunCheckpoint)
@@ -760,7 +760,7 @@ export class FileConversationStore {
     if (!current) {
       await atomicWriteJson(manifestPath, {
         schemaVersion: STORE_SCHEMA_VERSION,
-        kind: 'newmap-file-conversation-store',
+        kind: 'geoforge-file-conversation-store',
         createdAt: nowUtc(),
       })
     }

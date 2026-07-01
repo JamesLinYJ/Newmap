@@ -11,7 +11,7 @@
 services:
   postgis:
     image: ${POSTGIS_IMAGE:-postgis/postgis:16-3.5}
-    container_name: newmap-postgis-dev
+    container_name: geoforge-postgis-dev
     restart: unless-stopped
     environment:
       POSTGRES_DB: geo_agent
@@ -20,7 +20,7 @@ services:
     ports:
       - "${POSTGIS_PORT:-55432}:5432"
     volumes:
-      - newmap-postgis-dev:/var/lib/postgresql/data
+      - geoforge-postgis-dev:/var/lib/postgresql/data
       - ../migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U geo_agent -d geo_agent"]
@@ -29,4 +29,4 @@ services:
       retries: 20
 
 volumes:
-  newmap-postgis-dev:
+  geoforge-postgis-dev:

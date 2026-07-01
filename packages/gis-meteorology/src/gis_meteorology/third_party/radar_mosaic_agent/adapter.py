@@ -8,10 +8,10 @@
 #   作者:       Codex
 # --------------------------------------------------------------------------
 
-"""Newmap wrapper for the copied radar mosaic tool.
+"""GeoForge wrapper for the copied radar mosaic tool.
 
 The original files under ``source`` are kept intact. This adapter translates
-Newmap valueRef inputs into the original pure Python algorithm calls and writes
+GeoForge valueRef inputs into the original pure Python algorithm calls and writes
 only explicit artifact targets supplied by the worker.
 """
 

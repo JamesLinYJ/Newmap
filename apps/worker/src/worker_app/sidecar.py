@@ -59,10 +59,10 @@ def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, 
     from gis_meteorology.service import MeteorologicalDataService
 
     service = MeteorologicalDataService()
-    if tool_name == "inspect_meteorological_dataset":
+    if tool_name == "meteorological_inspect":
         source = input_path(args)
         return service.inspect(source, filename=input_filename(args, source))
-    if tool_name in {"render_meteorological_raster", "render_nowcast_raster"}:
+    if tool_name in {"meteorological_render", "render_nowcast_raster"}:
         source = input_path(args)
         filename = input_filename(args, source)
         output = output_path(args)
@@ -85,7 +85,7 @@ def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, 
             level_index=optional_int(args, "level_index"),
             bbox=optional_number_list(args, "bbox"),
         )
-    if tool_name == "meteorological_threshold_area":
+    if tool_name == "meteorological_threshold":
         return service.threshold_geojson(
             input_path(args),
             threshold=required_float(args, "threshold"),
@@ -96,7 +96,7 @@ def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, 
             level_index=optional_int(args, "level_index"),
             bbox=optional_number_list(args, "bbox"),
         )
-    if tool_name == "meteorological_contours":
+    if tool_name == "meteorological_contour":
         return service.contours_geojson(
             input_path(args),
             levels=optional_number_list(args, "levels"),
@@ -106,7 +106,7 @@ def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, 
             level_index=optional_int(args, "level_index"),
             bbox=optional_number_list(args, "bbox"),
         )
-    if tool_name == "generate_meteorological_report":
+    if tool_name == "meteorological_report":
         source = input_path(args)
         filename = input_filename(args, source)
         output = output_path(args)
@@ -123,7 +123,7 @@ def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, 
     if tool_name == "inspect_nowcast_sequence":
         sequence = nowcast_sequence_from_reference(args)
         return NowcastSequenceService().inspect_sequence(sequence)
-    if tool_name == "analyze_nowcast_precipitation":
+    if tool_name == "meteorological_precipitation_nowcast":
         sequence = nowcast_sequence_from_reference(args, variable_override=optional_text(args, "variable"))
         analysis = NowcastAnalysisService().analyze(
             sequence,

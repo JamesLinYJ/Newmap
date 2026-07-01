@@ -27,7 +27,7 @@ import {
 describe('tool management model', () => {
   const tools: ToolDescriptor[] = [
     makeTool({
-      name: 'inspect_meteorological_dataset',
+      name: 'meteorological_inspect',
       label: '检查气象数据集',
       group: 'meteorology',
       providerId: 'geo-platform-meteorology',
@@ -99,9 +99,9 @@ describe('tool management model', () => {
   })
 
   it('filters across label, tags, provider and language', () => {
-    expect(filterTools(tools, 'netcdf').map((tool) => tool.name)).toEqual(['inspect_meteorological_dataset'])
+    expect(filterTools(tools, 'netcdf').map((tool) => tool.name)).toEqual(['meteorological_inspect'])
     expect(filterTools(tools, 'layer').map((tool) => tool.name)).toEqual(['delete_layer'])
-    expect(filterTools(tools, 'typescript').map((tool) => tool.name)).toEqual(['inspect_meteorological_dataset'])
+    expect(filterTools(tools, 'typescript').map((tool) => tool.name)).toEqual(['meteorological_inspect'])
   })
 
   it('groups tools with counts and stable Chinese labels', () => {

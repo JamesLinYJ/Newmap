@@ -13,7 +13,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import type { AgentRuntimeConfig } from '../schemas/types.js'
 
-export const SDK_STATE_SCHEMA_VERSION = 1
+export const SDK_STATE_SCHEMA_VERSION = 2
 
 let versionPromise: Promise<string> | null = null
 

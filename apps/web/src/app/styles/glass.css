@@ -42,6 +42,7 @@
 .cc-timeline .cc-approval-card,
 .cc-timeline .cc-error-card,
 .cc-timeline .cc-system-card,
+.cc-decision-sheet,
 .tool-management__catalog .tool-card,
 .tool-mini-console__card,
 .tool-mini-app__workflow-step,
@@ -79,16 +80,19 @@
 .cc-timeline .cc-error-card::before,
 .cc-timeline .cc-error-card::after,
 .cc-timeline .cc-system-card::before,
-.cc-timeline .cc-system-card::after {
+.cc-timeline .cc-system-card::after,
+.cc-decision-sheet::before,
+.cc-decision-sheet::after {
   opacity: 0.16;
   transform: none;
 }
 
 .cc-icon-button,
 .cc-mini-button,
-.cc-plan-choice,
 .cc-composer-tool,
 .cc-mode-trigger,
+.cc-decision-option,
+.cc-decision-submit,
 .toolbar-button,
 .dc-map-stage__zoom,
 .dc-map-stage__icon,
@@ -102,9 +106,9 @@
 
 .cc-icon-button:hover,
 .cc-mini-button:hover,
-.cc-plan-choice:hover,
 .cc-composer-tool:hover,
 .cc-mode-trigger:hover,
+.cc-decision-option:hover,
 .toolbar-button:hover,
 .dc-map-stage__icon:hover,
 .dc-map-stage__basemap:hover,

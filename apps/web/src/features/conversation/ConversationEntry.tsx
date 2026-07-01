@@ -29,7 +29,6 @@ interface ConversationEntryViewProps {
   expandedIds: Set<string>
   onToggleExpanded: (id: string) => void
   onSelectArtifact: (id: string) => void
-  onResolveApproval: (id: string, approved: boolean) => void
   onForkMessage?: (entryId: string) => void
 }
 
@@ -40,7 +39,6 @@ export function ConversationEntryView({
   expandedIds,
   onToggleExpanded,
   onSelectArtifact,
-  onResolveApproval,
   onForkMessage,
 }: ConversationEntryViewProps) {
   if (entry.kind === 'message' && entry.role === 'user') {
@@ -171,7 +169,7 @@ export function ConversationEntryView({
       <m.div key={entry.id} className="cc-timeline-item cc-timeline-item--notice" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
         <span className="cc-timeline-dot" />
         <div className="cc-timeline-body">
-          <ApprovalCard entry={entry} onResolve={onResolveApproval} />
+          <ApprovalCard entry={entry} />
         </div>
       </m.div>
     )
@@ -209,7 +207,7 @@ export function ConversationEntryView({
   return null
 }
 
-function ApprovalCard({ entry, onResolve }: { entry: ConversationEntry; onResolve: (id: string, approved: boolean) => void }) {
+function ApprovalCard({ entry }: { entry: ConversationEntry }) {
   const plan = extractApprovalPlan(entry.details)
   if (plan) {
     const allowedPrompts = extractAllowedPrompts(entry.details)
@@ -220,7 +218,7 @@ function ApprovalCard({ entry, onResolve }: { entry: ConversationEntry; onResolv
           <span>请先审阅计划。批准后系统才会退出只读计划模式并继续执行。</span>
         </div>
         <div className="cc-plan-document">
-          <div className="cc-plan-document__eyebrow">Newmap Plan</div>
+          <div className="cc-plan-document__eyebrow">GeoForge Plan</div>
           <h2>{plan.goal}</h2>
           <section>
             <h3>执行步骤</h3>
@@ -258,18 +256,9 @@ function ApprovalCard({ entry, onResolve }: { entry: ConversationEntry; onResolv
             <strong>{entry.title || '接受这个计划？'}</strong>
             <span>{entry.body}</span>
           </div>
-          {entry.approvalId ? (
-            <div className="cc-plan-approval-box__actions">
-              <button className="cc-plan-choice cc-plan-choice--primary" type="button" onClick={() => onResolve(entry.approvalId!, true)}>
-                <span>1</span>
-                批准，开始执行
-              </button>
-              <button className="cc-plan-choice" type="button" onClick={() => onResolve(entry.approvalId!, false)}>
-                <span>2</span>
-                退回，继续规划
-              </button>
-            </div>
-          ) : null}
+          <div className="cc-plan-approval-box__actions">
+            <span>请在底部决策面板中确认。</span>
+          </div>
         </div>
       </div>
     )
@@ -283,16 +272,9 @@ function ApprovalCard({ entry, onResolve }: { entry: ConversationEntry; onResolv
           <strong>{entry.title || '需要你的确认'}</strong>
           <span>{entry.body}</span>
         </div>
-        {entry.approvalId && (
-          <div className="cc-approval-actions">
-            <button className="cc-mini-button cc-mini-button--primary" onClick={() => onResolve(entry.approvalId!, true)}>
-              确认继续
-            </button>
-            <button className="cc-mini-button" onClick={() => onResolve(entry.approvalId!, false)}>
-              拒绝
-            </button>
-          </div>
-        )}
+        <div className="cc-approval-actions">
+          <span>请在底部决策面板中确认。</span>
+        </div>
       </div>
     </div>
   )

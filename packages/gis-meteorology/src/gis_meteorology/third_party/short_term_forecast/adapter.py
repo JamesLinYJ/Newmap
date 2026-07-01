@@ -8,7 +8,7 @@
 #   作者:       Codex
 # --------------------------------------------------------------------------
 
-"""Newmap wrapper for the copied short-term rainfall table tool.
+"""GeoForge wrapper for the copied short-term rainfall table tool.
 
 The source project used a Flask page, browser screenshots, and local directory
 browsing. This adapter keeps the scientific calculation and table artifact

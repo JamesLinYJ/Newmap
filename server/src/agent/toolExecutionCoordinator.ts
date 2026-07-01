@@ -27,6 +27,7 @@ interface CoordinatorOptions {
   turnId: string
   modelName?: string | null
   inlineToolResultMaxChars: number
+  runtimeConfig?: import('../schemas/types.js').AgentRuntimeConfig
   eventSink: RunEventSink
   itemSink: ItemSink
   valueState: Map<string, unknown>
@@ -76,6 +77,10 @@ export class ToolExecutionCoordinator {
     const result = await this.execute(toolName, args, callId)
     if (toolName === 'answer_nowcast_question' && typeof result.payload.answer === 'string') {
       return result.payload.answer
+    }
+    if (toolName === 'request_clarification' && isRecord(result.payload.clarification)) {
+      const question = result.payload.clarification.question
+      if (typeof question === 'string') return question
     }
     return formatToolResultForModel(result, this.options.inlineToolResultMaxChars)
   }
@@ -152,8 +157,16 @@ export class ToolExecutionCoordinator {
       runId: this.options.runId,
       sessionId: this.options.sessionId,
       threadId: this.options.threadId,
+      runtimeRoot: this.options.store.runtimeRoot,
+      runtimeConfig: this.options.runtimeConfig,
       state: this.options.valueState,
       resolveValueRef: refId => resolveRuntimeValueRef(this.options.valueState, refId),
+      resolveMeteorologicalDataset: input => this.options.store.resolveMeteorologicalDataset({
+        sessionId: this.options.sessionId,
+        threadId: this.options.threadId,
+        datasetId: input.datasetId ?? null,
+        filename: input.filename ?? null,
+      }),
       invokeStructuredModel: prompt => {
         if (!this.options.adapter) throw new Error('当前确定性工具链未配置结构化模型调用')
         return invokeStructuredModel(this.options.adapter, prompt, this.options.modelName)

@@ -20,6 +20,7 @@ describe('createAgentsTools', () => {
       name: 'render_rainfall_risk_map',
       label: '生成短时强降水风险区划图',
       description: '生成风险区划图',
+      prompt: '用于测试工具 prompt 会进入 Agent 可见描述。',
       group: '气象',
       tags: ['meteorology'],
       isReadOnly: true,

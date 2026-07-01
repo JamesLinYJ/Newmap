@@ -12,6 +12,7 @@ import type { ToolDef } from '../../framework/types.js'
 import type { PostGisRepository } from '../../gis/postgis.js'
 import type { LayerDescriptor } from '../../schemas/types.js'
 import { makeId } from '../../utils/ids.js'
+import { LIST_LAYERS_PROMPT } from '../spatial/prompts.js'
 
 // list_layers 是 Agent 进入平台图层事实源的只读入口。
 // 它只返回 PostGIS 中已经注册的系统/会话图层，不做外部搜索或隐式导入。
@@ -20,6 +21,7 @@ export function createLayerListTool(postgis: PostGisRepository): ToolDef {
     name: 'list_layers',
     label: '检索平台图层',
     description: '按名称、分类、标签或来源检索平台中已经注册的 PostGIS 图层，不会访问外部数据源；行政边界查询不会返回自动生成的分析矩形。',
+    prompt: LIST_LAYERS_PROMPT,
     group: '空间分析',
     tags: ['layer', 'postgis', 'catalog'],
     isReadOnly: true,

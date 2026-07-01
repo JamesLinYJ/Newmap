@@ -16,12 +16,14 @@ import path from 'node:path'
 import type { ToolDef } from '../../framework/types.js'
 import { parseGeoJsonEntity } from '../../gis/geojson.js'
 import { makeId } from '../../utils/ids.js'
+import { MAP_EXPORT_PROMPT } from '../spatial/prompts.js'
 
 export function createMapExportTool(runtimeRoot: string): ToolDef {
   return {
     name: 'map_export',
     label: '导出地图数据',
     description: '将 GeoJSON 分析结果保存为平台 artifact。',
+    prompt: MAP_EXPORT_PROMPT,
     group: '空间分析',
     tags: ['export', 'file'],
     isReadOnly: false,

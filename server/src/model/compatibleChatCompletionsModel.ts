@@ -273,6 +273,9 @@ function toChatMessages(input: string | AgentInputItem[]): ChatCompletionMessage
     if (!pendingAssistant) return
     const value = pendingAssistant
     pendingAssistant = null
+    if (!value.tool_calls.length && !value.content?.trim()) {
+      throw new UserError('历史 assistant 消息缺少正文或工具调用')
+    }
     messages.push({ ...value, tool_calls: value.tool_calls.length ? value.tool_calls : undefined } as ChatCompletionMessageParam)
   }
   const assistant = () => pendingAssistant ??= { role: 'assistant', content: null, tool_calls: [] }
@@ -282,11 +285,15 @@ function toChatMessages(input: string | AgentInputItem[]): ChatCompletionMessage
       flush()
       if (item.role === 'system') messages.push({ role: 'system', content: String(item.content) })
       else if (item.role === 'user') messages.push({ role: 'user', content: extractUserText(item.content) })
-      else messages.push({ role: 'assistant', content: extractAssistantText(item.content) })
+      else {
+        const content = extractAssistantText(item.content)
+        if (!content.trim()) throw new UserError('历史 assistant 消息缺少正文或工具调用')
+        messages.push({ role: 'assistant', content })
+      }
       continue
     }
     if (item.type === 'reasoning') {
-      // Provider reasoning is UI-only telemetry in Newmap. Replaying it as a
+      // Provider reasoning is UI-only telemetry in GeoForge. Replaying it as a
       // standalone assistant message is invalid for Chat Completions.
       continue
     }
@@ -455,11 +462,19 @@ function extractAssistantText(content: Extract<AgentInputItem, { role: 'assistan
 }
 
 function extractToolText(output: Extract<AgentInputItem, { type: 'function_call_result' }>['output']): string {
-  if (typeof output === 'string') return output
-  if (Array.isArray(output) && output.every(part => part.type === 'input_text')) {
-    return output.map(part => part.type === 'input_text' ? part.text : '').join('')
+  if (typeof output === 'string') {
+    if (!output.trim()) throw new UserError('Chat Completions 工具结果不能为空')
+    return output
   }
-  if (isRecord(output) && output.type === 'text' && typeof output.text === 'string') return output.text
+  if (Array.isArray(output) && output.every(part => part.type === 'input_text')) {
+    const text = output.map(part => part.type === 'input_text' ? part.text : '').join('')
+    if (!text.trim()) throw new UserError('Chat Completions 工具结果不能为空')
+    return text
+  }
+  if (isRecord(output) && output.type === 'text' && typeof output.text === 'string') {
+    if (!output.text.trim()) throw new UserError('Chat Completions 工具结果不能为空')
+    return output.text
+  }
   throw new UserError('Chat Completions 工具结果必须是非空文本')
 }
 

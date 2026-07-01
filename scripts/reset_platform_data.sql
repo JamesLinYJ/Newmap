@@ -14,6 +14,8 @@
 DROP TABLE IF EXISTS platform_context_entries CASCADE;
 DROP TABLE IF EXISTS platform_thread_context CASCADE;
 TRUNCATE TABLE platform_artifacts;
+TRUNCATE TABLE platform_meteorological_datasets;
+TRUNCATE TABLE platform_meteorological_jobs;
 DROP TABLE IF EXISTS platform_events CASCADE;
 DROP TABLE IF EXISTS platform_runs CASCADE;
 DROP TABLE IF EXISTS platform_threads CASCADE;

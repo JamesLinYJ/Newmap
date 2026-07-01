@@ -10,19 +10,31 @@
 
 import type { Server } from 'node:http'
 import { WebSocketServer, WebSocket } from 'ws'
-import type { AgentRuntimeConfig } from '../schemas/types.js'
+import type { AgentRuntimeConfig, AnalysisRun, DecisionRequest } from '../schemas/types.js'
 import type { PostGisRepository } from '../gis/postgis.js'
 import type { ModelAdapterRegistry } from '../model/registry.js'
 import type { ToolRegistry } from '../framework/registry.js'
 import type { ToolContext } from '../framework/types.js'
 import { defaultRuntimeConfig } from '../agent/defaultRuntimeConfig.js'
-import { OpenAIAgentsRuntime } from '../agent/runtime.js'
+import { OpenAIAgentsRuntime, type SandboxSessionFactory } from '../agent/runtime.js'
 import { RuntimeFileStore } from '../store/fileStore.js'
 import { PostgresPlatformStore, StoreNotFoundError } from '../store/platformStore.js'
 import { makeId, nowUtc } from '../utils/ids.js'
 import { failure, parseMessage, push, success, type ClientMsg } from './protocol.js'
 import { persistToolExecutionResult, resolveRuntimeValueRef } from '../tools/resultPersistence.js'
-import { assembleThreadContext, compactThreadIfNeeded, rebuildThreadMemory } from '../agent/contextManager.js'
+import { assembleThreadContext, compactThreadIfNeeded } from '../agent/contextManager.js'
+import {
+  createMemoryRuntime,
+  deleteMemory,
+  dreamMemories,
+  extractMemoriesFromThread,
+  listMemories,
+  readMemory,
+  rebuildSessionMemory,
+  searchMemories,
+  writeMemory,
+} from '../memory/service.js'
+import { memoryScopeSchema, memoryTypeSchema } from '../memory/schemas.js'
 import { buildSystemPrompt } from '../agent/prompts.js'
 import { ItemSink } from '../conversation/itemSink.js'
 
@@ -32,11 +44,15 @@ interface WsDependencies {
   modelRegistry: ModelAdapterRegistry
   postgis: PostGisRepository
   runtimeRoot: string
+  defaultRuntimeConfig?: AgentRuntimeConfig
+  createSandboxSession?: SandboxSessionFactory
 }
 
 export function createWsHandler(server: Server, dependencies: WsDependencies) {
   const { store } = dependencies
-  const runtime = new OpenAIAgentsRuntime(store, dependencies.toolRegistry, dependencies.modelRegistry)
+  const runtime = new OpenAIAgentsRuntime(store, dependencies.toolRegistry, dependencies.modelRegistry, {
+    createSandboxSession: dependencies.createSandboxSession,
+  })
   const files = new RuntimeFileStore(dependencies.runtimeRoot)
   const wss = new WebSocketServer({ server, path: '/ws' })
 
@@ -135,14 +151,14 @@ async function handleMessage(
       )
     case 'thread:context': {
       const threadId = requiredString(payload, 'threadId')
-      const config = await resolveRuntimeConfig(store)
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
       const tools = toolRegistry.list().map(tool => `- ${tool.name}: ${tool.description}`).join('\n')
       const systemPrompt = buildSystemPrompt(config, null, tools, '', '')
       return (await assembleThreadContext(store, threadId, config.context, systemPrompt)).report
     }
     case 'thread:compact': {
       const threadId = requiredString(payload, 'threadId')
-      const config = await resolveRuntimeConfig(store)
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
       return compactThreadIfNeeded(
         store,
         threadId,
@@ -161,14 +177,106 @@ async function handleMessage(
       )
     case 'thread:memory:rebuild': {
       const threadId = requiredString(payload, 'threadId')
-      const config = await resolveRuntimeConfig(store)
-      return rebuildThreadMemory(
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      return rebuildSessionMemory(
         store,
         threadId,
         config.context,
         makeSummarizer(modelRegistry, config, optionalString(payload.provider), optionalString(payload.modelName)),
         true,
       )
+    }
+    case 'memory:list': {
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      const runtimeMemory = createMemoryRuntime(store.runtimeRoot, config.context)
+      const scope = optionalString(payload.scope)
+      const records = await listMemories(runtimeMemory, scope ? memoryScopeSchema.parse(scope) : undefined)
+      return { records, total: records.length }
+    }
+    case 'memory:read': {
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      return readMemory(
+        createMemoryRuntime(store.runtimeRoot, config.context),
+        memoryScopeSchema.parse(requiredString(payload, 'scope')),
+        requiredString(payload, 'relativePath'),
+      )
+    }
+    case 'memory:write': {
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      return writeMemory(createMemoryRuntime(store.runtimeRoot, config.context), {
+        scope: memoryScopeSchema.parse(requiredString(payload, 'scope')),
+        type: memoryTypeSchema.parse(requiredString(payload, 'type')),
+        name: requiredString(payload, 'name'),
+        description: requiredString(payload, 'description'),
+        content: requiredString(payload, 'content'),
+        relativePath: optionalString(payload.relativePath),
+      })
+    }
+    case 'memory:delete': {
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      return deleteMemory(
+        createMemoryRuntime(store.runtimeRoot, config.context),
+        memoryScopeSchema.parse(requiredString(payload, 'scope')),
+        requiredString(payload, 'relativePath'),
+      )
+    }
+    case 'memory:search': {
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      const selector = makeOptionalStructuredSelector(
+        modelRegistry,
+        config,
+        optionalString(payload.provider),
+        optionalString(payload.modelName),
+      )
+      const matches = await searchMemories(
+        createMemoryRuntime(store.runtimeRoot, config.context),
+        requiredString(payload, 'query'),
+        selector,
+      )
+      return { matches, total: matches.length }
+    }
+    case 'memory:extract': {
+      const threadId = requiredString(payload, 'threadId')
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      const runId = optionalString(payload.runId) ?? store.listRunsForThread(threadId)[0]?.id
+      if (!runId) throw new Error('memory:extract 需要 runId 或已有线程运行')
+      const records = await extractMemoriesFromThread(
+        createMemoryRuntime(store.runtimeRoot, config.context),
+        store,
+        threadId,
+        runId,
+        makeStructuredSelector(modelRegistry, config, optionalString(payload.provider), optionalString(payload.modelName)),
+      )
+      return { records, total: records.length }
+    }
+    case 'memory:dream': {
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      return dreamMemories(
+        createMemoryRuntime(store.runtimeRoot, config.context),
+        makeOptionalStructuredSelector(modelRegistry, config, optionalString(payload.provider), optionalString(payload.modelName)),
+        { force: payload.force === true },
+      )
+    }
+    case 'memory:session:get':
+      return store.getThreadMemory(requiredString(payload, 'threadId'))
+    case 'memory:session:rebuild': {
+      const threadId = requiredString(payload, 'threadId')
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      return rebuildSessionMemory(
+        store,
+        threadId,
+        config.context,
+        makeSummarizer(modelRegistry, config, optionalString(payload.provider), optionalString(payload.modelName)),
+        true,
+      )
+    }
+    case 'memory:instructions:list': {
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+      return {
+        enabled: config.context.instructionMemoryEnabled,
+        entrypointName: config.context.instructionEntrypointName,
+        records: [],
+      }
     }
     case 'thread:trash:list':
       return store.listTrash(requiredString(payload, 'sessionId'))
@@ -204,7 +312,7 @@ async function handleMessage(
       const sessionId = optionalString(payload.sessionId) ?? (threadId ? store.getThread(threadId).sessionId : null)
       if (!sessionId) throw new Error('sessionId 不能为空')
       if (!threadId) threadId = (await store.createThread(sessionId, query.slice(0, 32))).id
-      const config = await resolveRuntimeConfig(store)
+      const config = await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
       const selectedProvider = optionalString(payload.provider)
         ?? optionalString(payload.modelProvider)
         ?? modelRegistry.defaultProvider
@@ -255,12 +363,8 @@ async function handleMessage(
       }).then(() => void sendSnapshot(ws, runId, store))
       return store.getRun(runId)
     }
-    case 'run:resolve-approval':
-      return runtime.resolveApproval(
-        requiredString(payload, 'runId'),
-        requiredString(payload, 'approvalId'),
-        requiredBoolean(payload, 'approved'),
-      )
+    case 'run:respond-decision':
+      return respondDecision(payload, dependencies, runtime, ws, subscriptions)
     case 'run:subscribe': {
       const runId = requiredString(payload, 'runId')
       subscribeToRun(ws, runId, store, subscriptions)
@@ -275,7 +379,7 @@ async function handleMessage(
     case 'tool:list':
       return toolRegistry.descriptors()
     case 'tool:run':
-      return executeTool(payload, store, toolRegistry, modelRegistry)
+      return executeTool(payload, store, toolRegistry, modelRegistry, dependencies.defaultRuntimeConfig)
     case 'tool-catalog:list':
       return store.listToolCatalogEntries()
     case 'tool-catalog:upsert':
@@ -289,7 +393,7 @@ async function handleMessage(
       await store.deleteToolCatalogEntry(requiredString(payload, 'toolKind'), requiredString(payload, 'toolName'))
       return { deleted: true }
     case 'runtime-config:get':
-      return resolveRuntimeConfig(store)
+      return resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
     case 'runtime-config:update': {
       const config = requiredRecord(payload, 'config')
       await store.upsertRuntimeConfig('agent-runtime', config)
@@ -339,6 +443,7 @@ async function executeTool(
   store: PostgresPlatformStore,
   registry: ToolRegistry,
   modelRegistry: ModelAdapterRegistry,
+  runtimeConfigDefaults?: AgentRuntimeConfig,
 ) {
   let runId = optionalString(payload.runId)
   let directRun = false
@@ -349,7 +454,7 @@ async function executeTool(
     const created = await store.createRun(sessionId, `执行工具 ${requiredString(payload, 'toolName')}`, {
       threadId,
       modelProvider: modelRegistry.defaultProvider || null,
-      runtimeConfigSnapshot: await resolveRuntimeConfig(store),
+      runtimeConfigSnapshot: await resolveRuntimeConfig(store, runtimeConfigDefaults),
     })
     runId = created.id
     directRun = true
@@ -361,6 +466,8 @@ async function executeTool(
     runId,
     sessionId: run.sessionId,
     threadId: run.threadId,
+    runtimeRoot: store.runtimeRoot,
+    runtimeConfig: run.runtimeConfigSnapshot ?? await resolveRuntimeConfig(store, runtimeConfigDefaults),
     state: values,
     resolveValueRef: refId => resolveRuntimeValueRef(values, refId),
     invokeStructuredModel: async prompt => {
@@ -472,6 +579,63 @@ async function snapshot(runId: string, store: PostgresPlatformStore) {
   return { run: store.getRun(runId), items, events }
 }
 
+async function respondDecision(
+  payload: Record<string, unknown>,
+  dependencies: WsDependencies,
+  runtime: OpenAIAgentsRuntime,
+  ws: WebSocket,
+  subscriptions: Map<string, () => void>,
+): Promise<AnalysisRun> {
+  const { store } = dependencies
+  const runId = requiredString(payload, 'runId')
+  const decisionId = requiredString(payload, 'decisionId')
+  const run = store.getRun(runId)
+  const decision = run.state.decisions.find(item => item.decisionId === decisionId)
+  if (!decision) throw new Error(`决策 '${decisionId}' 不存在`)
+  if (decision.status !== 'pending') return run
+
+  if (decision.kind === 'approval') {
+    const approved = selectedApprovalValue(decision, optionalString(payload.optionId))
+    const approvalId = typeof decision.payload.approvalId === 'string' ? decision.payload.approvalId : decisionId
+    return runtime.resolveApproval(runId, approvalId, approved)
+  }
+
+  if (decision.kind === 'clarification') {
+    if (!run.threadId) throw new Error(`运行 '${runId}' 缺少 threadId`)
+    const optionId = optionalString(payload.optionId)
+    const answer = selectedDecisionText(decision, optionId, optionalString(payload.text))
+    await store.updateRunState(runId, {
+      decisions: resolveDecision(run.state.decisions, decisionId, 'answered', { optionId, answer }),
+      clarification: run.state.clarification && run.state.clarification.clarificationId === decisionId
+        ? { ...run.state.clarification, selectedOptionId: optionId ?? 'free_text' }
+        : run.state.clarification,
+    })
+    const config = run.runtimeConfigSnapshot ?? await resolveRuntimeConfig(store, dependencies.defaultRuntimeConfig)
+    const provider = requiredRunProvider(run.modelProvider)
+    const nextRun = await store.createRun(run.sessionId, answer, {
+      threadId: run.threadId,
+      modelProvider: provider,
+      modelName: run.modelName,
+      runtimeConfigSnapshot: config,
+    })
+    subscribeToRun(ws, nextRun.id, store, subscriptions)
+    void runtime.run({
+      runId: nextRun.id,
+      threadId: run.threadId,
+      sessionId: run.sessionId,
+      query: answer,
+      provider,
+      modelName: nextRun.modelName,
+      runtimeConfig: config,
+      executionMode: run.state.planMode ? 'plan' : 'auto',
+      reasoning: true,
+    }).then(() => void sendSnapshot(ws, nextRun.id, store))
+    return nextRun
+  }
+
+  throw new Error(`决策 '${decisionId}' 不能通过 run:respond-decision 提交`)
+}
+
 async function sendSnapshot(ws: WebSocket, runId: string, store: PostgresPlatformStore): Promise<void> {
   send(ws, push('run.snapshot', await snapshot(runId, store)))
 }
@@ -480,9 +644,12 @@ function send(ws: WebSocket, message: string): void {
   if (ws.readyState === WebSocket.OPEN) ws.send(message)
 }
 
-async function resolveRuntimeConfig(store: PostgresPlatformStore): Promise<AgentRuntimeConfig> {
+async function resolveRuntimeConfig(
+  store: PostgresPlatformStore,
+  fallbackConfig: AgentRuntimeConfig = defaultRuntimeConfig(),
+): Promise<AgentRuntimeConfig> {
   const stored = await store.getRuntimeConfig('agent-runtime')
-  return stored ? stored as AgentRuntimeConfig : defaultRuntimeConfig()
+  return stored ? stored as AgentRuntimeConfig : fallbackConfig
 }
 
 function makeSummarizer(
@@ -502,6 +669,70 @@ function makeSummarizer(
   }
 }
 
+function makeOptionalStructuredSelector(
+  registry: ModelAdapterRegistry,
+  config: AgentRuntimeConfig,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+): ((prompt: string) => Promise<Record<string, unknown>>) | undefined {
+  if (!requestedProvider && !requestedModel && !config.context.summaryProvider && !registry.defaultProvider) return undefined
+  return makeStructuredSelector(registry, config, requestedProvider, requestedModel)
+}
+
+function makeStructuredSelector(
+  registry: ModelAdapterRegistry,
+  config: AgentRuntimeConfig,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+) {
+  return async (prompt: string): Promise<Record<string, unknown>> => {
+    const provider = requestedProvider ?? config.context.summaryProvider ?? registry.defaultProvider
+    if (!provider) throw new Error('未配置记忆选择模型 provider')
+    const adapter = registry.resolveProvider(provider)
+    const model = requestedModel ?? config.context.summaryModel ?? adapter.subagentModel ?? adapter.defaultModel
+    if (!model) throw new Error('未配置记忆选择模型')
+    const response = await adapter.chat(prompt, {
+      model,
+      reasoning: false,
+    })
+    if (typeof response.content !== 'string' || !response.content.trim()) throw new Error('结构化模型未返回文本')
+    return parseStructuredJson(response.content)
+  }
+}
+
+function parseStructuredJson(value: string): Record<string, unknown> {
+  const cleaned = value.trim().replace(/^```json\s*|\s*```$/gu, '')
+  const parsed: unknown = JSON.parse(cleaned)
+  if (!isRecord(parsed)) throw new Error('结构化模型输出必须是 JSON object')
+  return parsed
+}
+
+function selectedApprovalValue(decision: DecisionRequest, optionId: string | null): boolean {
+  const option = optionId ? decision.options.find(item => item.optionId === optionId) : null
+  if (!option) throw new Error('审批决策必须选择批准或拒绝')
+  if (typeof option.payload.approved !== 'boolean') throw new Error('审批决策选项缺少 approved payload')
+  return option.payload.approved
+}
+
+function selectedDecisionText(decision: DecisionRequest, optionId: string | null, text: string | null): string {
+  if (text) return text
+  const option = optionId ? decision.options.find(item => item.optionId === optionId) : null
+  if (option?.label?.trim()) return option.label.trim()
+  throw new Error('澄清决策必须选择一个选项或输入补充文本')
+}
+
+function resolveDecision(
+  decisions: DecisionRequest[],
+  decisionId: string,
+  status: string,
+  payload: Record<string, unknown>,
+): DecisionRequest[] {
+  const resolvedAt = nowUtc()
+  return decisions.map(decision => decision.decisionId === decisionId
+    ? { ...decision, status, resolvedAt, payload: { ...decision.payload, ...payload } }
+    : decision)
+}
+
 function requiredString(payload: Record<string, unknown>, key: string): string {
   const value = payload[key]
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${key} 不能为空`)
@@ -515,11 +746,6 @@ function optionalString(value: unknown): string | null {
 function requiredRunProvider(value: string | null): string {
   if (!value) throw new Error('运行缺少 modelProvider，不能恢复')
   return value
-}
-
-function requiredBoolean(payload: Record<string, unknown>, key: string): boolean {
-  if (typeof payload[key] !== 'boolean') throw new Error(`${key} 必须为 boolean`)
-  return payload[key]
 }
 
 function optionalPositiveInteger(value: unknown, key: string): number | undefined {

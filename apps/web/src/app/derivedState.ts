@@ -27,6 +27,7 @@ import type { DataReferenceSummary } from '../shared/constants'
 import type { PanelMode, PrimaryNav, UploadReference } from './types'
 
 const LAYER_FILE_SUFFIXES = new Set(['.geojson', '.json', '.gpkg', '.zip'])
+const METEOROLOGICAL_FILE_SUFFIXES = new Set(['.nc', '.nc4', '.grib', '.grb', '.grb2', '.tif', '.tiff', '.h5', '.hdf5', '.bz2'])
 export function formatTopBarRunStatus(status?: string) {
   if (status === 'completed') {
     return '分析完成'
@@ -121,6 +122,9 @@ export function mergeThreadRuns(currentRuns: AnalysisRun[], incomingRun: Analysi
 }
 
 export function classifyUploadFile(file: File): UploadReference['kind'] | undefined {
+  if (isMeteorologicalFile(file)) {
+    return 'meteorology'
+  }
   if (isLayerFile(file)) {
     return 'layer'
   }
@@ -130,6 +134,11 @@ export function classifyUploadFile(file: File): UploadReference['kind'] | undefi
 export function isLayerFile(file: File) {
   const name = file.name.toLowerCase()
   return [...LAYER_FILE_SUFFIXES].some((suffix) => name.endsWith(suffix))
+}
+
+export function isMeteorologicalFile(file: File) {
+  const name = file.name.toLowerCase()
+  return [...METEOROLOGICAL_FILE_SUFFIXES].some((suffix) => name.endsWith(suffix))
 }
 
 export function getUploadRelativePath(file: File) {
@@ -248,6 +257,7 @@ export function buildDataReferences({
 }
 
 export function formatReferenceKind(kind: UploadReference['kind']) {
+  if (kind === 'meteorology') return '气象数据'
   return kind === 'layer' ? '空间图层' : '线程文件'
 }
 

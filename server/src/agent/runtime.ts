@@ -19,18 +19,35 @@ import {
   type RunStreamEvent,
   type RunToolApprovalItem,
 } from '@openai/agents'
+import {
+  Capabilities,
+  Manifest,
+  SandboxAgent,
+  type SandboxSessionLike,
+} from '@openai/agents/sandbox'
+import {
+  DockerSandboxClient,
+  UnixLocalSandboxClient,
+} from '@openai/agents/sandbox/local'
 import type { ToolRegistry } from '../framework/registry.js'
 import type { ModelAdapter, ModelAdapterRegistry } from '../model/registry.js'
-import type { AgentRuntimeConfig, AnalysisRun, ToolValueRef, TranscriptEntry } from '../schemas/types.js'
+import type {
+  AgentRuntimeConfig,
+  AnalysisRun,
+  DecisionRequest,
+  RuntimeSandboxConfig,
+  ToolValueRef,
+  TranscriptEntry,
+} from '../schemas/types.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
 import { ItemSink } from '../conversation/itemSink.js'
 import { makeId, nowUtc } from '../utils/ids.js'
 import { buildSystemPrompt } from './prompts.js'
+import { buildMemoryPrompt, createMemoryRuntime, dreamMemories, extractMemoriesFromThread, rebuildSessionMemory } from '../memory/service.js'
 import { RunEventSink, TurnFinalizer } from './turnRunner.js'
 import {
   assembleThreadContext,
   compactThreadIfNeeded,
-  rebuildThreadMemory,
   type ConversationChatMessage,
 } from './contextManager.js'
 import { FileAgentsSession } from './fileAgentsSession.js'
@@ -40,6 +57,48 @@ import { runDeterministicNowcast, shouldRunDeterministicNowcast } from './determ
 import { agentsSdkVersion, runtimeConfigDigest, SDK_STATE_SCHEMA_VERSION } from './agentsRuntimeMetadata.js'
 
 const AGENT_TOOL_NAME = /^[a-zA-Z0-9_-]+$/u
+
+function buildSandboxManifest(options: RunOptions, threadId: string): Manifest {
+  return new Manifest({
+    entries: {
+      'README.md': {
+        type: 'file',
+        content: `# GeoForge Sandbox
+
+本工作区由 GeoForge 运行时为单次 Agent run 创建。
+
+- runId: ${options.runId}
+- threadId: ${threadId}
+- sessionId: ${options.sessionId}
+
+文件、shell 和 patch 操作必须在这个 sandbox 工作区内完成。平台运行时数据、上传文件和气象数据集只能通过已注册工具访问，不要猜测宿主机路径。
+`,
+      },
+    },
+  })
+}
+
+export type SandboxSessionFactory = (
+  manifest: Manifest,
+  config: RuntimeSandboxConfig,
+) => Promise<SandboxSessionLike>
+
+export interface OpenAIAgentsRuntimeOptions {
+  createSandboxSession?: SandboxSessionFactory
+}
+
+async function createConfiguredSandboxSession(
+  manifest: Manifest,
+  config: RuntimeSandboxConfig,
+): Promise<SandboxSessionLike> {
+  if (config.backend === 'docker') {
+    return new DockerSandboxClient({ image: config.dockerImage }).create(manifest)
+  }
+  if (config.backend === 'unix_local') {
+    return new UnixLocalSandboxClient().create(manifest)
+  }
+  throw new Error(`不支持的 sandbox backend：${config.backend}`)
+}
 
 export interface RunOptions {
   runId: string
@@ -61,6 +120,7 @@ interface RuntimeAssembly {
   context: AgentsExecutionContext
   coordinator: ToolExecutionCoordinator
   adapter: ModelAdapter
+  sandboxSession: SandboxSessionLike
   configDigest: string
   sdkVersion: string
   threadId: string
@@ -79,7 +139,7 @@ interface StreamProjectionState {
 
 // OpenAIAgentsRuntime
 //
-// Runner 是单次 run 内编排的唯一状态机；本类只投影 SDK 事件并维护 Newmap
+// Runner 是单次 run 内编排的唯一状态机；本类只投影 SDK 事件并维护 GeoForge
 // 文件事实源、审批边界和确定性领域入口。
 export class OpenAIAgentsRuntime {
   private readonly abortControllers = new Map<string, AbortController>()
@@ -88,6 +148,7 @@ export class OpenAIAgentsRuntime {
     private readonly store: PostgresPlatformStore,
     private readonly toolRegistry: ToolRegistry,
     private readonly modelRegistry: ModelAdapterRegistry,
+    private readonly runtimeOptions: OpenAIAgentsRuntimeOptions = {},
   ) {}
 
   async run(options: RunOptions): Promise<AnalysisRun> {
@@ -134,6 +195,7 @@ export class OpenAIAgentsRuntime {
           turnId,
           modelName: null,
           inlineToolResultMaxChars: options.runtimeConfig.context.inlineToolResultMaxChars,
+          runtimeConfig: options.runtimeConfig,
           eventSink,
           itemSink,
           valueState,
@@ -149,6 +211,7 @@ export class OpenAIAgentsRuntime {
           query: options.query,
         })
         await finalizer.complete()
+        await this.maybeExtractLongTermMemories(options, threadId, eventSink)
         return this.store.getRun(options.runId)
       }
 
@@ -165,7 +228,9 @@ export class OpenAIAgentsRuntime {
         itemSink,
       )
       if (completed === 'waiting_approval') return this.store.getRun(options.runId)
+      if (completed === 'clarification_needed') return this.store.getRun(options.runId)
       await finalizer.complete()
+      await this.maybeExtractLongTermMemories(options, threadId, eventSink)
       return this.store.getRun(options.runId)
     } catch (error) {
       const message = errorMessage(error)
@@ -200,7 +265,10 @@ export class OpenAIAgentsRuntime {
 
     approval.status = approved ? 'approved' : 'rejected'
     approval.resolvedAt = nowUtc()
-    await this.store.updateRunState(runId, { approvals: run.state.approvals })
+    await this.store.updateRunState(runId, {
+      approvals: run.state.approvals,
+      decisions: resolveDecision(run.state.decisions, approvalId, approved ? 'approved' : 'rejected', { approved }),
+    })
     const eventSink = new RunEventSink(event => this.store.appendEvent(runId, event), runId, run.threadId)
     const itemSink = new ItemSink(item => this.store.appendItem(item), runId, run.threadId)
     const turnId = requireString(approval.payload.turnId, '审批 payload.turnId')
@@ -229,10 +297,15 @@ export class OpenAIAgentsRuntime {
     try {
       const result = await this.executeSdkRun(options, assembly, state, abort.signal, eventSink, itemSink)
       approval.payload.consumed = true
-      await this.store.updateRunState(runId, { approvals: run.state.approvals })
+      await this.store.updateRunState(runId, {
+        approvals: run.state.approvals,
+        decisions: resolveDecision(this.store.getRun(runId).state.decisions, approvalId, approved ? 'approved' : 'rejected', { approved, consumed: true }),
+      })
       if (result === 'waiting_approval') return this.store.getRun(runId)
+      if (result === 'clarification_needed') return this.store.getRun(runId)
       const finalizer = new TurnFinalizer(eventSink, itemSink, status => this.store.completeRun(runId, status))
       await finalizer.complete()
+      await this.maybeExtractLongTermMemories(options, run.threadId, eventSink)
       return this.store.getRun(runId)
     } catch (error) {
       const message = errorMessage(error)
@@ -295,10 +368,16 @@ export class OpenAIAgentsRuntime {
     }
     if (maintainContext) {
       await compactThreadIfNeeded(this.store, threadId, contextConfig, summarize)
-      await rebuildThreadMemory(this.store, threadId, contextConfig, summarize, false, options.runId)
+      try {
+        await rebuildSessionMemory(this.store, threadId, contextConfig, summarize, false, options.runId)
+      } catch (error) {
+        await this.recordWarning(options.runId, `会话记忆更新失败：${errorMessage(error)}`, eventSink)
+      }
     }
     const run = this.store.getRun(options.runId)
-    const systemPrompt = buildSystemPrompt(options.runtimeConfig, run.state, '', '', '')
+    const memoryToolsAvailable = this.memoryToolsAvailable()
+    const memoryPrompt = await buildMemoryPrompt(createMemoryRuntime(this.store.runtimeRoot, contextConfig), memoryToolsAvailable)
+    const systemPrompt = buildSystemPrompt(options.runtimeConfig, run.state, '', '', memoryPrompt)
     const assembled = await assembleThreadContext(this.store, threadId, contextConfig, systemPrompt)
     await this.store.updateRunState(options.runId, {
       runtimeStats: {
@@ -325,6 +404,7 @@ export class OpenAIAgentsRuntime {
       turnId,
       modelName: selectedModel,
       inlineToolResultMaxChars: options.runtimeConfig.context.inlineToolResultMaxChars,
+      runtimeConfig: options.runtimeConfig,
       eventSink,
       itemSink,
       valueState,
@@ -399,13 +479,18 @@ export class OpenAIAgentsRuntime {
         },
       })
     })
-    const agent = new Agent<AgentsExecutionContext>({
+    const sandboxManifest = buildSandboxManifest(options, threadId)
+    const createSandboxSession = this.runtimeOptions.createSandboxSession ?? createConfiguredSandboxSession
+    const sandboxSession = await createSandboxSession(sandboxManifest, options.runtimeConfig.sandbox)
+    const agent = new SandboxAgent<AgentsExecutionContext>({
       name: options.runtimeConfig.supervisor.name,
       instructions: systemPrompt,
       model,
       modelSettings: modelSettings(options.reasoning),
       tools: [...supervisorTools, ...subAgentTools],
-      toolUseBehavior: { stopAtToolNames: ['answer_nowcast_question'] },
+      toolUseBehavior: { stopAtToolNames: ['answer_nowcast_question', 'request_clarification'] },
+      defaultManifest: sandboxManifest,
+      capabilities: Capabilities.default(),
     })
     const runner = new Runner({
       model,
@@ -487,6 +572,7 @@ export class OpenAIAgentsRuntime {
       context,
       coordinator,
       adapter,
+      sandboxSession,
       configDigest: runtimeConfigDigest(options.runtimeConfig),
       sdkVersion: await agentsSdkVersion(),
       threadId,
@@ -504,7 +590,8 @@ export class OpenAIAgentsRuntime {
     signal: AbortSignal,
     eventSink: RunEventSink,
     itemSink: ItemSink,
-  ): Promise<'completed' | 'waiting_approval'> {
+  ): Promise<'completed' | 'waiting_approval' | 'clarification_needed'> {
+    let outcome: 'completed' | 'waiting_approval' | 'clarification_needed' | null = null
     const projection: StreamProjectionState = {
       assistantItemId: null,
       reasoningItemId: null,
@@ -512,63 +599,93 @@ export class OpenAIAgentsRuntime {
       lastAssistantText: '',
       completedAssistantItems: [],
     }
-    const stream = await assembly.runner.run(
-      assembly.agent,
-      resumeState ?? options.query,
-      {
-        stream: true,
-        context: new RunContext(assembly.context),
-        session: assembly.session,
-        maxTurns: options.runtimeConfig.maxTurns,
-        signal,
-      },
-    )
-    await this.persistSdkState(options.runId, stream.state, assembly)
-    for await (const event of stream) {
-      await this.projectStreamEvent(event, projection, assembly, eventSink, itemSink)
-      if (event.type === 'run_item_stream_event' && ['tool_output', 'tool_approval_requested'].includes(event.name)) {
-        await this.persistSdkState(options.runId, stream.state, assembly)
-      }
-    }
-    await stream.completed
-    if (stream.error) throw stream.error
-    await assembly.flushPendingSessionAssistantMessage()
-    await this.linkAssistantTranscriptEntries(options.runId, assembly, projection, itemSink)
-    if (projection.reasoningItemId) {
-      itemSink.completeItem(projection.reasoningItemId, { body: projection.reasoningText })
-    }
-    await this.updateUsage(options.runId, stream.rawResponses)
-    const interruptions = stream.interruptions
-    if (interruptions.length) {
+    try {
+      const stream = await assembly.runner.run(
+        assembly.agent,
+        resumeState ?? options.query,
+        {
+          stream: true,
+          context: new RunContext(assembly.context),
+          session: assembly.session,
+          sandbox: { session: assembly.sandboxSession },
+          maxTurns: options.runtimeConfig.maxTurns,
+          signal,
+        },
+      )
       await this.persistSdkState(options.runId, stream.state, assembly)
-      await this.persistApprovals(options, interruptions, eventSink, itemSink)
-      return 'waiting_approval'
-    }
-    if (this.store.getRun(options.runId).state.planMode) {
-      throw new Error('计划模式必须通过 exit_plan_mode 提交结构化执行计划，不能直接结束。')
-    }
-    const finalOutput = typeof stream.finalOutput === 'string' ? stream.finalOutput.trim() : ''
-    if (!finalOutput) throw new Error('Agent 未返回可交付文本')
-    if (!projection.lastAssistantText || projection.lastAssistantText !== finalOutput) {
-      const synthetic: AgentInputItem = {
-        type: 'message', role: 'assistant', status: 'completed',
-        content: [{ type: 'output_text', text: finalOutput }],
+      for await (const event of stream) {
+        await this.projectStreamEvent(event, projection, assembly, eventSink, itemSink)
+        if (event.type === 'run_item_stream_event' && ['tool_output', 'tool_approval_requested'].includes(event.name)) {
+          await this.persistSdkState(options.runId, stream.state, assembly)
+        }
       }
-      const content = assistantText(synthetic)
-      if (!content) throw new Error('终止工具未生成可持久化文本')
-      const item = itemSink.startItem('message', { role: 'assistant' })
-      const persisted = await this.appendAssistantMessageTranscript(assembly, content, item.itemId)
-      itemSink.completeItem(item.itemId, {
-        body: finalOutput,
-        metadata: { transcriptEntryId: persisted.entryId },
+      await stream.completed
+      if (stream.error) throw stream.error
+      await assembly.flushPendingSessionAssistantMessage()
+      await this.linkAssistantTranscriptEntries(options.runId, assembly, projection, itemSink)
+      if (projection.reasoningItemId) {
+        itemSink.completeItem(projection.reasoningItemId, { body: projection.reasoningText })
+      }
+      await this.updateUsage(options.runId, stream.rawResponses)
+      const interruptions = stream.interruptions
+      if (interruptions.length) {
+        await this.persistSdkState(options.runId, stream.state, assembly)
+        await this.persistApprovals(options, interruptions, eventSink, itemSink)
+        outcome = 'waiting_approval'
+        return outcome
+      }
+      const finalOutput = typeof stream.finalOutput === 'string' ? stream.finalOutput.trim() : ''
+      if (!finalOutput) throw new Error('Agent 未返回可交付文本')
+      const runAfterTools = this.store.getRun(options.runId)
+      if (runAfterTools.state.clarification && !runAfterTools.state.clarification.selectedOptionId) {
+        eventSink.emit('clarification.required', runAfterTools.state.clarification.question, {
+          clarification: runAfterTools.state.clarification,
+        })
+        itemSink.appendResult('clarification_needed', {
+          decisionId: runAfterTools.state.clarification.clarificationId,
+          clarification: runAfterTools.state.clarification,
+          message: runAfterTools.state.clarification.question,
+        })
+        await this.persistSdkState(options.runId, stream.state, assembly)
+        await this.store.conversationStore.saveRun(this.store.getRun(options.runId), {
+          pendingToolCallIds: [],
+          recoveryStatus: 'clean',
+        })
+        await this.store.completeRun(options.runId, 'clarification_needed')
+        outcome = 'clarification_needed'
+        return outcome
+      }
+      if (this.store.getRun(options.runId).state.planMode) {
+        throw new Error('计划模式必须通过 request_clarification 或 exit_plan_mode 结束。')
+      }
+      if (!projection.lastAssistantText || projection.lastAssistantText !== finalOutput) {
+        const synthetic: AgentInputItem = {
+          type: 'message', role: 'assistant', status: 'completed',
+          content: [{ type: 'output_text', text: finalOutput }],
+        }
+        const content = assistantText(synthetic)
+        if (!content) throw new Error('终止工具未生成可持久化文本')
+        const item = itemSink.startItem('message', { role: 'assistant' })
+        const persisted = await this.appendAssistantMessageTranscript(assembly, content, item.itemId)
+        itemSink.completeItem(item.itemId, {
+          body: finalOutput,
+          metadata: { transcriptEntryId: persisted.entryId },
+        })
+      }
+      await this.persistSdkState(options.runId, stream.state, assembly)
+      await this.store.conversationStore.saveRun(this.store.getRun(options.runId), {
+        pendingToolCallIds: [],
+        recoveryStatus: 'clean',
       })
+      outcome = 'completed'
+      return outcome
+    } finally {
+      if (outcome !== 'waiting_approval') {
+        await assembly.sandboxSession.close?.().catch(error => {
+          console.warn('[agents-runtime] sandbox close failed:', errorMessage(error))
+        })
+      }
     }
-    await this.persistSdkState(options.runId, stream.state, assembly)
-    await this.store.conversationStore.saveRun(this.store.getRun(options.runId), {
-      pendingToolCallIds: [],
-      recoveryStatus: 'clean',
-    })
-    return 'completed'
   }
 
   private async projectStreamEvent(
@@ -770,6 +887,7 @@ export class OpenAIAgentsRuntime {
   ): Promise<void> {
     const run = this.store.getRun(options.runId)
     const approvals = [...run.state.approvals]
+    let decisions = [...run.state.decisions]
     for (const interruption of interruptions) {
       const callId = functionCallId(interruption)
       const toolName = interruption.name
@@ -795,8 +913,10 @@ export class OpenAIAgentsRuntime {
         resolvedAt: null,
       }
       approvals.push(request)
+      decisions = upsertDecision(decisions, approvalDecisionFromRequest(request))
       eventSink.emit('approval.required', request.title, { approvalId: request.approvalId, tool: toolName, callId })
       itemSink.appendResult('waiting_approval', {
+        decisionId: request.approvalId,
         approvalId: request.approvalId,
         tool: toolName,
         callId,
@@ -805,7 +925,7 @@ export class OpenAIAgentsRuntime {
         args,
       })
     }
-    await this.store.updateRunState(options.runId, { approvals })
+    await this.store.updateRunState(options.runId, { approvals, decisions })
     await this.store.completeRun(options.runId, 'waiting_approval')
   }
 
@@ -868,6 +988,57 @@ export class OpenAIAgentsRuntime {
         modelTotalTokens: usage.totalTokens,
       },
     })
+  }
+
+  private async maybeExtractLongTermMemories(options: RunOptions, threadId: string, eventSink: RunEventSink): Promise<void> {
+    const config = options.runtimeConfig.context
+    if (!config.memoryEnabled || !config.memoryAutoExtractEnabled) return
+    if (!this.memoryToolsAvailable()) return
+    try {
+      const selector = this.makeStructuredSelector(options)
+      const runtimeMemory = createMemoryRuntime(this.store.runtimeRoot, config)
+      await extractMemoriesFromThread(
+        runtimeMemory,
+        this.store,
+        threadId,
+        options.runId,
+        selector,
+      )
+      if (config.memoryAutoDreamEnabled) {
+        await dreamMemories(runtimeMemory, selector)
+      }
+    } catch (error) {
+      await this.recordWarning(options.runId, `长期记忆自动提取失败：${errorMessage(error)}`, eventSink)
+    }
+  }
+
+  private makeStructuredSelector(options: RunOptions): (prompt: string) => Promise<Record<string, unknown>> {
+    const adapter = this.modelRegistry.resolveProvider(options.runtimeConfig.context.summaryProvider ?? options.provider)
+    const model = options.runtimeConfig.context.summaryModel
+      ?? adapter.subagentModel
+      ?? options.modelName
+      ?? adapter.defaultModel
+    if (!model) throw new Error('未配置记忆选择模型')
+    return async (prompt: string) => {
+      const response = await adapter.chat(prompt, { model, reasoning: false })
+      const content = response.content
+      if (typeof content !== 'string' || !content.trim()) throw new Error('记忆选择模型未返回文本')
+      return parseStructuredJson(content)
+    }
+  }
+
+  private async recordWarning(runId: string, message: string, eventSink: RunEventSink): Promise<void> {
+    const run = this.store.getRun(runId)
+    await this.store.updateRunState(runId, { warnings: [...run.state.warnings, message] })
+    eventSink.emit('warning.raised', message, {})
+  }
+
+  private memoryToolsAvailable(): boolean {
+    return Boolean(this.toolRegistry.get('list_memories')
+      && this.toolRegistry.get('search_memory')
+      && this.toolRegistry.get('read_memory')
+      && this.toolRegistry.get('write_memory')
+      && this.toolRegistry.get('forget_memory'))
   }
 }
 
@@ -999,6 +1170,13 @@ function parseArguments(value: string | undefined): Record<string, unknown> {
   return parsed
 }
 
+function parseStructuredJson(value: string): Record<string, unknown> {
+  const cleaned = value.trim().replace(/^```json\s*|\s*```$/gu, '')
+  const parsed: unknown = JSON.parse(cleaned)
+  if (!isRecord(parsed)) throw new Error('结构化模型输出必须是 JSON object')
+  return parsed
+}
+
 function approvalTitle(toolName: string, label?: string): string {
   if (toolName === 'exit_plan_mode') return '接受这个执行计划？'
   return `批准执行：${label ?? toolName}`
@@ -1009,6 +1187,68 @@ function approvalDescription(toolName: string, description?: string): string {
     return '计划已准备好。批准后系统会退出只读计划模式，并按这个计划继续执行写入、导出或计算动作。'
   }
   return description ?? `工具 ${toolName} 需要审批`
+}
+
+function approvalDecisionFromRequest(request: {
+  approvalId: string
+  action: string
+  title: string
+  description: string
+  status: string
+  payload: Record<string, unknown>
+  createdAt: string
+  resolvedAt: string | null
+}): DecisionRequest {
+  return {
+    decisionId: request.approvalId,
+    kind: 'approval',
+    title: request.title,
+    question: request.title,
+    description: request.description,
+    options: [
+      {
+        optionId: 'approve',
+        label: request.action === 'exit_plan_mode' ? '批准，开始执行' : '批准执行',
+        description: '允许系统继续执行这个动作。',
+        kind: 'approval',
+        reason: null,
+        payload: { approved: true },
+      },
+      {
+        optionId: 'reject',
+        label: request.action === 'exit_plan_mode' ? '退回，继续规划' : '拒绝',
+        description: '拒绝本次动作，运行会按拒绝结果继续。',
+        kind: 'approval',
+        reason: null,
+        payload: { approved: false },
+      },
+    ],
+    allowFreeText: false,
+    status: request.status,
+    payload: {
+      ...request.payload,
+      approvalId: request.approvalId,
+      action: request.action,
+    },
+    createdAt: request.createdAt,
+    resolvedAt: request.resolvedAt,
+  }
+}
+
+function upsertDecision(decisions: DecisionRequest[], decision: DecisionRequest): DecisionRequest[] {
+  return [...decisions.filter(item => item.decisionId !== decision.decisionId), decision]
+}
+
+function resolveDecision(
+  decisions: DecisionRequest[],
+  decisionId: string,
+  status: string,
+  payload: Record<string, unknown>,
+): DecisionRequest[] {
+  const resolvedAt = nowUtc()
+  return decisions.map(decision => decision.decisionId === decisionId
+    ? { ...decision, status, resolvedAt, payload: { ...decision.payload, ...payload } }
+    : decision)
 }
 
 function requireThreadId(threadId: string | null | undefined): string {

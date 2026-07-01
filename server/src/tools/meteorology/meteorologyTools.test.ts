@@ -199,7 +199,7 @@ describe('Hangzhou nowcast tools', () => {
     expect(result.provenance).toMatchObject({
       thirdPartySource: 'radar_mosaic_agent',
       sourceSnapshot: 'packages/gis-meteorology/src/gis_meteorology/third_party/radar_mosaic_agent/source/original',
-      wrapperVersion: 'newmap-wrapper-2026-06-23',
+      wrapperVersion: 'geoforge-wrapper-2026-06-23',
       inputRefs: {
         radarCollectionRef: 'ref_radar_collection',
         targetTimeRef: 'ref_time',
@@ -320,7 +320,7 @@ describe('Hangzhou nowcast tools', () => {
         relativePath: 'objects/sha256/ab/abcdef',
       })],
     ])
-    const tool = meteorologyTools.find(candidate => candidate.name === 'inspect_meteorological_dataset')!
+    const tool = meteorologyTools.find(candidate => candidate.name === 'meteorological_inspect')!
     await tool.handler({ dataset_ref: 'ref_file' }, context(state))
 
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({

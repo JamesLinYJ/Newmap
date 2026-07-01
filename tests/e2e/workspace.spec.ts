@@ -13,7 +13,7 @@ import { expect, test, type Page } from '@playwright/test'
 test.describe.configure({ mode: 'serial' })
 
 test.describe('workspace browser acceptance', () => {
-  test('uses one bootstrap request and loads run history without thread fan-out', async ({ page, context }) => {
+  test('uses one bootstrap request and shows recent threads without request fan-out', async ({ page, context }) => {
     const session = await context.newCDPSession(page)
     await session.send('Network.enable')
     const commands: string[] = []
@@ -34,8 +34,9 @@ test.describe('workspace browser acceptance', () => {
     expect(commands.filter(type => type === 'tool:list')).toHaveLength(0)
     expect(commands.filter(type => type === 'runtime-config:get')).toHaveLength(0)
 
-    await page.getByRole('button', { name: '历史', exact: true }).first().click()
-    await expect.poll(() => commands.filter(type => type === 'run:list').length).toBe(1)
+    await page.getByRole('button', { name: '历史对话' }).first().click()
+    await expect(page.getByRole('region', { name: '最近对话' })).toBeVisible()
+    expect(commands.filter(type => type === 'run:list')).toHaveLength(0)
     expect(commands.filter(type => type === 'thread:get')).toHaveLength(0)
   })
 
@@ -44,7 +45,7 @@ test.describe('workspace browser acceptance', () => {
     await page.goto('/')
     await expect(page.getByRole('textbox', { name: '输入空间分析需求' })).toBeVisible()
     await expect(page.getByText('页面遇到问题')).toHaveCount(0)
-    await expect(page.locator('.workspace-overview article').filter({ hasText: '模型' })).toContainText('待命')
+    await expect(page.locator('.workbench-footer-row').filter({ hasText: '模型' })).toContainText('待命')
 
     const composer = page.getByRole('textbox', { name: '输入空间分析需求' })
     const query = `浏览器验收：查询杭州中心点 ${Date.now()}`
@@ -120,13 +121,13 @@ test.describe('workspace browser acceptance', () => {
     const mobileTabs = page.getByRole('navigation', { name: '移动端工作台面板' })
     await expect(mobileTabs).toBeVisible()
     await mobileTabs.getByRole('button', { name: '地图' }).click()
-    await expect(page.locator('.workspace-pane--map')).toBeVisible()
+    await expect(page.locator('.workbench-pane--map-primary')).toBeVisible()
     await mobileTabs.getByRole('button', { name: '结果' }).click()
-    await expect(page.locator('.workspace-pane--results')).toBeVisible()
+    await expect(page.locator('.workbench-pane--inspector')).toBeVisible()
     await mobileTabs.getByRole('button', { name: '工具' }).click()
-    await expect(page.locator('.workspace-pane--tools')).toBeVisible()
+    await expect(page.locator('.workbench-pane--tools')).toBeVisible()
     await mobileTabs.getByRole('button', { name: '对话' }).click()
-    await expect(page.locator('.workspace-pane--chat')).toBeVisible()
+    await expect(page.locator('.workbench-pane--chat')).toBeVisible()
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     expect(overflow).toBeLessThanOrEqual(1)
@@ -134,10 +135,48 @@ test.describe('workspace browser acceptance', () => {
     expect(errors).toEqual([])
   })
 
-  test('opens ArcGIS-style layer manager from the layer navigation', async ({ page }) => {
+  test('swaps conversation and map panes between meteorology and map browsing modes', async ({ page }) => {
     const errors = collectUnexpectedErrors(page)
     await page.goto('/')
-    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: /图层/ }).click()
+
+    const content = page.locator('.workbench-content')
+    await expect(content).toHaveAttribute('data-map-mode', 'false')
+    await expect(page.locator('.workbench-pane--chat').getByRole('textbox', { name: '输入空间分析需求' })).toBeVisible()
+    await expect(page.locator('.workbench-side-swap--map').getByRole('region', { name: '空间地图' })).toBeVisible()
+
+    await page.getByLabel('工作台模式').getByRole('button', { name: '地图浏览' }).click()
+    await expect(content).toHaveAttribute('data-map-mode', 'true')
+    await expect(page.locator('.workbench-pane--map-primary').getByRole('region', { name: '空间地图' })).toBeVisible()
+    const sideChat = page.locator('.workbench-side-swap--chat')
+    await expect(sideChat.getByRole('textbox', { name: '输入空间分析需求' })).toBeVisible()
+    const sideChatPanelAlpha = await sideChat.locator('.cc-panel').evaluate((element) => getComputedStyle(element).backgroundColor)
+    expect(cssAlpha(sideChatPanelAlpha)).toBeGreaterThan(0.85)
+
+    await sideChat.getByRole('button', { name: '放大对话框' }).click()
+    const expandedDialog = page.getByRole('dialog', { name: '对话框全屏视图' })
+    await expect(expandedDialog).toBeVisible()
+    await expect.poll(async () => (await expandedDialog.boundingBox())?.width ?? 0).toBeGreaterThan(900)
+    await expect.poll(async () => (await expandedDialog.boundingBox())?.height ?? 0).toBeGreaterThan(650)
+    await expandedDialog.getByRole('button', { name: '收起对话框' }).click()
+    await expect(expandedDialog).toHaveCount(0)
+    await sideChat.getByRole('button', { name: '放大对话框' }).click()
+    await expect(expandedDialog).toBeVisible()
+    await expect.poll(async () => (await expandedDialog.boundingBox())?.width ?? 0).toBeGreaterThan(900)
+    await expandedDialog.getByRole('button', { name: '收起对话框' }).click()
+    await expect(expandedDialog).toHaveCount(0)
+
+    await page.getByLabel('工作台模式').getByRole('button', { name: '气象分析' }).click()
+    await expect(content).toHaveAttribute('data-map-mode', 'false')
+    await expect(page.locator('.workbench-pane--chat').getByRole('textbox', { name: '输入空间分析需求' })).toBeVisible()
+    await expect(page.locator('.workbench-side-swap--map').getByRole('region', { name: '空间地图' })).toBeVisible()
+    await expect(page.getByText('页面遇到问题')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+
+  test('opens ArcGIS-style layer manager from the inspector layer action', async ({ page }) => {
+    const errors = collectUnexpectedErrors(page)
+    await page.goto('/')
+    await page.getByRole('region', { name: '空间地图' }).getByRole('button', { name: '图层', exact: true }).click()
 
     const panel = page.getByRole('region', { name: '图层管理' })
     await expect(panel).toBeVisible()
@@ -181,4 +220,11 @@ function collectUnexpectedErrors(page: Page): string[] {
   })
   page.on('pageerror', error => errors.push(error.message))
   return errors
+}
+
+function cssAlpha(color: string): number {
+  if (color === 'transparent') return 0
+  const parts = color.match(/rgba?\(([^)]+)\)/)?.[1]?.split(',').map(part => part.trim())
+  if (!parts) return 0
+  return parts.length >= 4 ? Number.parseFloat(parts[3]) : 1
 }

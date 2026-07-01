@@ -17,7 +17,70 @@ import {
   ENTER_PLAN_MODE_PROMPT,
   EXIT_PLAN_MODE_DESCRIPTION,
   EXIT_PLAN_MODE_PROMPT,
+  REQUEST_CLARIFICATION_DESCRIPTION,
+  REQUEST_CLARIFICATION_PROMPT,
 } from './prompts.js'
+
+export const requestClarificationTool: ToolDef = {
+  name: 'request_clarification', label: '请求澄清',
+  description: REQUEST_CLARIFICATION_DESCRIPTION,
+  prompt: REQUEST_CLARIFICATION_PROMPT,
+  group: '系统', tags: ['plan', 'system'],
+  isReadOnly: true, isDestructive: false,
+
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      question: { type: 'string', description: '向用户提出的澄清问题。' },
+      reason: { type: 'string', description: '为什么必须先澄清。' },
+      options: {
+        type: 'array',
+        description: '可选的快捷选项。',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            label: { type: 'string', description: '选项按钮文本。' },
+            description: { type: 'string', description: '选项说明。' },
+          },
+          required: ['label'],
+        },
+      },
+      allowFreeText: { type: 'boolean', description: '是否允许用户自由输入补充。' },
+    },
+    required: ['question', 'reason'],
+  },
+
+  async handler(args, runtime) {
+    const options = Array.isArray(args.options)
+      ? args.options.filter(isRecord).map((option, index) => ({
+        optionId: `clarification_option_${index + 1}`,
+        label: typeof option.label === 'string' ? option.label : `选项 ${index + 1}`,
+        description: typeof option.description === 'string' ? option.description : '',
+        kind: 'generic',
+        reason: null,
+        payload: {},
+      }))
+      : []
+    return {
+      message: '需要用户补充信息。',
+      payload: {
+        runId: runtime.runId,
+        clarification: {
+          clarificationId: makeId('clarification'),
+          kind: 'plan_requirement',
+          reason: String(args.reason),
+          question: String(args.question),
+          options,
+          selectedOptionId: null,
+          allowFreeText: typeof args.allowFreeText === 'boolean' ? args.allowFreeText : true,
+        },
+      },
+      warnings: [], valueRefs: [],
+      resultId: makeId('result'), source: 'system',
+    }
+  },
+}
 
 export const enterPlanModeTool: ToolDef = {
   name: 'enter_plan_mode', label: '进入计划模式',
@@ -40,6 +103,10 @@ export const enterPlanModeTool: ToolDef = {
       resultId: makeId('result'), source: 'system',
     }
   },
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export const exitPlanModeTool: ToolDef = {

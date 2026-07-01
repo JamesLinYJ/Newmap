@@ -12,9 +12,11 @@
 // 不在适配层推断或修补数据字段。
 import type { ToolDef } from '../../framework/types.js'
 import { makeId } from '../../utils/ids.js'
+import { CREATE_CHART_PROMPT } from './prompt.js'
 
 export const chartTool: ToolDef = {
   name: 'create_chart', label: '生成图表', description: '根据数据生成统计图表（柱状图、折线图、饼图等）。',
+  prompt: CREATE_CHART_PROMPT,
   group: '可视化',  tags: ['chart', 'visualization'],
   isReadOnly: true, isDestructive: false, 
 

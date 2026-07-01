@@ -16,7 +16,7 @@ from pathlib import Path
 
 # Python 测试以源码仓库为事实源运行，不要求开发者预先安装本地包。
 #
-# 这里只加入 Newmap 自有包入口；第三方依赖仍由系统 Python 环境显式提供。
+# 这里只加入 GeoForge 自有包入口；第三方依赖仍由系统 Python 环境显式提供。
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_PATHS = [
     REPOSITORY_ROOT / "packages" / "gis-meteorology" / "src",

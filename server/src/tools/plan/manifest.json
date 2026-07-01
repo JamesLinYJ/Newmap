@@ -7,6 +7,52 @@
   "description": "只读计划模式",
   "tools": [
     {
+      "name": "request_clarification",
+      "label": "请求澄清",
+      "description": "计划模式中请求用户补充目标、范围、数据或输出要求。",
+      "group": "系统",
+      "tags": ["plan", "system"],
+      "isReadOnly": true,
+      "isDestructive": false,
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "向用户提出的澄清问题。"
+          },
+          "reason": {
+            "type": "string",
+            "description": "为什么必须先澄清。"
+          },
+          "options": {
+            "type": "array",
+            "description": "可选的快捷选项。",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "选项按钮文本。"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "选项说明。"
+                }
+              },
+              "required": ["label"]
+            }
+          },
+          "allowFreeText": {
+            "type": "boolean",
+            "description": "是否允许用户自由输入补充。"
+          }
+        },
+        "required": ["question", "reason"]
+      }
+    },
+    {
       "name": "enter_plan_mode",
       "label": "进入计划模式",
       "description": "进入只读探索模式，只允许查询和分析操作，不能修改数据。",

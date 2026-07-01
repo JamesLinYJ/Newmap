@@ -40,6 +40,8 @@ const envSchema = z.object({
   // Python sidecar + Python tools
   WORKER_URL: z.string().optional(),
   MEDIA_WORKER_URL: z.string().optional(),
+  SANDBOX_BACKEND: z.enum(['docker', 'unix_local']).default('docker'),
+  SANDBOX_DOCKER_IMAGE: z.string().default('node:22-bookworm-slim'),
   ENABLED_TOOL_PROVIDERS: z.string(),
   DEVELOPER_TOOL_ALLOWED_ROOTS: z.string().optional(),
   VALHALLA_BASE_URL: z.string().url().optional(),

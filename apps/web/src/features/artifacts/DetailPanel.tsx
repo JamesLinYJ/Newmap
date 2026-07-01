@@ -83,7 +83,6 @@ interface DetailPanelProps {
   onCopyShareLink: () => void
   onProviderChange: (value: string) => void
   onModelChange: (value: string) => void
-  onResolveApproval: (approvalId: string, approved: boolean) => void
   onImportManagedLayer: (file: File) => void
   onReplaceManagedLayer: (layerKey: string, file: File) => void
   onToggleLayerStatus: (layerKey: string, nextStatus: string) => void
@@ -147,7 +146,6 @@ export const DetailPanel = memo(function DetailPanel({
   onCopyShareLink,
   onProviderChange,
   onModelChange,
-  onResolveApproval,
   onImportManagedLayer,
   onReplaceManagedLayer,
   onToggleLayerStatus,
@@ -394,16 +392,6 @@ export const DetailPanel = memo(function DetailPanel({
                         </div>
                         <div className="dc-card__actions">
                           <span className="dc-pill-meta">{approval.status}</span>
-                          {approval.status === 'pending' ? (
-                            <>
-                              <button type="button" className="dc-link-button dc-link-button--primary" onClick={() => onResolveApproval(approval.approvalId, true)}>
-                                批准
-                              </button>
-                              <button type="button" className="dc-link-button" onClick={() => onResolveApproval(approval.approvalId, false)}>
-                                拒绝
-                              </button>
-                            </>
-                          ) : null}
                         </div>
                       </div>
                     ))}

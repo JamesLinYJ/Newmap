@@ -8,11 +8,13 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import { makeId } from '../../utils/ids.js';
+import { QUERY_LAYER_PROMPT } from '../spatial/prompts.js';
 export function createLayerQueryTool(postgis) {
     return {
         name: 'query_layer',
         label: '查询图层',
         description: '从 PostGIS 图层读取真实要素。',
+        prompt: QUERY_LAYER_PROMPT,
         group: '空间分析',
         tags: ['postgis', 'query'],
         isReadOnly: true,

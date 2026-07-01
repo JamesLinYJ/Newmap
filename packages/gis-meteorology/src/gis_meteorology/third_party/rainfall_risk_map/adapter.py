@@ -8,7 +8,7 @@
 #   作者:       Codex
 # --------------------------------------------------------------------------
 
-"""Newmap wrapper for the copied rainfall risk map tool.
+"""GeoForge wrapper for the copied rainfall risk map tool.
 
 The Flask session cache and local path browser from the source app are not part
 of the platform contract. This adapter exposes the same core workflow through

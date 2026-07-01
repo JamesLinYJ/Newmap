@@ -8,10 +8,12 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import { makeId } from '../../utils/ids.js';
+import { GEOCODE_PLACE_PROMPT } from './prompt.js';
 export const geocodePlaceTool = {
     name: 'geocode_place',
     label: '地点地理编码',
     description: '根据地名查询经纬度和边界框。支持城市、区县、POI 等地点类型。',
+    prompt: GEOCODE_PLACE_PROMPT,
     group: '地理',
     tags: ['geo', 'search'],
     isReadOnly: true,

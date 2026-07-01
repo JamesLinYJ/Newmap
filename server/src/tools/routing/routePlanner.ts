@@ -8,6 +8,7 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 import { makeId } from '../../utils/ids.js';
+import { ROUTE_PLANNER_PROMPT } from './prompt.js';
 const COSTING = {
     driving: 'auto',
     walking: 'pedestrian',
@@ -19,6 +20,7 @@ export function createRoutePlannerTool(baseUrl, timeoutMs) {
         name: 'route_planner',
         label: '路径规划',
         description: '通过 Valhalla 和 OSM 路网规划真实驾车、步行或骑行路线。',
+        prompt: ROUTE_PLANNER_PROMPT,
         group: '路径规划',
         tags: ['routing', 'navigation', 'osm', 'valhalla'],
         isReadOnly: true,

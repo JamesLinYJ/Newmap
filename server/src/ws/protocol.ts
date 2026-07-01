@@ -18,11 +18,15 @@ export const clientMsgType = z.enum([
   'thread:subscribe', 'thread:unsubscribe',
   'thread:memory:get', 'thread:memory:update', 'thread:memory:rebuild',
   'thread:trash:list', 'thread:trash:restore', 'thread:trash:purge',
-  'run:list', 'run:start', 'run:get', 'run:cancel', 'run:resume', 'run:resolve-approval', 'run:subscribe', 'run:unsubscribe',
+  'run:list', 'run:start', 'run:get', 'run:cancel', 'run:resume', 'run:respond-decision', 'run:subscribe', 'run:unsubscribe',
   'tool:list', 'tool:run',
   'tool-catalog:list', 'tool-catalog:upsert', 'tool-catalog:delete',
   'runtime-config:get', 'runtime-config:update',
   'provider:list', 'system:get',
+  'memory:list', 'memory:read', 'memory:write', 'memory:delete', 'memory:search',
+  'memory:extract', 'memory:dream',
+  'memory:session:get', 'memory:session:rebuild',
+  'memory:instructions:list',
   'file:list', 'file:delete',
   'layer:list', 'layer:update', 'layer:delete',
 ])
@@ -30,7 +34,7 @@ export const clientMsgType = z.enum([
 export const clientMsgSchema = z.object({
   type: clientMsgType,
   id: z.string().min(1),
-  payload: z.record(z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).prefault({}),
 })
 
 export type ClientMsg = z.infer<typeof clientMsgSchema>

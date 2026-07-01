@@ -1,3 +1,6 @@
+import type { z } from 'zod'
+import type { AgentRuntimeConfig, MeteorologicalDatasetRecord } from '../schemas/types.js'
+
 export interface ToolManifest {
     id: string;
     name: string;
@@ -24,13 +27,14 @@ export interface ToolDef {
     name: string;
     label: string;
     description: string;
-    prompt?: string;
+    prompt: string;
     group: string;
     tags: string[];
     isReadOnly: boolean;
     isDestructive: boolean;
     requiresApproval?: boolean;
-    jsonSchema: Record<string, unknown>;
+    parameters?: z.ZodObject;
+    jsonSchema?: Record<string, unknown>;
     handler: ToolHandler;
     providerId?: string;
     language?: string;
@@ -40,8 +44,14 @@ export interface ToolContext {
     runId: string;
     sessionId: string;
     threadId: string | null;
+    runtimeRoot?: string;
+    runtimeConfig?: AgentRuntimeConfig;
     state: Map<string, unknown>;
     resolveValueRef(refId: string): ValueRef;
+    resolveMeteorologicalDataset?(input: {
+        datasetId?: string | null;
+        filename?: string | null;
+    }): Promise<MeteorologicalDatasetRecord | null>;
     invokeStructuredModel(prompt: string): Promise<Record<string, unknown>>;
     log(level: 'info' | 'warn' | 'error', message: string): void;
 }

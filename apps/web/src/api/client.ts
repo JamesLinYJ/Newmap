@@ -20,6 +20,10 @@ import type {
   AgentThreadRecord,
   BasemapDescriptor,
   LayerDescriptor,
+  MemoryFileRecord,
+  MemorySearchResult,
+  MeteorologicalDatasetRecord,
+  MeteorologicalJobRecord,
   ModelProviderDescriptor,
   RunEvent,
   RunSummaryPage,
@@ -234,6 +238,53 @@ export function rebuildThreadMemory(threadId: string) {
   return requestControl<ThreadMemoryDocument>('thread:memory:rebuild', { threadId })
 }
 
+export function listMemories(scope?: 'private' | 'team') {
+  return requestControl<{ records: MemoryFileRecord[]; total: number }>('memory:list', { scope })
+}
+
+export function readMemory(scope: 'private' | 'team', relativePath: string) {
+  return requestControl<MemoryFileRecord>('memory:read', { scope, relativePath })
+}
+
+export function writeMemory(payload: {
+  scope: 'private' | 'team'
+  type: 'user' | 'feedback' | 'project' | 'reference'
+  name: string
+  description: string
+  content: string
+  relativePath?: string | null
+}) {
+  return requestControl<MemoryFileRecord>('memory:write', payload)
+}
+
+export function deleteMemory(scope: 'private' | 'team', relativePath: string) {
+  return requestControl<{ deleted: boolean; relativePath: string }>('memory:delete', { scope, relativePath })
+}
+
+export function searchMemories(query: string) {
+  return requestControl<{ matches: MemorySearchResult[]; total: number }>('memory:search', { query })
+}
+
+export function extractMemories(threadId: string, runId?: string | null) {
+  return requestControl<{ records: MemoryFileRecord[]; total: number }>('memory:extract', { threadId, runId })
+}
+
+export function dreamMemories(force = false) {
+  return requestControl<{ changed: boolean; message: string; records: MemoryFileRecord[]; summary?: string; warnings?: string[] }>('memory:dream', { force })
+}
+
+export function getSessionMemory(threadId: string) {
+  return requestControl<ThreadMemoryDocument>('memory:session:get', { threadId })
+}
+
+export function rebuildSessionMemory(threadId: string) {
+  return requestControl<ThreadMemoryDocument>('memory:session:rebuild', { threadId })
+}
+
+export function listInstructionMemories() {
+  return requestControl<{ enabled: boolean; entrypointName: string; records: MemoryFileRecord[] }>('memory:instructions:list')
+}
+
 export function listTrashedThreads(sessionId: string) {
   return requestControl<Array<{ thread: AgentThreadRecord; deletedAt: string; purgeAfter: string }>>('thread:trash:list', { sessionId })
 }
@@ -296,14 +347,14 @@ export function deleteToolCatalogEntry(toolKind: string, toolName: string) {
   return requestControl<Record<string, unknown>>('tool-catalog:delete', { toolKind, toolName })
 }
 
-export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null, executionMode: AgentExecutionMode = 'auto') {
+export function startAnalysis(sessionId: string, query: string, provider?: string, model?: string, executionMode: AgentExecutionMode = 'auto') {
   // 新任务直接创建 v2 run；已有 thread 的续跑走 startThreadRun。
-  return requestControl<AnalysisRun>('run:start', { sessionId, query, provider, modelName: model, clarificationOptionId, executionMode })
+  return requestControl<AnalysisRun>('run:start', { sessionId, query, provider, modelName: model, executionMode })
 }
 
-export function startThreadRun(threadId: string, query: string, provider?: string, model?: string, clarificationOptionId?: string | null, executionMode: AgentExecutionMode = 'auto') {
+export function startThreadRun(threadId: string, query: string, provider?: string, model?: string, executionMode: AgentExecutionMode = 'auto') {
   // v2 明确把“线程”和“运行”拆开，便于任务历史与上下文管理。
-  return requestControl<AnalysisRun>('run:start', { threadId, query, provider, modelName: model, clarificationOptionId, executionMode })
+  return requestControl<AnalysisRun>('run:start', { threadId, query, provider, modelName: model, executionMode })
 }
 
 export function getRun(runId: string) {
@@ -331,9 +382,9 @@ export function getArtifactMetadata(artifactId: string) {
   return requestJson<Record<string, unknown>>(`/api/v1/results/${artifactId}/metadata`)
 }
 
-export function resolveApproval(runId: string, approvalId: string, approved: boolean) {
-  // 审批动作恢复的是被中断的 run，而不是单独起一个新任务。
-  return requestControl<AnalysisRun>('run:resolve-approval', { runId, approvalId, approved })
+export function respondDecision(runId: string, decisionId: string, optionId?: string | null, text?: string | null) {
+  // 用户决策统一走同一条控制命令；后端按 decision.kind 映射到审批恢复或澄清续跑。
+  return requestControl<AnalysisRun>('run:respond-decision', { runId, decisionId, optionId, text })
 }
 
 export function cancelRun(runId: string) {
@@ -357,8 +408,34 @@ export async function uploadLayer(sessionId: string, file: File, threadId?: stri
   return requestFormJson<LayerDescriptor>('/api/v1/layers/register', formData, '图层上传请求失败')
 }
 
+export async function uploadMeteorologicalDataset(sessionId: string, file: File, threadId?: string | null) {
+  // 气象数据上传只写 meteorology 数据面；后端负责把 datasetId 与 runtime 文件对象关联。
+  const formData = new FormData()
+  formData.append('sessionId', sessionId)
+  if (threadId) {
+    formData.append('threadId', threadId)
+  }
+  formData.append('file', file)
 
+  return requestFormJson<{ dataset: MeteorologicalDatasetRecord; job: MeteorologicalJobRecord | null }>(
+    '/api/v1/meteorology/datasets',
+    formData,
+    '气象数据上传请求失败',
+    600_000,
+  )
+}
 
+export function listMeteorologicalDatasets(sessionId?: string | null, threadId?: string | null) {
+  const params = new URLSearchParams()
+  if (sessionId) params.set('sessionId', sessionId)
+  if (threadId) params.set('threadId', threadId)
+  const query = params.toString()
+  return requestJson<MeteorologicalDatasetRecord[]>(`/api/v1/meteorology/datasets${query ? `?${query}` : ''}`)
+}
+
+export function getMeteorologicalJob(jobId: string) {
+  return requestJson<MeteorologicalJobRecord>(`/api/v1/meteorology/jobs/${encodeURIComponent(jobId)}`)
+}
 
 
 export async function importManagedLayer(

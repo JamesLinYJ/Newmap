@@ -7,23 +7,28 @@
 //   日期:       2026年06月08日
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
+import { ensureToolSchemas, stableJson } from './schema.js'
+
 // Provider 暴露前校验是工具目录的硬边界，坏定义不能进入 Agent 或 DebugPage。
 export function validateToolDefinition(tool) {
     requireText(tool.name, 'tool.name');
     requireText(tool.label, `${tool.name}.label`);
     requireText(tool.description, `${tool.name}.description`);
+    requireText(tool.prompt, `${tool.name}.prompt`);
     requireText(tool.group, `${tool.name}.group`);
-    if (tool.jsonSchema.type !== 'object') {
-        throw new Error(`工具 "${tool.name}" 的 jsonSchema.type 必须为 object`);
+    const { jsonSchema } = ensureToolSchemas(tool);
+    if (jsonSchema.type !== 'object') {
+        throw new Error(`工具 "${tool.name}" 的 parameters 必须派生为 object JSON Schema`);
     }
     if (typeof tool.handler !== 'function') {
         throw new Error(`工具 "${tool.name}" 缺少 handler`);
     }
-    validateJsonSchema(tool.jsonSchema, `${tool.name}.jsonSchema`);
+    validateJsonSchema(jsonSchema, `${tool.name}.jsonSchema`);
 }
 export function validateToolProvider(provider) {
     validateManifest(provider.manifest);
     const tools = provider.tools();
+    for (const tool of tools) ensureToolSchemas(tool);
     if (tools.length !== provider.manifest.tools.length) {
         throw new Error(`Provider "${provider.manifest.id}" manifest 与运行时工具数量不一致`);
     }
@@ -103,11 +108,4 @@ function requireText(value, field) {
 }
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function stableJson(value) {
-    if (Array.isArray(value))
-        return `[${value.map(stableJson).join(',')}]`;
-    if (!isRecord(value))
-        return JSON.stringify(value);
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
 }

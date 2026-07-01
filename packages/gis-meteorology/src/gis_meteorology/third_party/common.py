@@ -11,7 +11,7 @@
 """Shared helpers for wrapping copied third-party meteorological tools.
 
 The copied tools live under each package's ``source`` directory and are treated
-as read-only provenance snapshots. This module owns the Newmap boundary:
+as read-only provenance snapshots. This module owns the GeoForge boundary:
 runtime-resolved paths come in from the worker, wrappers never browse local
 directories on their own, and all generated files are explicit artifact targets.
 """

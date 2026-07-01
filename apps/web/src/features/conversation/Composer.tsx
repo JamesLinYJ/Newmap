@@ -8,42 +8,34 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
-import { useEffect, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
-import { m } from 'framer-motion'
-import { Check, ChevronDown, Sparkles, Square, Upload, Zap } from 'lucide-react'
+import { useEffect, useRef, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react'
+import { Check, ChevronDown, ClipboardList, Sparkles, Square, Upload, Zap } from 'lucide-react'
 import { AppIcon } from '../../shared/components/AppIcon'
-import { buildFadeUpMotion } from '../../shared/motion'
 import { COMPOSER_MODES } from './composerModes'
-import type { ActiveClarification, ChatPanelProps, ComposerMode } from './types'
+import type { ChatPanelProps, ComposerMode } from './types'
 
 interface ComposerProps {
   query: string
   providerLabel: string
   isSubmitting: boolean
   composerMode: ComposerMode
-  modeMenuOpen: boolean
-  activeClarification: ActiveClarification | null
-  clarificationBusy: boolean
   tokenBudget?: ChatPanelProps['tokenBudget']
   activeSkills?: string[]
   compactionLevel?: string | null
   runStats?: ChatPanelProps['runStats']
   denialCounts?: Record<string, number>
   composerInputRef: RefObject<HTMLTextAreaElement | null>
-  firstClarificationOptionRef: RefObject<HTMLButtonElement | null>
-  reducedMotion: boolean
   onQueryChange: (value: string) => void
   onSubmit: (event?: FormEvent) => void
   onInterrupt?: () => void
   onUseTemplate: () => void
   onUploadFiles: (files: File[]) => void
-  onSelectClarification: (value: string, id?: string | null) => void
-  onClarificationFreeText: () => void
-  onModeChange: (mode: ComposerMode) => void
+  modeMenuOpen: boolean
   onModeMenuOpenChange: (open: boolean) => void
+  onComposerModeChange: (mode: ComposerMode) => void
   onCompositionStart: () => void
   onCompositionEnd: () => void
-  onInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
+  onInputKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void
 }
 
 // Composer 只维护用户正在编辑的输入态和按钮交互。
@@ -54,33 +46,29 @@ export function Composer({
   providerLabel,
   isSubmitting,
   composerMode,
-  modeMenuOpen,
-  activeClarification,
-  clarificationBusy,
   tokenBudget,
   activeSkills,
   compactionLevel,
   runStats,
   denialCounts,
   composerInputRef,
-  firstClarificationOptionRef,
-  reducedMotion,
   onQueryChange,
   onSubmit,
   onInterrupt,
   onUseTemplate,
   onUploadFiles,
-  onSelectClarification,
-  onClarificationFreeText,
-  onModeChange,
+  modeMenuOpen,
   onModeMenuOpenChange,
+  onComposerModeChange,
   onCompositionStart,
   onCompositionEnd,
   onInputKeyDown,
 }: ComposerProps) {
   const mode = COMPOSER_MODES.find(item => item.id === composerMode) ?? COMPOSER_MODES[0]
   const modeShortLabel = mode.id === 'auto' ? '自动' : '计划'
+  const ModeTriggerIcon = mode.id === 'plan' ? ClipboardList : Zap
   const canSubmit = Boolean(query.trim()) && !isSubmitting
+  const modePickerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const input = composerInputRef.current
@@ -89,33 +77,31 @@ export function Composer({
     input.style.height = `${Math.min(input.scrollHeight, 168)}px`
   }, [composerInputRef, query])
 
+  useEffect(() => {
+    if (!modeMenuOpen) return
+
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!modePickerRef.current?.contains(event.target as Node)) {
+        onModeMenuOpenChange(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onModeMenuOpenChange(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', closeOnPointerDown)
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointerDown)
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [modeMenuOpen, onModeMenuOpenChange])
+
   return (
     <form className="cc-composer" onSubmit={onSubmit}>
-      {activeClarification ? (
-        <div className="cc-clarification-bar">
-          <span className="cc-clarification-bar__question">{activeClarification.question}</span>
-          <div className="cc-clarification-bar__options">
-            {activeClarification.options.map((option, index) => (
-              <button
-                key={option.optionId ?? option.label}
-                ref={index === 0 ? firstClarificationOptionRef : undefined}
-                className="cc-clarification-bar__chip"
-                type="button"
-                disabled={clarificationBusy}
-                onClick={() => onSelectClarification(option.label, option.optionId)}
-              >
-                {option.label}
-              </button>
-            ))}
-            {activeClarification.allowFreeText ? (
-              <button className="cc-clarification-bar__dismiss" type="button" disabled={clarificationBusy} onClick={onClarificationFreeText}>
-                我补充说明
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
       <textarea
         id="analysis-query-input"
         ref={composerInputRef}
@@ -161,7 +147,7 @@ export function Composer({
           {providerLabel}
         </span>
 
-        <div className="cc-mode-picker">
+        <div className="cc-mode-picker" ref={modePickerRef}>
           <button
             className={`cc-mode-trigger cc-mode-trigger--${composerMode}`}
             type="button"
@@ -170,37 +156,50 @@ export function Composer({
             aria-label={`切换执行方式，当前为${mode.label}`}
             onClick={() => onModeMenuOpenChange(!modeMenuOpen)}
           >
+            <ModeTriggerIcon className="cc-mode-trigger__icon" size={14} />
             <span className="cc-mode-trigger__label">{modeShortLabel}</span>
             <ChevronDown size={13} />
           </button>
           {modeMenuOpen ? (
-            <m.div className="cc-mode-menu" role="menu" {...buildFadeUpMotion(reducedMotion, 0, 6)}>
-              <div className="cc-mode-menu__header">
-                <strong>执行方式</strong>
-                <small>{providerLabel}</small>
+            <div className="cc-mode-menu" role="menu" aria-label="切换执行方式">
+              <div className="cc-mode-menu__head">
+                <span>Modes</span>
+                <span className="cc-mode-menu__shortcut" aria-hidden="true">
+                  <kbd>Shift</kbd>
+                  <span>+</span>
+                  <kbd>Tab</kbd>
+                  <span>切换</span>
+                </span>
               </div>
-              <div className="cc-mode-menu__list">
-                {COMPOSER_MODES.map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={item.id === composerMode}
-                    className={`cc-mode-option${item.id === composerMode ? ' cc-mode-option--active' : ''}`}
-                    onClick={() => {
-                      onModeChange(item.id)
-                      onModeMenuOpenChange(false)
-                    }}
-                  >
-                    <span>
-                      <strong>{item.label}</strong>
-                      <small>{item.description}</small>
-                    </span>
-                    {item.id === composerMode ? <Check className="cc-mode-option__check" size={14} /> : null}
-                  </button>
-                ))}
+              <div className="cc-mode-list">
+                {COMPOSER_MODES.map((item) => {
+                  const selected = item.id === composerMode
+                  const Icon = item.id === 'plan' ? ClipboardList : Zap
+                  return (
+                    <button
+                      key={item.id}
+                      className={`cc-mode-option${selected ? ' cc-mode-option--selected' : ''}`}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      onClick={() => {
+                        onComposerModeChange(item.id)
+                        onModeMenuOpenChange(false)
+                      }}
+                    >
+                      <span className="cc-mode-option__icon"><Icon size={18} /></span>
+                      <span className="cc-mode-option__copy">
+                        <strong>{item.label}</strong>
+                        <small>{item.description}</small>
+                      </span>
+                      <span className="cc-mode-option__check" aria-hidden="true">
+                        {selected ? <Check size={18} /> : null}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
-            </m.div>
+            </div>
           ) : null}
         </div>
 

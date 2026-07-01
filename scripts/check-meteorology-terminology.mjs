@@ -62,7 +62,7 @@ const violations = []
 await walk(root)
 
 if (violations.length) {
-  console.error('气象术语检查失败：Newmap 自有代码仍含旧命名。')
+  console.error('气象术语检查失败：GeoForge 自有代码仍含旧命名。')
   for (const item of violations.slice(0, 100)) {
     console.error(`- ${item}`)
   }

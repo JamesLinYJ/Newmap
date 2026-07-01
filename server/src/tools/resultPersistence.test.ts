@@ -77,6 +77,55 @@ describe('tool result persistence', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('persists request_clarification payload as a pending DecisionRequest', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-result-clarification-'))
+    let store: PostgresPlatformStore | undefined
+    try {
+      store = new PostgresPlatformStore(noOpDb(), path.join(root, 'sessions'))
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '澄清测试')
+      const run = await store.createRun(session.id, '要画图', { threadId: thread.id })
+      await persistToolExecutionResult(store, run.id, 'request_clarification', {}, {
+        message: '需要确认平台',
+        payload: {
+          clarification: {
+            clarificationId: 'clarification_platform',
+            kind: 'platform',
+            reason: '缺少目标平台',
+            question: '目标平台是什么？',
+            allowFreeText: true,
+            options: [
+              { optionId: 'browser', label: '浏览器 WebGL', description: '在浏览器中运行' },
+            ],
+          },
+        },
+        warnings: [],
+        resultId: 'result_clarification',
+        source: 'test',
+      })
+
+      const latest = store.getRun(run.id)
+      expect(latest.state.clarification).toMatchObject({
+        clarificationId: 'clarification_platform',
+        question: '目标平台是什么？',
+        selectedOptionId: null,
+      })
+      expect(latest.state.decisions).toContainEqual(expect.objectContaining({
+        decisionId: 'clarification_platform',
+        kind: 'clarification',
+        title: '需要补充信息',
+        question: '目标平台是什么？',
+        status: 'pending',
+        allowFreeText: true,
+        payload: expect.objectContaining({ clarificationKind: 'platform' }),
+      }))
+    } finally {
+      await store?.conversationStore.flush()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 function line() {

@@ -11,7 +11,7 @@
 import {
   cancelRun,
   getRunItems,
-  resolveApproval,
+  respondDecision,
   startAnalysis,
   startThreadRun,
 } from '../../api/client'
@@ -24,7 +24,7 @@ export function useRunController() {
   return {
     ...useRunState(),
     cancelRun,
-    resolveApproval,
+    respondDecision,
     startAnalysis,
     startThreadRun,
   }
@@ -33,7 +33,7 @@ export function useRunController() {
 export const runController = {
   getRunItems,
   cancelRun,
-  resolveApproval,
+  respondDecision,
   startAnalysis,
   startThreadRun,
 }

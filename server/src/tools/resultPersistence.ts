@@ -14,7 +14,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ToolResult, ValueRef } from '../framework/types.js'
-import type { ArtifactRef, ExecutionPlan, TodoItem, ToolValueRef } from '../schemas/types.js'
+import type { ArtifactRef, ClarificationState, DecisionRequest, ExecutionPlan, TodoItem, ToolValueRef } from '../schemas/types.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
 import { makeId, nowUtc } from '../utils/ids.js'
 
@@ -45,7 +45,11 @@ export async function persistToolExecutionResult(
   }))
   const generatedArtifacts = await createGeoArtifacts(result, runId, store.runtimeRoot)
   const artifacts = dedupeArtifacts([...explicitArtifacts, ...generatedArtifacts])
-  const controlState = { ...planControlState(result.payload), ...todoControlState(result.payload) }
+  const controlState = {
+    ...planControlState(result.payload),
+    ...clarificationControlState(result.payload, run.state.decisions),
+    ...todoControlState(result.payload),
+  }
   await store.updateRunState(runId, {
     toolValueRefs: dedupeValueRefs([...run.state.toolValueRefs, ...refs]),
     artifacts: dedupeArtifacts([...run.state.artifacts, ...artifacts]),
@@ -75,11 +79,68 @@ export async function persistToolExecutionResult(
 
 // 计划模式是运行状态，不是普通工具 payload。
 // enter/exit 工具返回控制字段后，必须在同一条持久化路径内写回 run state。
-function planControlState(payload: Record<string, unknown>): Partial<{ planMode: boolean; executionPlan: ExecutionPlan | null }> {
+function planControlState(payload: Record<string, unknown>): Partial<{
+  planMode: boolean
+  executionPlan: ExecutionPlan | null
+}> {
   const updates: Partial<{ planMode: boolean; executionPlan: ExecutionPlan | null }> = {}
   if (typeof payload.planMode === 'boolean') updates.planMode = payload.planMode
   if (isRecord(payload.plan)) updates.executionPlan = normalizeExecutionPlan(payload.plan)
   return updates
+}
+
+// 澄清是单次 run 的显式终止原因，不等于退出计划模式。
+// 工具把结构化问题写入这里，UI/SSE 不再从 assistant 正文里猜测澄清状态。
+function clarificationControlState(
+  payload: Record<string, unknown>,
+  currentDecisions: DecisionRequest[],
+): Partial<{ clarification: ClarificationState | null; decisions: DecisionRequest[] }> {
+  if (!isRecord(payload.clarification)) return {}
+  const raw = payload.clarification
+  const options = Array.isArray(raw.options)
+    ? raw.options.filter(isRecord).map((option, index) => ({
+      optionId: typeof option.optionId === 'string' ? option.optionId : `clarification_option_${index + 1}`,
+      label: typeof option.label === 'string' && option.label.trim() ? option.label.trim() : `选项 ${index + 1}`,
+      description: typeof option.description === 'string' ? option.description : '',
+      kind: typeof option.kind === 'string' ? option.kind : 'generic',
+      reason: typeof option.reason === 'string' ? option.reason : null,
+      payload: isRecord(option.payload) ? option.payload : {},
+    }))
+    : []
+  const clarification: ClarificationState = {
+    clarificationId: typeof raw.clarificationId === 'string' && raw.clarificationId.trim()
+      ? raw.clarificationId.trim()
+      : makeId('clarification'),
+    kind: typeof raw.kind === 'string' && raw.kind.trim() ? raw.kind.trim() : 'generic',
+    reason: typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : 'generic',
+    question: typeof raw.question === 'string' && raw.question.trim() ? raw.question.trim() : '请补充必要信息。',
+    options,
+    selectedOptionId: typeof raw.selectedOptionId === 'string' ? raw.selectedOptionId : null,
+    allowFreeText: typeof raw.allowFreeText === 'boolean' ? raw.allowFreeText : true,
+  }
+  const decision: DecisionRequest = {
+    decisionId: clarification.clarificationId,
+    kind: 'clarification',
+    title: '需要补充信息',
+    question: clarification.question,
+    description: clarification.reason,
+    options: clarification.options,
+    allowFreeText: clarification.allowFreeText,
+    status: 'pending',
+    payload: {
+      clarificationId: clarification.clarificationId,
+      clarificationKind: clarification.kind,
+      reason: clarification.reason,
+    },
+    createdAt: nowUtc(),
+    resolvedAt: null,
+  }
+  return { clarification, decisions: upsertDecision(currentDecisions, decision) }
+}
+
+function upsertDecision(decisions: DecisionRequest[], decision: DecisionRequest): DecisionRequest[] {
+  const next = decisions.filter(item => item.decisionId !== decision.decisionId)
+  return [...next, decision]
 }
 
 function normalizeExecutionPlan(value: Record<string, unknown>): ExecutionPlan {

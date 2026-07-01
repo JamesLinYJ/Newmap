@@ -8,7 +8,7 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
-// Developer tools 是维护 Newmap GIS/气象 Agent 的内部工具箱，不改变产品身份。
+// Developer tools 是维护 GeoForge GIS/气象 Agent 的内部工具箱，不改变产品身份。
 // manifest 从同一批 ToolDef 生成，避免 DebugPage、Agent SDK 与运行时定义漂移。
 
 import type { ToolDef, ToolManifest } from '../../framework/types.js'
@@ -34,7 +34,7 @@ export const developerManifest: ToolManifest = {
   version: '1.0.0',
   author: 'geo-agent-platform',
   language: 'typescript',
-  description: '用于维护 Newmap GIS/气象 Agent 的受控文件读写、搜索与 Todo 工具。',
+  description: '用于维护 GeoForge GIS/气象 Agent 的受控文件读写、搜索与 Todo 工具。',
   requires: {
     DEVELOPER_TOOL_ALLOWED_ROOTS: 'required',
   },

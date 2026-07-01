@@ -119,6 +119,18 @@ For very small utility files, lightweight comments are acceptable if a full head
 - `packages/gis-*` and `packages/tool-registry` should document where remote calls are optional, where artifacts are persisted, and which tools are approval-sensitive.
 - `tests/*` should state whether they are pure unit tests, DB-backed tests, or full API lifecycle tests.
 
+## Memory System Standard
+
+- The repository instruction entrypoint is `AGENTS.md`, but GeoForge product runtime must keep instruction loading disabled unless `instructionMemoryEnabled` is explicitly set. This file is for development agents and repo maintainers, not hidden product prompt injection.
+- `MEMORY.md` is only a long-term memory index. It must contain short links or hooks and must never contain full memory body text.
+- Long-term memory body text must live in standalone Markdown topic files with Zod-validated frontmatter: `name`, `description`, `type`, and optional `paths`.
+- Memory `type` is restricted to `user`, `feedback`, `project`, or `reference`.
+- Private memory belongs in the user-private memory directory. Team memory belongs in the project shared memory directory. Sensitive personal data must not be written to team memory.
+- Do not save code structure, file paths, Git history, temporary task state, tool result logs, artifact names, or facts that can be derived from the current repository, runtime store, layer catalog, or configuration.
+- Memory records can become stale. If a memory mentions files, functions, flags, configuration, layers, tools, or data products, verify the current state before using it.
+- Automatic memory extraction must run in a restricted fork that can only read, search, write, and delete memory. It must not edit business source files or call GIS, meteorology, export, import, or other side-effect tools.
+- Historical run logs, event logs, and transcript files must not be scanned by runtime and silently injected into prompts. Previous facts enter a turn only through visible session memory, compaction, or explicit context/memory tools.
+
 ## Tool Module Standard
 
 - New tools must enter the platform as explicit in-repo `ToolProvider` modules with a `ToolManifest`; do not hide tools in ad hoc registry side effects.

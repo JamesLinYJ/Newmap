@@ -29,7 +29,29 @@ import { RuntimeFileStore } from '../store/fileStore.js'
 import { PostgresPlatformStore } from '../store/platformStore.js'
 import planProvider from '../tools/plan/index.js'
 import { defaultRuntimeConfig } from './defaultRuntimeConfig.js'
-import { OpenAIAgentsRuntime } from './runtime.js'
+import { OpenAIAgentsRuntime, type SandboxSessionFactory } from './runtime.js'
+
+const testSandboxSessionFactory: SandboxSessionFactory = async manifest => ({
+  state: { manifest, workspaceReady: true },
+  createEditor: () => ({
+    createFile: async () => { throw new Error('测试 sandbox 不允许写入文件') },
+    updateFile: async () => { throw new Error('测试 sandbox 不允许修改文件') },
+    deleteFile: async () => { throw new Error('测试 sandbox 不允许删除文件') },
+  }),
+  execCommand: async () => { throw new Error('测试 sandbox 不允许执行 shell 命令') },
+  supportsPty: () => false,
+  close: async () => {},
+})
+
+function testRuntime(
+  store: PostgresPlatformStore,
+  tools: ToolRegistry,
+  models: ModelAdapterRegistry,
+): OpenAIAgentsRuntime {
+  return new OpenAIAgentsRuntime(store, tools, models, {
+    createSandboxSession: testSandboxSessionFactory,
+  })
+}
 
 describe('OpenAIAgentsRuntime delivery boundaries', () => {
   it('rebuilds the visible transcript after restart and sends the current user message once', async () => {
@@ -52,7 +74,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         modelProvider: 'fake',
         runtimeConfigSnapshot: testRuntimeConfig(),
       })
-      await new OpenAIAgentsRuntime(firstStore, new ToolRegistry(), models).run(runOptions(firstRun, thread.id))
+      await testRuntime(firstStore, new ToolRegistry(), models).run(runOptions(firstRun, thread.id))
       await firstStore.conversationStore.flush()
 
       const restoredStore = new PostgresPlatformStore(noOpDb(), root)
@@ -62,7 +84,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         modelProvider: 'fake',
         runtimeConfigSnapshot: testRuntimeConfig(),
       })
-      await new OpenAIAgentsRuntime(restoredStore, new ToolRegistry(), models).run(runOptions(secondRun, thread.id))
+      await testRuntime(restoredStore, new ToolRegistry(), models).run(runOptions(secondRun, thread.id))
 
       const secondTexts = requestTexts(requests[1])
       expect(secondTexts).toContain('记住项目代号是西湖')
@@ -106,23 +128,35 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         : { toolCalls: [{ id: 'call_1', name: 'sensitive_tool', arguments: '{"value":1}' }] })
       const models = registryWith(fakeAdapter(model))
 
-      const waiting = await new OpenAIAgentsRuntime(store, tools, models).run({
+      const waiting = await testRuntime(store, tools, models).run({
         ...runOptions(run, thread.id),
         runtimeConfig: config,
       })
       expect(waiting.status).toBe('waiting_approval')
       expect(executions).toBe(0)
       expect(waiting.state.approvals).toHaveLength(1)
+      expect(waiting.state.decisions).toContainEqual(expect.objectContaining({
+        decisionId: waiting.state.approvals[0].approvalId,
+        kind: 'approval',
+        status: 'pending',
+        title: '批准执行：sensitive_tool',
+      }))
       await store.conversationStore.flush()
 
       const restoredStore = new PostgresPlatformStore(noOpDb(), root)
       await restoredStore.initialize()
-      const completed = await new OpenAIAgentsRuntime(restoredStore, tools, models)
+      const completed = await testRuntime(restoredStore, tools, models)
         .resolveApproval(run.id, waiting.state.approvals[0].approvalId, true)
 
       expect(completed.status).toBe('completed')
       expect(executions).toBe(1)
       expect(completed.state.approvals[0].payload.consumed).toBe(true)
+      expect(completed.state.decisions).toContainEqual(expect.objectContaining({
+        decisionId: waiting.state.approvals[0].approvalId,
+        kind: 'approval',
+        status: 'approved',
+        resolvedAt: expect.any(String),
+      }))
       const transcript = await restoredStore.activeTranscript(thread.id)
       expect(transcript.filter(entry => entry.kind === 'message' && entry.payload.role === 'user')).toHaveLength(1)
       expect(transcript.filter(entry => entry.kind === 'tool_call')).toHaveLength(1)
@@ -158,7 +192,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         toolCalls: [{ id: 'call_write', name: 'write_layer', arguments: '{"value":"x"}' }],
       }))
 
-      const failed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+      const failed = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run({
         ...runOptions(run, thread.id),
         executionMode: 'plan',
       })
@@ -186,14 +220,121 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
       })
       const model = scriptedModel(() => ({ text: '计划：第一步检查，第二步执行。' }))
 
-      const failed = await new OpenAIAgentsRuntime(store, new ToolRegistry(), registryWith(fakeAdapter(model))).run({
+      const failed = await testRuntime(store, new ToolRegistry(), registryWith(fakeAdapter(model))).run({
         ...runOptions(run, thread.id),
         executionMode: 'plan',
       })
 
       expect(failed.status).toBe('failed')
       expect(failed.state.planMode).toBe(true)
-      expect(failed.state.errors.at(-1)).toContain('计划模式必须通过 exit_plan_mode')
+      expect(failed.state.errors.at(-1)).toContain('计划模式必须通过 request_clarification 或 exit_plan_mode')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('asks for clarification instead of completing a greeting in explicit plan mode', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-runtime-plan-greeting-'))
+    try {
+      const store = new PostgresPlatformStore(noOpDb(), root)
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '计划模式寒暄')
+      const run = await store.createRun(session.id, '你好', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: testRuntimeConfig(),
+      })
+      const tools = new ToolRegistry()
+      tools.register(planProvider)
+      const model = scriptedModel(() => ({
+        toolCalls: [{
+          id: 'call_clarify_greeting',
+          name: 'request_clarification',
+          arguments: JSON.stringify({
+            question: '你好，请告诉我你想让我为哪个任务制定计划？',
+            reason: '用户只发送问候，没有可规划目标。',
+            options: [
+              { label: '风险区划图', description: '规划生成短时强降水风险区划图的步骤。' },
+              { label: '数据检查', description: '规划检查已有图层或气象数据的步骤。' },
+            ],
+          }),
+        }],
+      }))
+
+      const waiting = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+        ...runOptions(run, thread.id),
+        executionMode: 'plan',
+      })
+
+      expect(waiting.status).toBe('clarification_needed')
+      expect(waiting.state.planMode).toBe(true)
+      expect(waiting.state.clarification).toMatchObject({
+        kind: 'plan_requirement',
+        question: '你好，请告诉我你想让我为哪个任务制定计划？',
+        reason: '用户只发送问候，没有可规划目标。',
+      })
+      expect(waiting.state.clarification?.options).toHaveLength(2)
+      expect(waiting.state.decisions).toContainEqual(expect.objectContaining({
+        decisionId: waiting.state.clarification?.clarificationId,
+        kind: 'clarification',
+        status: 'pending',
+        question: '你好，请告诉我你想让我为哪个任务制定计划？',
+      }))
+      expect(waiting.state.errors).toEqual([])
+      const items = await store.listItems(run.id)
+      expect(items.some(item => item.itemType === 'result' && item.metadata?.resultType === 'clarification_needed')).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('requires the clarification tool when the planning goal is underspecified', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-runtime-plan-clarify-'))
+    try {
+      const store = new PostgresPlatformStore(noOpDb(), root)
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '计划模式澄清')
+      const run = await store.createRun(session.id, '生成一份计划', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: testRuntimeConfig(),
+      })
+      const tools = new ToolRegistry()
+      tools.register(planProvider)
+      const model = scriptedModel(() => ({
+        toolCalls: [{
+          id: 'call_clarify_plan',
+          name: 'request_clarification',
+          arguments: JSON.stringify({
+            question: '请告诉我这份计划要解决什么任务，以及需要使用哪些数据或输出什么结果？',
+            reason: '用户要求生成计划，但没有提供可规划目标和输出边界。',
+            allowFreeText: true,
+          }),
+        }],
+      }))
+
+      const waiting = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+        ...runOptions(run, thread.id),
+        executionMode: 'plan',
+      })
+
+      expect(waiting.status).toBe('clarification_needed')
+      expect(waiting.state.planMode).toBe(true)
+      expect(waiting.state.clarification).toMatchObject({
+        kind: 'plan_requirement',
+        question: '请告诉我这份计划要解决什么任务，以及需要使用哪些数据或输出什么结果？',
+        reason: '用户要求生成计划，但没有提供可规划目标和输出边界。',
+        allowFreeText: true,
+      })
+      expect(waiting.state.decisions).toContainEqual(expect.objectContaining({
+        decisionId: waiting.state.clarification?.clarificationId,
+        kind: 'clarification',
+        status: 'pending',
+        allowFreeText: true,
+      }))
+      expect(waiting.state.errors).toEqual([])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -233,7 +374,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         }
       })
 
-      const waiting = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+      const waiting = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run({
         ...runOptions(run, thread.id),
         runtimeConfig: config,
         executionMode: 'plan',
@@ -248,20 +389,86 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         title: '接受这个执行计划？',
         status: 'pending',
       })
+      expect(waiting.state.decisions).toContainEqual(expect.objectContaining({
+        decisionId: waiting.state.approvals[0].approvalId,
+        kind: 'approval',
+        status: 'pending',
+        title: '接受这个执行计划？',
+      }))
       expect(waiting.state.approvals[0].payload.args).toMatchObject({ plan })
       await store.conversationStore.flush()
 
       const restoredStore = new PostgresPlatformStore(noOpDb(), root)
       await restoredStore.initialize()
-      const completed = await new OpenAIAgentsRuntime(restoredStore, tools, registryWith(fakeAdapter(model)))
+      const completed = await testRuntime(restoredStore, tools, registryWith(fakeAdapter(model)))
         .resolveApproval(run.id, waiting.state.approvals[0].approvalId, true)
 
       expect(completed.status).toBe('completed')
       expect(completed.state.planMode).toBe(false)
       expect(completed.state.executionPlan).toMatchObject(plan)
       expect(completed.state.approvals[0].payload.consumed).toBe(true)
+      expect(completed.state.decisions).toContainEqual(expect.objectContaining({
+        decisionId: waiting.state.approvals[0].approvalId,
+        kind: 'approval',
+        status: 'approved',
+        resolvedAt: expect.any(String),
+      }))
       const items = await restoredStore.listItems(run.id)
       expect(items.some(item => item.itemType === 'result' && item.metadata?.resultType === 'waiting_approval')).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('executes SDK tool calls that omit nullable optional arguments', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-runtime-optional-tool-'))
+    try {
+      const store = new PostgresPlatformStore(noOpDb(), root)
+      await store.initialize()
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '可选参数工具')
+      const run = await store.createRun(session.id, '查杭州图层', {
+        threadId: thread.id,
+        modelProvider: 'fake',
+        runtimeConfigSnapshot: testRuntimeConfig(),
+      })
+      let executedArgs: Record<string, unknown> | null = null
+      const tools = new ToolRegistry()
+      tools.register(providerFromTools('optional-tool-provider', [{
+        name: 'list_layers',
+        label: '检索图层',
+        description: '检索图层',
+        prompt: '用于测试可选参数省略时的工具调用。',
+        group: '测试',
+        tags: [],
+        isReadOnly: true,
+        isDestructive: false,
+        jsonSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+            category: { type: 'string' },
+            sourceType: { type: 'string' },
+            status: { type: 'string' },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+          },
+        },
+        handler: async (args) => {
+          executedArgs = args
+          return result('layers', [], { count: 0, layers: [] })
+        },
+      }]))
+      const model = scriptedModel(request => hasToolResultNamed(request, 'list_layers')
+        ? { text: '没有找到匹配的已注册图层。' }
+        : { toolCalls: [{ id: 'call_layers', name: 'list_layers', arguments: '{"query":"杭州","limit":20}' }] })
+
+      const completed = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run(runOptions(run, thread.id))
+
+      expect(completed.status).toBe('completed')
+      expect(completed.state.errors).toEqual([])
+      expect(executedArgs).toEqual({ query: '杭州', limit: 20 })
+      const checkpoint = await store.conversationStore.getRunCheckpoint(run.id)
+      expect(checkpoint.pendingToolCallIds).toEqual([])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -392,7 +599,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         modelProvider: 'fake',
         runtimeConfigSnapshot: config,
       })
-      const completed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+      const completed = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run({
         ...runOptions(run, thread.id), runtimeConfig: config,
       })
       await store.conversationStore.flush()
@@ -454,7 +661,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
           label: '上一轮数据集',
           value: { name: 'rain.nc', relativePath: 'objects/sha256/aa/rain.nc' },
           metadata: {},
-          sourceTool: 'inspect_meteorological_dataset',
+          sourceTool: 'meteorological_inspect',
           sourceResultId: 'result_prior',
           createdAt: new Date().toISOString(),
           unit: null,
@@ -473,7 +680,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         return { toolCalls: [{ id: 'call_reuse', name: 'use_dataset_ref', arguments: '{"dataset_ref":"ref_prior_dataset"}' }] }
       })
 
-      const completed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run(runOptions(secondRun, thread.id))
+      const completed = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run(runOptions(secondRun, thread.id))
 
       expect(completed.status).toBe('completed')
       expect(turns).toBe(2)
@@ -508,7 +715,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         modelProvider: 'fake',
         runtimeConfigSnapshot: config,
       })
-      const completed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run({
+      const completed = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run({
         ...runOptions(run, thread.id), runtimeConfig: config,
       })
       expect(completed.status).toBe('completed')
@@ -517,7 +724,7 @@ describe('OpenAIAgentsRuntime delivery boundaries', () => {
         'list_meteorological_files',
         'create_nowcast_sequence',
         'prepare_hangzhou_nowcast_scope',
-        'analyze_nowcast_precipitation',
+        'meteorological_precipitation_nowcast',
         'answer_nowcast_question',
       ])
       expect(completed.state.toolValueRefs.some(ref => ref.kind === 'nowcast_answer')).toBe(true)
@@ -603,7 +810,7 @@ async function executeTextRun(model: Model, tools = new ToolRegistry()) {
       modelProvider: 'fake',
       runtimeConfigSnapshot: testRuntimeConfig(),
     })
-    const completed = await new OpenAIAgentsRuntime(store, tools, registryWith(fakeAdapter(model))).run(runOptions(run, thread.id))
+    const completed = await testRuntime(store, tools, registryWith(fakeAdapter(model))).run(runOptions(run, thread.id))
     await store.conversationStore.flush()
     return {
       run: structuredClone(completed),
@@ -698,7 +905,7 @@ function deterministicNowcastProvider(calls: string[]): ToolProvider {
     ])),
     tool('create_nowcast_sequence', ['file_collection_ref'], async () => result('sequence', [ref('ref_sequence', 'nowcast_sequence', {})])),
     tool('prepare_hangzhou_nowcast_scope', ['question'], async () => result('scope', [ref('ref_scope', 'nowcast_area', {})])),
-    tool('analyze_nowcast_precipitation', ['sequence_ref', 'scope_ref'], async () => result('analysis', [ref('ref_analysis', 'nowcast_analysis', {})])),
+    tool('meteorological_precipitation_nowcast', ['sequence_ref', 'scope_ref'], async () => result('analysis', [ref('ref_analysis', 'nowcast_analysis', {})])),
     tool('answer_nowcast_question', ['nowcast_analysis_ref', 'question'], async () => result('answer', [
       ref('ref_answer', 'nowcast_answer', { answer: '未来三小时不会下雨。' }),
     ], { answer: '未来三小时不会下雨。' })),
@@ -710,6 +917,7 @@ function toolDefinition(name: string, required: string[]): Omit<ToolDef, 'handle
     name,
     label: name,
     description: `${name} test tool`,
+    prompt: `用于测试 ${name} 工具调用边界。`,
     group: '测试',
     tags: ['test'],
     isReadOnly: true,

@@ -39,7 +39,7 @@ export const clarificationOptionSchema = z.object({
   description: z.string().default(''),
   kind: z.string().default('generic'),
   reason: z.string().nullable().default(null),
-  payload: z.record(z.string(), z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).prefault({}),
 })
 
 export const clarificationStateSchema = z.object({
@@ -50,6 +50,20 @@ export const clarificationStateSchema = z.object({
   options: z.array(clarificationOptionSchema).default([]),
   selectedOptionId: z.string().nullable().default(null),
   allowFreeText: z.boolean().default(true),
+})
+
+export const decisionRequestSchema = z.object({
+  decisionId: z.string(),
+  kind: z.enum(['execution_mode', 'clarification', 'approval']),
+  title: z.string(),
+  question: z.string(),
+  description: z.string().default(''),
+  options: z.array(clarificationOptionSchema).default([]),
+  allowFreeText: z.boolean().default(false),
+  status: z.string().default('pending'),
+  payload: z.record(z.string(), z.unknown()).prefault({}),
+  createdAt: z.string(),
+  resolvedAt: z.string().nullable().default(null),
 })
 
 export const placeSearchCandidateSchema = z.object({
@@ -91,7 +105,7 @@ export const userIntentSchema = z.object({
 export const planStepSchema = z.object({
   id: z.string(),
   tool: z.string(),
-  args: z.record(z.string(), z.unknown()).default({}),
+  args: z.record(z.string(), z.unknown()).prefault({}),
   reason: z.string(),
 })
 
@@ -108,14 +122,14 @@ export const toolValueRefSchema = z.object({
   unit: z.string().nullable().default(null),
   sourceTool: z.string().nullable().default(null),
   sourceResultId: z.string().nullable().default(null),
-  metadata: z.record(z.string(), z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).prefault({}),
   createdAt: z.string().nullable().default(null),
 })
 
 export const toolCallSchema = z.object({
   stepId: z.string(),
   tool: z.string(),
-  args: z.record(z.string(), z.unknown()).default({}),
+  args: z.record(z.string(), z.unknown()).prefault({}),
   status: z.string(),
   message: z.string(),
   startedAt: z.string().nullable().default(null),
@@ -124,8 +138,8 @@ export const toolCallSchema = z.object({
   source: z.string().nullable().default(null),
   confidence: z.number().nullable().default(null),
   usedQuery: z.string().nullable().default(null),
-  provenance: z.record(z.string(), z.unknown()).default({}),
-  crs: z.record(z.string(), z.unknown()).default({}),
+  provenance: z.record(z.string(), z.unknown()).prefault({}),
+  crs: z.record(z.string(), z.unknown()).prefault({}),
   geometryType: z.string().nullable().default(null),
   featureCount: z.number().nullable().default(null),
   valueRefs: z.array(toolValueRefSchema).default([]),
@@ -142,7 +156,7 @@ export const contextReferenceSchema = z.object({
   layerKey: z.string().nullable().default(null),
   confidence: z.number().nullable().default(null),
   usableAs: z.array(z.string()).default([]),
-  metadata: z.record(z.string(), z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).prefault({}),
 })
 
 export const contextResolutionSchema = z.object({
@@ -153,6 +167,40 @@ export const contextResolutionSchema = z.object({
   sourceRunId: z.string().nullable().default(null),
   reason: z.string().nullable().default(null),
   candidates: z.array(contextReferenceSchema).default([]),
+})
+
+export const memoryScopeSchema = z.enum(['private', 'team', 'session', 'instruction'])
+export const memoryTypeSchema = z.enum(['user', 'feedback', 'project', 'reference'])
+export const memoryFrontmatterSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  type: memoryTypeSchema,
+  paths: z.union([z.string(), z.array(z.string())]).optional(),
+})
+export const memoryFileRecordSchema = z.object({
+  path: z.string(),
+  relativePath: z.string(),
+  scope: memoryScopeSchema,
+  type: memoryTypeSchema.nullable().default(null),
+  name: z.string().default(''),
+  description: z.string().default(''),
+  mtimeMs: z.number().nonnegative().default(0),
+  content: z.string().optional(),
+  parent: z.string().nullable().default(null),
+  globs: z.array(z.string()).default([]),
+  contentDiffersFromDisk: z.boolean().default(false),
+})
+export const memorySearchResultSchema = z.object({
+  record: memoryFileRecordSchema,
+  reason: z.string().default(''),
+  score: z.number().min(0).max(1).default(0),
+})
+export const memoryOperationResultSchema = z.object({
+  ok: z.boolean(),
+  message: z.string(),
+  record: memoryFileRecordSchema.nullable().default(null),
+  records: z.array(memoryFileRecordSchema).default([]),
+  results: z.array(memorySearchResultSchema).default([]),
 })
 
 export const runLifecycleSchema = z.object({
@@ -200,7 +248,7 @@ export const approvalRequestSchema = z.object({
   description: z.string(),
   status: z.string().default('pending'),
   artifactId: z.string().nullable().default(null),
-  payload: z.record(z.string(), z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).prefault({}),
   createdAt: z.string(),
   resolvedAt: z.string().nullable().default(null),
 })
@@ -211,7 +259,7 @@ export const artifactRefSchema = z.object({
   artifactType: z.string(),
   name: z.string(),
   uri: z.string(),
-  metadata: z.record(z.string(), z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).prefault({}),
   isIntermediate: z.boolean().default(false),
 })
 
@@ -248,19 +296,19 @@ export const agentStateSchema = z.object({
   tasks: z.array(taskRecordSchema).default([]),
   planMode: z.boolean().default(false),
   subAgents: z.array(subAgentStateSchema).default([]),
+  decisions: z.array(decisionRequestSchema).default([]),
   approvals: z.array(approvalRequestSchema).default([]),
   toolResults: z.array(toolCallSchema).default([]),
   toolValueRefs: z.array(toolValueRefSchema).default([]),
   artifacts: z.array(artifactRefSchema).default([]),
   selectedDataSources: z.array(z.string()).default([]),
   planRepairAttempts: z.number().default(0),
-  textOnlyDelivery: z.boolean().default(false),
   warnings: z.array(z.string()).default([]),
   errors: z.array(z.string()).default([]),
   failedStepId: z.string().nullable().default(null),
   failedTool: z.string().nullable().default(null),
-  denialCounts: z.record(z.string(), z.number()).default({}),
-  runtimeStats: z.record(z.string(), z.number()).default({}),
+  denialCounts: z.record(z.string(), z.number()).prefault({}),
+  runtimeStats: z.record(z.string(), z.number()).prefault({}),
 })
 
 export const runEventSchema = z.object({
@@ -270,7 +318,7 @@ export const runEventSchema = z.object({
   type: eventTypeSchema,
   message: z.string(),
   timestamp: z.string(),
-  payload: z.record(z.string(), z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).prefault({}),
 })
 
 export const conversationItemSchema = z.object({
@@ -288,7 +336,7 @@ export const conversationItemSchema = z.object({
   isError: z.boolean().default(false),
   phase: z.string().nullable().default(null),
   status: z.string().nullable().default(null),
-  metadata: z.record(z.string(), z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).prefault({}),
   timestamp: z.string(),
 })
 
@@ -308,7 +356,7 @@ export const contentRefSchema = z.object({
 })
 
 export const transcriptEntrySchema = z.object({
-  schemaVersion: z.literal(1).default(1),
+  schemaVersion: z.literal(2).default(2),
   seq: z.number().int().positive(),
   entryId: z.string(),
   parentEntryId: z.string().nullable().default(null),
@@ -318,11 +366,11 @@ export const transcriptEntrySchema = z.object({
   turnId: z.string().nullable().default(null),
   kind: transcriptEntryKindSchema,
   timestamp: z.string(),
-  payload: z.record(z.string(), z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).prefault({}),
 })
 
 export const threadManifestSchema = z.object({
-  schemaVersion: z.literal(1).default(1),
+  schemaVersion: z.literal(2).default(2),
   threadId: z.string(),
   sessionId: z.string(),
   activeLeafEntryId: z.string().nullable().default(null),
@@ -343,7 +391,7 @@ export const threadManifestSchema = z.object({
 })
 
 export const runCheckpointSchema = z.object({
-  schemaVersion: z.literal(1).default(1),
+  schemaVersion: z.literal(2).default(2),
   run: z.lazy(() => analysisRunSchema),
   activeEntryId: z.string().nullable().default(null),
   pendingToolCallIds: z.array(z.string()).default([]),
@@ -352,12 +400,12 @@ export const runCheckpointSchema = z.object({
   orchestrationEngine: z.literal('openai_agents').nullable().default(null),
   agentsSdkVersion: z.string().nullable().default(null),
   runtimeConfigDigest: z.string().nullable().default(null),
-  sdkStateSchemaVersion: z.literal(1).nullable().default(null),
+  sdkStateSchemaVersion: z.literal(2).nullable().default(null),
   sdkStateUpdatedAt: z.string().nullable().default(null),
 })
 
 export const compactionRecordSchema = z.object({
-  schemaVersion: z.literal(1).default(1),
+  schemaVersion: z.literal(2).default(2),
   compactionId: z.string(),
   threadId: z.string(),
   boundaryEntryId: z.string(),
@@ -411,6 +459,38 @@ export const sessionRecordSchema = z.object({
   latestThreadId: z.string().nullable().default(null),
   latestRunId: z.string().nullable().default(null),
   latestUploadedLayerKey: z.string().nullable().default(null),
+  latestMeteorologicalDatasetId: z.string().nullable().default(null),
+})
+
+export const meteorologicalDatasetRecordSchema = z.object({
+  datasetId: z.string(),
+  sessionId: z.string(),
+  threadId: z.string().nullable().default(null),
+  filename: z.string(),
+  originalFilename: z.string(),
+  fileId: z.string().nullable().default(null),
+  fileRelativePath: z.string(),
+  sizeBytes: z.number().int().nonnegative().default(0),
+  contentHash: z.string().nullable().default(null),
+  mediaType: z.string().default('application/octet-stream'),
+  status: z.string().default('ready'),
+  metadata: z.record(z.string(), z.unknown()).prefault({}),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+export const meteorologicalJobRecordSchema = z.object({
+  jobId: z.string(),
+  datasetId: z.string(),
+  sessionId: z.string(),
+  threadId: z.string().nullable().default(null),
+  kind: z.string(),
+  status: z.string(),
+  message: z.string().nullable().default(null),
+  payload: z.record(z.string(), z.unknown()).prefault({}),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().nullable().default(null),
 })
 
 export const agentThreadRecordSchema = z.object({
@@ -475,7 +555,7 @@ export const hookConfigSchema = z.object({
   eventType: z.string(),
   commandType: z.string().default('command'),
   command: z.string(),
-  matcher: z.record(z.string(), z.string()).default({}),
+  matcher: z.record(z.string(), z.string()).prefault({}),
   priority: z.number().default(0),
   description: z.string().default(''),
   timeoutSeconds: z.number().default(30),
@@ -510,7 +590,7 @@ export const runtimeCatalogConfigSchema = z.object({
 })
 
 export const runtimeContextConfigSchema = z.object({
-  memoryFilePaths: z.array(z.string()).default(['/AGENTS.md', '/THREAD_CONTEXT.md']),
+  memoryFilePaths: z.array(z.string()).default([]),
   historyRunLimit: z.number().default(4),
   eventWindow: z.number().default(24),
   toolCallWindow: z.number().default(8),
@@ -520,7 +600,25 @@ export const runtimeContextConfigSchema = z.object({
   contextEntryWindow: z.number().default(18),
   memoryFileCharLimit: z.number().default(4000),
   memoryEnabled: z.boolean().default(true),
-  memoryBaseDir: z.string().default('.geoagent/memory'),
+  memoryBaseDir: z.string().default('~/.geoforge/projects'),
+  privateMemoryDir: z.string().nullable().default(null),
+  teamMemoryDir: z.string().nullable().default(null),
+  memoryEntrypointName: z.string().default('MEMORY.md'),
+  instructionEntrypointName: z.string().default('AGENTS.md'),
+  instructionMemoryEnabled: z.boolean().default(false),
+  memoryMaxIndexLines: z.number().int().positive().default(200),
+  memoryMaxIndexBytes: z.number().int().positive().default(25000),
+  memoryMaxFiles: z.number().int().positive().default(200),
+  memoryRelevantLimit: z.number().int().positive().default(5),
+  memoryAutoExtractEnabled: z.boolean().default(true),
+  memoryAutoDreamEnabled: z.boolean().default(true),
+  memoryAutoDreamMinIntervalMs: z.number().int().positive().default(21_600_000),
+  memoryAutoDreamMinFiles: z.number().int().positive().default(3),
+  teamMemoryEnabled: z.boolean().default(true),
+  sessionMemoryEnabled: z.boolean().default(true),
+  sessionMemoryInitTokens: z.number().int().positive().default(10000),
+  sessionMemoryUpdateTokens: z.number().int().positive().default(5000),
+  sessionMemoryToolCallThreshold: z.number().int().positive().default(3),
   contextWindowTokens: z.number().int().positive().default(128000),
   warningRatio: z.number().min(0.1).max(0.95).default(0.7),
   compactRatio: z.number().min(0.2).max(0.98).default(0.8),
@@ -563,13 +661,18 @@ export const runtimeNowcastConfigSchema = z.object({
 
 export const runtimePlanningConfigSchema = z.object({
   maxPlanRepairRounds: z.number().default(2),
-  allowTextOnlyDelivery: z.boolean().default(true),
   externalSourcePriority: z.array(z.string()).default(['catalog', 'external_poi', 'geosearch']),
+})
+
+export const runtimeSandboxConfigSchema = z.object({
+  backend: z.enum(['docker', 'unix_local']).default('docker'),
+  dockerImage: z.string().default('node:22-bookworm-slim'),
 })
 
 export const agentRuntimeConfigSchema = z.object({
   loopTraceLimit: z.number().default(80),
   maxTurns: z.number().default(50),
+  sandbox: runtimeSandboxConfigSchema.default({ backend: 'docker', dockerImage: 'node:22-bookworm-slim' }),
   supervisor: supervisorRuntimeConfigSchema.default({
     name: 'geo_agent_supervisor',
     systemPrompt: '',
@@ -585,11 +688,10 @@ export const agentRuntimeConfigSchema = z.object({
   catalog: runtimeCatalogConfigSchema.default({ allowEmptyCatalog: true, adminEnabled: true }),
   planning: runtimePlanningConfigSchema.default({
     maxPlanRepairRounds: 2,
-    allowTextOnlyDelivery: true,
     externalSourcePriority: ['catalog', 'external_poi', 'geosearch'],
   }),
   context: runtimeContextConfigSchema.default({
-    memoryFilePaths: ['/AGENTS.md', '/THREAD_CONTEXT.md'],
+    memoryFilePaths: [],
     historyRunLimit: 4,
     eventWindow: 24,
     toolCallWindow: 8,
@@ -599,7 +701,25 @@ export const agentRuntimeConfigSchema = z.object({
     contextEntryWindow: 18,
     memoryFileCharLimit: 4000,
     memoryEnabled: true,
-    memoryBaseDir: '.geoagent/memory',
+    memoryBaseDir: '~/.geoforge/projects',
+    privateMemoryDir: null,
+    teamMemoryDir: null,
+    memoryEntrypointName: 'MEMORY.md',
+    instructionEntrypointName: 'AGENTS.md',
+    instructionMemoryEnabled: false,
+    memoryMaxIndexLines: 200,
+    memoryMaxIndexBytes: 25000,
+    memoryMaxFiles: 200,
+    memoryRelevantLimit: 5,
+    memoryAutoExtractEnabled: true,
+    memoryAutoDreamEnabled: true,
+    memoryAutoDreamMinIntervalMs: 21_600_000,
+    memoryAutoDreamMinFiles: 3,
+    teamMemoryEnabled: true,
+    sessionMemoryEnabled: true,
+    sessionMemoryInitTokens: 10000,
+    sessionMemoryUpdateTokens: 5000,
+    sessionMemoryToolCallThreshold: 3,
     contextWindowTokens: 128000,
     warningRatio: 0.7,
     compactRatio: 0.8,
@@ -740,7 +860,7 @@ export const toolDescriptorSchema = z.object({
   tags: z.array(z.string()).default([]),
   parameters: z.array(toolParameterDescriptorSchema).default([]),
   error: z.string().nullable().default(null),
-  meta: z.record(z.string(), z.unknown()).default({}),
+  meta: z.record(z.string(), z.unknown()).prefault({}),
 })
 
 // --- Derived TypeScript types ---
@@ -752,6 +872,7 @@ export type ConversationItemType = z.infer<typeof conversationItemTypeSchema>
 
 export type ClarificationOption = z.infer<typeof clarificationOptionSchema>
 export type ClarificationState = z.infer<typeof clarificationStateSchema>
+export type DecisionRequest = z.infer<typeof decisionRequestSchema>
 export type PlaceSearchCandidate = z.infer<typeof placeSearchCandidateSchema>
 export type PlaceResolution = z.infer<typeof placeResolutionSchema>
 export type UserIntent = z.infer<typeof userIntentSchema>
@@ -761,6 +882,12 @@ export type ToolValueRef = z.infer<typeof toolValueRefSchema>
 export type ToolCall = z.infer<typeof toolCallSchema>
 export type ContextReference = z.infer<typeof contextReferenceSchema>
 export type ContextResolution = z.infer<typeof contextResolutionSchema>
+export type MemoryScope = z.infer<typeof memoryScopeSchema>
+export type MemoryType = z.infer<typeof memoryTypeSchema>
+export type MemoryFrontmatter = z.infer<typeof memoryFrontmatterSchema>
+export type MemoryFileRecord = z.infer<typeof memoryFileRecordSchema>
+export type MemorySearchResult = z.infer<typeof memorySearchResultSchema>
+export type MemoryOperationResult = z.infer<typeof memoryOperationResultSchema>
 export type RunLifecycle = z.infer<typeof runLifecycleSchema>
 export type TodoItem = z.infer<typeof todoItemSchema>
 export type TaskRecord = z.infer<typeof taskRecordSchema>
@@ -780,6 +907,8 @@ export type CompactionRecord = z.infer<typeof compactionRecordSchema>
 export type ThreadMemoryDocument = z.infer<typeof threadMemoryDocumentSchema>
 export type ContextAssemblyReport = z.infer<typeof contextAssemblyReportSchema>
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
+export type MeteorologicalDatasetRecord = z.infer<typeof meteorologicalDatasetRecordSchema>
+export type MeteorologicalJobRecord = z.infer<typeof meteorologicalJobRecordSchema>
 export type AgentThreadRecord = z.infer<typeof agentThreadRecordSchema>
 export type AnalysisRun = z.infer<typeof analysisRunSchema>
 export type RunSummary = z.infer<typeof runSummarySchema>
@@ -796,6 +925,7 @@ export type RuntimeGeosearchConfig = z.infer<typeof runtimeGeosearchConfigSchema
 export type RuntimePoiConfig = z.infer<typeof runtimePoiConfigSchema>
 export type RuntimeNowcastConfig = z.infer<typeof runtimeNowcastConfigSchema>
 export type RuntimePlanningConfig = z.infer<typeof runtimePlanningConfigSchema>
+export type RuntimeSandboxConfig = z.infer<typeof runtimeSandboxConfigSchema>
 export type AgentRuntimeConfig = z.infer<typeof agentRuntimeConfigSchema>
 
 export type LayerPropertyDescriptor = z.infer<typeof layerPropertyDescriptorSchema>
@@ -840,11 +970,15 @@ export type WsControlCommand =
   | 'thread:subscribe' | 'thread:unsubscribe'
   | 'thread:memory:get' | 'thread:memory:update' | 'thread:memory:rebuild'
   | 'thread:trash:list' | 'thread:trash:restore' | 'thread:trash:purge'
-  | 'run:list' | 'run:start' | 'run:get' | 'run:cancel' | 'run:resume' | 'run:resolve-approval' | 'run:subscribe' | 'run:unsubscribe'
+  | 'run:list' | 'run:start' | 'run:get' | 'run:cancel' | 'run:resume' | 'run:respond-decision' | 'run:subscribe' | 'run:unsubscribe'
   | 'tool:list' | 'tool:run'
   | 'tool-catalog:list' | 'tool-catalog:upsert' | 'tool-catalog:delete'
   | 'runtime-config:get' | 'runtime-config:update'
   | 'provider:list' | 'system:get'
+  | 'memory:list' | 'memory:read' | 'memory:write' | 'memory:delete' | 'memory:search'
+  | 'memory:extract' | 'memory:dream'
+  | 'memory:session:get' | 'memory:session:rebuild'
+  | 'memory:instructions:list'
   | 'file:list' | 'file:delete'
   | 'layer:list' | 'layer:update' | 'layer:delete'
 

@@ -14,6 +14,7 @@ import { getEnv } from '../../framework/env.js'
 import type { ToolContext, ToolDef, ToolResult, ValueRef } from '../../framework/types.js'
 import { RuntimeFileStore } from '../../store/fileStore.js'
 import { makeId } from '../../utils/ids.js'
+import { meteorologyToolPrompt } from './prompts.js'
 
 const DATASET_SUFFIXES = ['.nc', '.nc4', '.tif', '.tiff', '.grib', '.grb', '.grb2', '.h5', '.hdf5']
 const NETCDF_SUFFIXES = ['.nc', '.nc4']
@@ -28,7 +29,7 @@ const THIRD_PARTY_SOURCE_SNAPSHOTS = {
   rainfall_risk_map: 'packages/gis-meteorology/src/gis_meteorology/third_party/rainfall_risk_map/source/original',
   short_term_forecast: 'packages/gis-meteorology/src/gis_meteorology/third_party/short_term_forecast/source/original',
 } as const
-const THIRD_PARTY_WRAPPER_VERSION = 'newmap-wrapper-2026-06-23'
+const THIRD_PARTY_WRAPPER_VERSION = 'geoforge-wrapper-2026-06-23'
 
 export const meteorologyTools: ToolDef[] = [
   tool('list_meteorological_files', '列出气象文件', '列出当前线程可用的通用气象文件', {}, listMeteorologicalFiles),
@@ -58,13 +59,15 @@ export const meteorologyTools: ToolDef[] = [
     product_unit: textParameter('产品单位'),
     min_display: numberParameter('最小对比显示值'),
   }, compareRadarMosaicReference, ['radar_mosaic_result_ref', 'dataset_ref', 'target_time_ref']),
-  tool('inspect_meteorological_dataset', '检查气象数据集', '检查变量、维度、时间、层级和地图能力', {
+  tool('meteorological_inspect', '检查气象数据集', '检查变量、维度、时间、层级和地图能力；未提供参数时使用当前 thread 最新上传的数据集', {
     dataset_ref: refParameter('气象文件引用', ['meteorological_file']),
-  }, inspectDataset, ['dataset_ref']),
+    dataset_id: textParameter('气象数据集 ID，latest_upload 表示当前 thread 最新上传'),
+    filename: textParameter('气象数据文件名'),
+  }, inspectDataset),
   tool('interpret_meteorological_dataset', '解读气象数据集', '保存经过结构化校验的模型气象解读', {
     dataset_ref: refParameter('数据集引用'),
   }, interpretDataset, ['dataset_ref']),
-  workerDatasetTool('render_meteorological_raster', '渲染气象栅格', '渲染气象变量为地图 PNG', 'png', {
+  workerDatasetTool('meteorological_render', '渲染气象栅格', '渲染气象变量为地图 PNG', 'png', {
     dataset_ref: refParameter('数据集引用'),
     variable_ref: refParameter('变量引用'),
     time_index_ref: refParameter('时间索引引用'),
@@ -78,7 +81,7 @@ export const meteorologyTools: ToolDef[] = [
     level_index_ref: refParameter('层级索引引用'),
     bbox_ref: refParameter('范围引用'),
   }, ['dataset_ref', 'variable_ref']),
-  workerDatasetTool('meteorological_threshold_area', '气象阈值区域', '计算超过阈值的区域', 'geojson', {
+  workerDatasetTool('meteorological_threshold', '气象阈值区域', '计算超过阈值的区域', 'geojson', {
     dataset_ref: refParameter('数据集引用'),
     variable_ref: refParameter('变量引用'),
     threshold_ref: refParameter('阈值引用'),
@@ -87,7 +90,7 @@ export const meteorologyTools: ToolDef[] = [
     bbox_ref: refParameter('范围引用'),
     operator: textParameter('比较运算符'),
   }, ['dataset_ref', 'variable_ref', 'threshold_ref']),
-  workerDatasetTool('meteorological_contours', '气象等值线', '生成气象变量等值线', 'geojson', {
+  workerDatasetTool('meteorological_contour', '气象等值线', '生成气象变量等值线', 'geojson', {
     dataset_ref: refParameter('数据集引用'),
     variable_ref: refParameter('变量引用'),
     levels_ref: refParameter('等值线层级引用'),
@@ -95,14 +98,14 @@ export const meteorologyTools: ToolDef[] = [
     level_index_ref: refParameter('层级索引引用'),
     bbox_ref: refParameter('范围引用'),
   }, ['dataset_ref', 'variable_ref']),
-  tool('generate_meteorological_report', '生成气象报告', '使用显式模型解读引用生成 DOCX 报告', {
+  tool('meteorological_report', '生成气象报告', '使用显式模型解读引用生成 DOCX 报告', {
     dataset_ref: refParameter('数据集引用'),
     interpretation_ref: refParameter('模型解读引用'),
   }, generateReport, ['dataset_ref', 'interpretation_ref']),
   tool('define_rainfall_risk_thresholds', '定义短时强降水风险阈值', '保存短时强降水风险区划图使用的阈值和调色板', {
     thresholds: jsonParameter('阈值调色板 JSON', rainfallThresholdsSchema(), defaultRainfallThresholds()),
   }, defineRainfallRiskThresholds),
-  tool('render_rainfall_risk_map', '生成短时强降水风险区划图', '使用单个 NC 数据集、变量、边界和阈值生成风险/渐变/对比图；dataset_ref 必须来自 inspect_meteorological_dataset 的 meteorological_dataset，不接受 nowcast_sequence', {
+  tool('render_rainfall_risk_map', '生成短时强降水风险区划图', '使用单个 NC 数据集、变量、边界和阈值生成风险/渐变/对比图；dataset_ref 必须来自 meteorological_inspect 的 meteorological_dataset，不接受 nowcast_sequence', {
     dataset_ref: refParameter('数据集引用', ['meteorological_dataset']),
     variable_ref: refParameter('变量引用', ['meteorological_variable']),
     boundary_ref: refParameter('边界引用', BOUNDARY_REF_KINDS),
@@ -131,7 +134,7 @@ export const meteorologyTools: ToolDef[] = [
     scope_ref: refParameter('已有杭州边界或地点引用', ['feature_collection', 'nowcast_area', 'layer', 'nowcast_coordinate', 'place_candidate']),
     district_name_field: textParameter('区划名称字段'),
   }, prepareHangzhouNowcastScope, ['question']),
-  tool('analyze_nowcast_precipitation', '分析短时临近预报（短临）降水', '按时次和杭州区划或地点范围计算降水统计事实', {
+  tool('meteorological_precipitation_nowcast', '分析短时临近预报（短临）降水', '按时次和杭州区划或地点范围计算降水统计事实', {
     sequence_ref: refParameter('短时临近预报序列引用'),
     variable_ref: refParameter('变量引用'),
     scope_ref: refParameter('杭州区划或地点范围引用'),
@@ -158,8 +161,8 @@ function tool(
 ): ToolDef {
   const miniApp = miniAppMetadata(name)
   return {
-    name, label, description, group: '气象', tags: ['meteorology'],
-    isReadOnly: name !== 'generate_meteorological_report',
+    name, label, description, prompt: meteorologyToolPrompt(name), group: '气象', tags: ['meteorology'],
+    isReadOnly: name !== 'meteorological_report',
     isDestructive: false,
     jsonSchema: { type: 'object', properties, required, ...(miniApp ? { 'x-mini-app': miniApp } : {}) },
     handler,
@@ -187,7 +190,7 @@ function workerDatasetTool(
   required = ['dataset_ref'],
 ): ToolDef {
   return tool(name, label, description, properties, async (args, ctx) => {
-    const file = datasetValue(ctx, requiredRefKind(ctx, args, 'dataset_ref', ['meteorological_dataset']))
+    const file = await datasetFileFromArgs(ctx, args, 'dataset_ref', ['meteorological_dataset'])
     const workerArgs: Record<string, unknown> = {
       file_relative_path: file.relativePath,
       file_name: file.name,
@@ -429,8 +432,8 @@ async function compareRadarMosaicReference(args: Record<string, unknown>, ctx: T
 }
 
 async function inspectDataset(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
-  const file = datasetValue(ctx, requiredRefKind(ctx, args, 'dataset_ref', ['meteorological_file']))
-  const worker = await callWorker('inspect_meteorological_dataset', { file_relative_path: file.relativePath, file_name: file.name })
+  const file = await datasetFileFromArgs(ctx, args, 'dataset_ref', ['meteorological_file', 'meteorological_dataset'])
+  const worker = await callWorker('meteorological_inspect', { file_relative_path: file.relativePath, file_name: file.name })
   const variables = Array.isArray(worker.payload.variables) ? worker.payload.variables.filter(isRecord) : []
   const refs: ValueRef[] = [{
     refId: makeId('ref'), kind: 'meteorological_dataset', label: file.name,
@@ -454,7 +457,7 @@ async function inspectDataset(args: Record<string, unknown>, ctx: ToolContext): 
   levels.forEach((level, index) => {
     refs.push({ refId: makeId('ref'), kind: 'meteorological_level_index', label: `${file.name} / ${String(level)}`, value: index })
   })
-  return result('inspect_meteorological_dataset', worker.message, worker.payload, refs)
+  return result('meteorological_inspect', worker.message, worker.payload, refs)
 }
 
 async function interpretDataset(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -480,7 +483,7 @@ async function generateReport(args: Record<string, unknown>, ctx: ToolContext): 
   const text = typeof interpretation.text === 'string' ? interpretation.text : ''
   if (!text) throw new Error('interpretation_ref 不包含模型解读正文')
   const artifact = artifactTarget(ctx, 'docx', `${dataset.name} 气象分析报告`)
-  const worker = await callWorker('generate_meteorological_report', {
+  const worker = await callWorker('meteorological_report', {
     file_relative_path: dataset.relativePath,
     file_name: dataset.name,
     interpretation_text: text,
@@ -491,7 +494,7 @@ async function generateReport(args: Record<string, unknown>, ctx: ToolContext): 
     displaySurfaces: ['download'],
     primarySurface: 'download',
   })
-  return result('generate_meteorological_report', worker.message, worker.payload, [], [artifact])
+  return result('meteorological_report', worker.message, worker.payload, [], [artifact])
 }
 
 async function defineRainfallRiskThresholds(args: Record<string, unknown>): Promise<ToolResult> {
@@ -688,7 +691,7 @@ async function prepareHangzhouNowcastScope(args: Record<string, unknown>, ctx: T
 async function analyzeNowcast(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const sequence = refObject(requiredRefKind(ctx, args, 'sequence_ref', ['nowcast_sequence']).value)
   const scope = optionalScope(ctx, args)
-  const worker = await callWorker('analyze_nowcast_precipitation', {
+  const worker = await callWorker('meteorological_precipitation_nowcast', {
     sequence,
     variable: optionalRefValue(ctx, args, 'variable_ref', 'name') ?? sequence.variable,
     ...scope,
@@ -703,7 +706,7 @@ async function analyzeNowcast(args: Record<string, unknown>, ctx: ToolContext): 
       value: item,
     })
   }
-  return result('analyze_nowcast_precipitation', worker.message, worker.payload, refs)
+  return result('meteorological_precipitation_nowcast', worker.message, worker.payload, refs)
 }
 
 function stripNowcastQuestion(question: string): string {
@@ -888,6 +891,31 @@ function optionalRefValue(ctx: ToolContext, args: Record<string, unknown>, key: 
   if (!field) return value
   const record = refObject(value)
   return record[field]
+}
+
+async function datasetFileFromArgs(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+  refKey: string,
+  allowedKinds: string[],
+): Promise<{ name: string; relativePath: string }> {
+  const refId = typeof args[refKey] === 'string' ? String(args[refKey]).trim() : ''
+  if (refId && refId !== 'latest_upload') {
+    return datasetValue(ctx, requiredRefKind(ctx, args, refKey, allowedKinds))
+  }
+
+  const datasetId = typeof args.dataset_id === 'string' && args.dataset_id.trim()
+    ? args.dataset_id.trim()
+    : refId === 'latest_upload' ? 'latest_upload' : null
+  const filename = typeof args.filename === 'string' && args.filename.trim() ? args.filename.trim() : null
+  if (!ctx.resolveMeteorologicalDataset) {
+    throw new Error('当前运行上下文不支持解析气象数据集')
+  }
+  const dataset = await ctx.resolveMeteorologicalDataset({ datasetId, filename })
+  if (!dataset) {
+    throw new Error('当前 thread 没有可用的气象数据集；请先上传 NetCDF、GRIB、GeoTIFF、HDF5 或雷达 bz2 文件。')
+  }
+  return { name: dataset.filename, relativePath: dataset.fileRelativePath }
 }
 
 function datasetValue(ctx: ToolContext, ref: ValueRef): { name: string; relativePath: string } {

@@ -19,16 +19,16 @@ import { AlertCircle, CheckCircle2, ChevronDown, Circle, LoaderCircle, PauseCirc
 import { AppIcon } from '../../shared/components/AppIcon'
 import { buildFadeUpMotion } from '../../shared/motion'
 import type { DataReferenceSummary } from '../../shared/constants'
+import type { DecisionRequest } from '@geo-agent-platform/shared-types'
 import type { ConversationEntry } from './items'
-import type { ActiveClarification, ChatPanelProps, MemoryEntry } from './types'
+import type { ChatPanelProps, MemoryEntry } from './types'
 import { ConversationEntryView } from './ConversationEntry'
 import { formatTaskStatus } from './entryFormat'
 import { fmtElapsed } from './useConversation'
 
 interface ConversationTimelineProps {
   conversation: ConversationEntry[]
-  activeClarification: ActiveClarification | null
-  clarificationBusy: boolean
+  activeDecision: DecisionRequest | null
   isSubmitting: boolean
   errorMessage?: string
   errorTitle: string
@@ -40,13 +40,10 @@ interface ConversationTimelineProps {
   progressTasks?: ChatPanelProps['tasks']
   memories?: MemoryEntry[]
   onRefreshMemories?: () => void
-  onApprovePlan?: () => void
-  onEditPlan?: () => void
   onSelectArtifact: (id: string) => void
-  onResolveApproval: (id: string, approved: boolean) => void
   onForkMessage?: (entryId: string) => void
   onRetry: () => void
-  onFocusClarification: () => void
+  onFocusDecision: () => void
   feedVariants: Variants
   entryVariants: Variants
   reducedMotion: boolean
@@ -54,8 +51,7 @@ interface ConversationTimelineProps {
 
 export function ConversationTimeline({
   conversation,
-  activeClarification,
-  clarificationBusy,
+  activeDecision,
   isSubmitting,
   errorMessage,
   errorTitle,
@@ -67,13 +63,10 @@ export function ConversationTimeline({
   progressTasks,
   memories,
   onRefreshMemories,
-  onApprovePlan,
-  onEditPlan,
   onSelectArtifact,
-  onResolveApproval,
   onForkMessage,
   onRetry,
-  onFocusClarification,
+  onFocusDecision,
   feedVariants,
   entryVariants,
   reducedMotion,
@@ -111,7 +104,7 @@ export function ConversationTimeline({
     <m.div className="cc-chat-mode" layout>
       <m.div ref={timelineRef} onScroll={handleTimelineScroll} className="cc-timeline" aria-label="对话" aria-live="polite" variants={feedVariants} initial="hidden" animate="visible">
         {executionPlan && executionPlan.steps.length > 0 && (
-          <PlanPanel plan={executionPlan} onApprove={onApprovePlan} onEdit={onEditPlan} entryVariants={entryVariants} />
+          <PlanPanel plan={executionPlan} entryVariants={entryVariants} />
         )}
         {progressTasks && progressTasks.length > 0 && (
           <TaskPanel tasks={progressTasks} entryVariants={entryVariants} />
@@ -119,17 +112,17 @@ export function ConversationTimeline({
         {memories && memories.length > 0 && (
           <MemoryPanel memories={memories} onRefresh={onRefreshMemories} />
         )}
-        {activeClarification && (
-          <m.div key={activeClarification.key} className="cc-timeline-item cc-timeline-item--notice" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
+        {activeDecision && (
+          <m.div key={activeDecision.decisionId} className="cc-timeline-item cc-timeline-item--notice" layout variants={entryVariants} initial="hidden" animate="visible" exit="exit">
             <span className="cc-timeline-dot" />
             <div className="cc-timeline-body">
               <div className="cc-clarification-card">
                 <div className="cc-clarification-card__copy">
-                  <strong>需要确认</strong>
-                  <span>{activeClarification.question}</span>
+                  <strong>{activeDecision.title}</strong>
+                  <span>{activeDecision.question}</span>
                 </div>
-                <button className="cc-mini-button cc-mini-button--primary" disabled={clarificationBusy} onClick={onFocusClarification}>
-                  选择答案
+                <button className="cc-mini-button cc-mini-button--primary" onClick={onFocusDecision}>
+                  打开面板
                 </button>
               </div>
             </div>
@@ -160,7 +153,6 @@ export function ConversationTimeline({
                 expandedIds={expandedIds}
                 onToggleExpanded={toggleExpanded}
                 onSelectArtifact={onSelectArtifact}
-                onResolveApproval={onResolveApproval}
                 onForkMessage={onForkMessage}
               />
             ))}
@@ -263,10 +255,8 @@ function DataReferenceCard({ references }: { references: DataReferenceSummary[] 
   )
 }
 
-function PlanPanel({ plan, onApprove, onEdit, entryVariants }: {
+function PlanPanel({ plan, entryVariants }: {
   plan: NonNullable<ChatPanelProps['executionPlan']>
-  onApprove?: () => void
-  onEdit?: () => void
   entryVariants: Variants
 }) {
   return (
@@ -295,14 +285,6 @@ function PlanPanel({ plan, onApprove, onEdit, entryVariants }: {
                 </div>
               </div>
             ))}
-          </div>
-          <div className="cc-plan-actions">
-            {onApprove && (
-              <button className="cc-mini-button cc-mini-button--primary" onClick={onApprove}>确认执行</button>
-            )}
-            {onEdit && (
-              <button className="cc-mini-button" onClick={onEdit}>修改计划</button>
-            )}
           </div>
         </div>
       </div>

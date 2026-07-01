@@ -10,6 +10,7 @@
 
 import type { ToolDef, ToolProvider, ToolContext, ToolResult } from './types.js'
 import { validateToolProvider } from './validation.js'
+import { ensureToolSchemas, schemaParameters, isRecord } from './schema.js'
 
 const ARTIFACT_DISPLAY_SURFACES = new Set(['map', 'mini_app', 'download'])
 
@@ -24,6 +25,7 @@ export class ToolRegistry {
       throw new Error(`Provider "${provider.manifest.id}" 重复注册`)
     }
     for (const tool of provider.tools()) {
+      ensureToolSchemas(tool)
       if (this.tools.has(tool.name)) throw new Error(`工具 "${tool.name}" 重复注册`)
       tool.providerId = provider.manifest.id
       tool.language = provider.manifest.language
@@ -96,7 +98,7 @@ export class ToolRegistry {
       isDestructive: t.isDestructive,
       available: true,
       tags: t.tags,
-      parameters: schemaParameters(t.jsonSchema),
+      parameters: schemaParameters(ensureToolSchemas(t).jsonSchema),
       error: null,
       meta: {
         providerId: t.providerId,
@@ -104,7 +106,7 @@ export class ToolRegistry {
         isReadOnly: t.isReadOnly,
         isDestructive: t.isDestructive,
         approvalRecommended: t.isDestructive || t.requiresApproval === true,
-        jsonSchema: t.jsonSchema,
+        jsonSchema: ensureToolSchemas(t).jsonSchema,
       },
     }))
   }
@@ -112,10 +114,10 @@ export class ToolRegistry {
   async execute(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
     const tool = this.tools.get(name)
     if (!tool) throw new Error(`工具 "${name}" 未注册`)
-    validateArguments(tool, args)
+    const validatedArgs = validateArguments(tool, args)
 
     ctx.log('info', `执行 ${tool.label} (${tool.providerId})`)
-    const result = await tool.handler(args, ctx)
+    const result = await tool.handler(validatedArgs, ctx)
     if (!result.resultId || !result.source || !result.message || !isRecord(result.payload)) {
       throw new Error(`工具 "${name}" 返回了无效结果`)
     }
@@ -146,84 +148,29 @@ function validateArtifactDisplaySurfaces(toolName: string, metadata: Record<stri
   }
 }
 
-function validateArguments(tool: ToolDef, args: Record<string, unknown>): void {
-  validateValue(tool.jsonSchema, args, `工具 "${tool.name}" 参数`)
-}
-
-function validateValue(schema: Record<string, unknown>, value: unknown, field: string): void {
-  if (Array.isArray(schema.enum) && !schema.enum.some(candidate => Object.is(candidate, value))) {
-    throw new Error(`${field} 必须是：${schema.enum.map(String).join('、')}`)
+function validateArguments(tool: ToolDef, args: Record<string, unknown>): Record<string, unknown> {
+  const result = ensureToolSchemas(tool).parameters.safeParse(args)
+  if (!result.success) {
+    const details = result.error.issues.map(issue => formatIssue(issue)).join('；')
+    throw new Error(`工具 "${tool.name}" 参数无效：${details}`)
   }
-  switch (schema.type) {
-    case 'object': {
-      if (!isRecord(value)) throw new Error(`${field} 必须是对象`)
-      const properties = isRecord(schema.properties) ? schema.properties : {}
-      const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : [])
-      for (const key of required) {
-        if (!(key in value) || value[key] === null || value[key] === '') throw new Error(`${field} 缺少必填参数 "${key}"`)
-      }
-      for (const [key, nested] of Object.entries(value)) {
-        const property = properties[key]
-        if (!isRecord(property)) {
-          if (schema.additionalProperties === true) continue
-          throw new Error(`${field} 收到未知参数 "${key}"`)
-        }
-        validateValue(property, nested, `${field}.${key}`)
-      }
-      return
-    }
-    case 'array': {
-      if (!Array.isArray(value)) throw new Error(`${field} 必须是数组`)
-      if (typeof schema.minItems === 'number' && value.length < schema.minItems) throw new Error(`${field} 至少需要 ${schema.minItems} 项`)
-      if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) throw new Error(`${field} 最多允许 ${schema.maxItems} 项`)
-      if (isRecord(schema.items)) value.forEach((item, index) => validateValue(schema.items as Record<string, unknown>, item, `${field}[${index}]`))
-      return
-    }
-    case 'string':
-      if (typeof value !== 'string') throw new Error(`${field} 必须是字符串`)
-      if (typeof schema.minLength === 'number' && value.length < schema.minLength) throw new Error(`${field} 长度不能小于 ${schema.minLength}`)
-      return
-    case 'number':
-    case 'integer':
-      if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${field} 必须是有限数字`)
-      if (schema.type === 'integer' && !Number.isInteger(value)) throw new Error(`${field} 必须是整数`)
-      if (typeof schema.minimum === 'number' && value < schema.minimum) throw new Error(`${field} 不能小于 ${schema.minimum}`)
-      if (typeof schema.maximum === 'number' && value > schema.maximum) throw new Error(`${field} 不能大于 ${schema.maximum}`)
-      return
-    case 'boolean':
-      if (typeof value !== 'boolean') throw new Error(`${field} 必须是布尔值`)
-      return
-    default:
-      throw new Error(`${field} 使用了不支持的 schema.type`)
-  }
+  return result.data as Record<string, unknown>
 }
 
-function schemaParameters(schema: Record<string, unknown>) {
-  const properties = isRecord(schema.properties) ? schema.properties : {}
-  const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : [])
-  return Object.entries(properties).map(([key, raw]) => {
-    const property = isRecord(raw) ? raw : {}
-    return {
-      key,
-      label: typeof property.title === 'string' ? property.title : key,
-      dataType: typeof property.type === 'string' ? property.type : 'string',
-      source: typeof property['x-source'] === 'string' ? property['x-source'] : 'text',
-      required: required.has(key),
-      description: typeof property.description === 'string' ? property.description : null,
-      placeholder: null,
-      defaultValue: property.default ?? null,
-      options: Array.isArray(property.enum)
-        ? property.enum.map(value => ({ label: String(value), value: String(value) }))
-        : [],
-      acceptedValueRefKinds: Array.isArray(property['x-value-ref-kinds'])
-        ? property['x-value-ref-kinds'].map(String)
-        : [],
-    }
-  })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+function formatIssue(issue: unknown): string {
+  const record = isRecord(issue) ? issue : {}
+  const path = Array.isArray(record.path) ? record.path.map(String).join('.') || '参数' : '参数'
+  const code = typeof record.code === 'string' ? record.code : ''
+  const message = typeof record.message === 'string' ? record.message : '参数不合法'
+  const keys = Array.isArray(record.keys) ? record.keys.map(String) : []
+  if (code === 'unrecognized_keys' && keys.length) return `${path}: 未知参数 "${keys.join('、')}"`
+  if (code === 'too_big' && typeof record.maximum !== 'undefined') return `${path}: 不能大于 ${String(record.maximum)}`
+  if (code === 'too_small' && typeof record.minimum !== 'undefined') return `${path}: 不能小于 ${String(record.minimum)}`
+  if (code === 'invalid_type' && record.expected === 'array') return `${path}: 必须是数组`
+  if (code === 'invalid_type' && record.expected === 'object') return `${path}: 必须是对象`
+  if (code === 'invalid_type' && record.expected === 'string') return `${path}: 必须是字符串`
+  if (code === 'invalid_type' && record.expected === 'number') return `${path}: 必须是数字`
+  return `${path}: ${message}`
 }
 
 // 全局单例

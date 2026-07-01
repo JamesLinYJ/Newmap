@@ -22,9 +22,9 @@ export function AppLoader() {
 
 export function BootScreen() {
   return (
-    <div className="dc-boot" aria-label="正在加载气象空间工作台">
+    <div className="dc-boot" aria-label="正在加载 GeoForge 工作台">
       <header className="dc-boot__bar">
-        <strong>地理智能</strong>
+        <strong>GeoForge</strong>
         <span>气象空间决策平台</span>
         <i>正在准备工作区</i>
       </header>

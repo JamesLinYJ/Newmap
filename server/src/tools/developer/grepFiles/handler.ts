@@ -9,9 +9,15 @@
 // --------------------------------------------------------------------------
 
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import type { ToolHandler } from '../../../framework/types.js'
 import { resolveDeveloperPath } from '../shared/pathPolicy.js'
 import { developerResult } from '../shared/result.js'
+
+let cachedRipgrepCommand: string | null = null
+
+class RipgrepLaunchError extends Error {}
 
 export const grepFilesHandler: ToolHandler = async (args) => {
   if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern 不能为空')
@@ -53,8 +59,27 @@ export const grepFilesHandler: ToolHandler = async (args) => {
 }
 
 async function runRipgrep(args: string[]): Promise<string> {
+  const candidates = cachedRipgrepCommand ? [cachedRipgrepCommand] : ripgrepCandidates()
+  let launchError: Error | null = null
+  for (const command of candidates) {
+    try {
+      const output = await spawnRipgrep(command, args)
+      cachedRipgrepCommand = command
+      return output
+    } catch (error) {
+      if (error instanceof RipgrepLaunchError) {
+        launchError = error
+        continue
+      }
+      throw error
+    }
+  }
+  throw launchError ?? new Error('无法启动 ripgrep：未找到 rg 可执行文件')
+}
+
+async function spawnRipgrep(command: string, args: string[]): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn('rg', args, { windowsHide: true })
+    const child = spawn(command, args, { windowsHide: true })
     let stdout = ''
     let stderr = ''
     const timeout = setTimeout(() => {
@@ -65,7 +90,7 @@ async function runRipgrep(args: string[]): Promise<string> {
     child.stderr.on('data', chunk => { stderr += String(chunk) })
     child.on('error', error => {
       clearTimeout(timeout)
-      reject(new Error(`无法启动 ripgrep：${error.message}`))
+      reject(new RipgrepLaunchError(`无法启动 ripgrep：${command}：${error.message}`))
     })
     child.on('close', code => {
       clearTimeout(timeout)
@@ -76,4 +101,18 @@ async function runRipgrep(args: string[]): Promise<string> {
       reject(new Error(stderr.trim() || `ripgrep 退出码 ${code}`))
     })
   })
+}
+
+function ripgrepCandidates(): string[] {
+  const candidates: string[] = []
+  const envCandidate = process.env.RIPGREP_PATH || process.env.RG_PATH
+  if (envCandidate) candidates.push(envCandidate)
+  for (const directory of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    for (const executable of process.platform === 'win32' ? ['rg.exe', 'rg'] : ['rg']) {
+      const candidate = path.join(directory, executable)
+      if (existsSync(candidate)) candidates.push(candidate)
+    }
+  }
+  candidates.push('rg')
+  return [...new Set(candidates)]
 }

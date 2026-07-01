@@ -183,7 +183,7 @@ export async function compactThreadIfNeeded(
   const preTokens = manifest.estimatedContextTokens
   const postTokens = estimateTokens(summary) + preserved.reduce((sum, entry) => sum + estimateTokens(JSON.stringify(entry.payload)), 0)
   const record: CompactionRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     compactionId,
     threadId,
     boundaryEntryId: boundary.entryId,

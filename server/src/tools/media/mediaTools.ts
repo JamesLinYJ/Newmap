@@ -1,9 +1,11 @@
 // 媒体工具 → Python sidecar HTTP 代理
 import { getEnv } from '../../framework/env.js';
 import { makeId } from '../../utils/ids.js';
+import { DIGITAL_HUMAN_PROMPT, TEXT_TO_SPEECH_PROMPT } from './prompt.js';
 export const ttsTool = {
     name: 'text_to_speech', label: '文本转语音',
     description: '将文本合成为语音音频文件。',
+    prompt: TEXT_TO_SPEECH_PROMPT,
     group: '媒体', tags: ['media', 'tts'],
     isReadOnly: true, isDestructive: false,
     jsonSchema: {
@@ -36,6 +38,7 @@ export const ttsTool = {
 export const digitalHumanTool = {
     name: 'generate_digital_human', label: '生成数字人视频',
     description: '用音频驱动数字形象生成说话视频。',
+    prompt: DIGITAL_HUMAN_PROMPT,
     group: '媒体', tags: ['media', 'avatar'],
     isReadOnly: false, isDestructive: true,
     jsonSchema: {

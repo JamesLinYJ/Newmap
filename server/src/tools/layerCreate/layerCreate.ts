@@ -15,12 +15,14 @@ import type { ToolDef } from '../../framework/types.js'
 import type { PostGisRepository } from '../../gis/postgis.js'
 import { parseGeoJsonEntity, toFeatureCollection } from '../../gis/geojson.js'
 import { makeId } from '../../utils/ids.js'
+import { LAYER_CREATE_PROMPT } from '../spatial/prompts.js'
 
 export function createLayerCreateTool(postgis: PostGisRepository): ToolDef {
   return {
     name: 'layer_create',
     label: '创建分析图层',
     description: '从 GeoJSON 创建归属于当前会话和线程的 PostGIS 分析图层。',
+    prompt: LAYER_CREATE_PROMPT,
     group: '空间分析',
     tags: ['layer', 'postgis', 'visualization'],
     isReadOnly: false,

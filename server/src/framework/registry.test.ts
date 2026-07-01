@@ -11,6 +11,18 @@
 import { describe, expect, it } from 'vitest'
 import { ToolRegistry } from './registry.js'
 import type { ToolContext, ToolProvider } from './types.js'
+import { parametersForAgentsSdk, parametersFromJsonSchema, stripNullObjectValues } from './schema.js'
+import { validateToolProvider } from './validation.js'
+import type { PostGisRepository } from '../gis/postgis.js'
+import chartProvider from '../tools/chart/index.js'
+import geocodeProvider from '../tools/geocode/index.js'
+import mediaProvider from '../tools/media/index.js'
+import memoryProvider from '../tools/memory/index.js'
+import planProvider from '../tools/plan/index.js'
+import developerProvider from '../tools/developer/index.js'
+import meteorologyProvider from '../tools/meteorology/index.js'
+import { createSpatialProvider } from '../tools/spatial/index.js'
+import { createRoutingProvider } from '../tools/routing/index.js'
 
 describe('ToolRegistry contract', () => {
   it('rejects manifest and runtime descriptor drift', () => {
@@ -77,6 +89,19 @@ describe('ToolRegistry contract', () => {
     await expect(registry.execute('example', {}, context())).rejects.toThrow('真实失败')
   })
 
+  it('requires every builtin tool to expose a Chinese tool prompt contract', () => {
+    // 工具 prompt 是 Agent 运行时可见的工具级契约；这里覆盖所有内置 Provider，
+    // 防止新增工具绕过中文说明、valueRef 边界和 approval 规则。
+    const providers = builtinProviders()
+    for (const currentProvider of providers) {
+      expect(() => validateToolProvider(currentProvider)).not.toThrow()
+      for (const tool of currentProvider.tools()) {
+        expect(tool.prompt.trim(), `${tool.name} prompt`).toBeTruthy()
+        expect(tool.prompt, `${tool.name} prompt`).toMatch(/[\u4e00-\u9fff]/)
+      }
+    }
+  })
+
   it('rejects unsupported artifact display surfaces at execution boundary', async () => {
     const registry = new ToolRegistry()
     registry.register(artifactProvider({ displaySurfaces: ['miniapp'] }))
@@ -86,7 +111,68 @@ describe('ToolRegistry contract', () => {
   it('hard-fails unknown value references', () => {
     expect(() => context().resolveValueRef('missing')).toThrow('未知 valueRef')
   })
+
+  it('keeps runtime optional fields while exposing nullable fields to Agents SDK', () => {
+    // OpenAI strict tool schemas require all properties to be required; GeoForge handlers
+    // still use omission as the internal optional-argument contract. Compatible providers
+    // may omit nullable optional fields, so the SDK parser must accept both shapes.
+    const schema = {
+      type: 'object',
+      properties: {
+        layerKey: { type: 'string' },
+        bbox: { type: 'array', items: { type: 'number' } },
+        options: {
+          type: 'object',
+          properties: {
+            label: { type: 'string' },
+            color: { type: 'string' },
+          },
+          required: ['label'],
+        },
+      },
+      required: ['layerKey'],
+    }
+
+    expect(parametersFromJsonSchema(schema).safeParse({ layerKey: 'districts' }).success).toBe(true)
+    expect(parametersFromJsonSchema(schema).safeParse({ layerKey: 'districts', bbox: null }).success).toBe(false)
+
+    const agentsParameters = parametersForAgentsSdk(schema)
+    expect(agentsParameters.safeParse({ layerKey: 'districts' }).success).toBe(true)
+    expect(agentsParameters.safeParse({
+      layerKey: 'districts',
+      bbox: null,
+      options: { label: '区划', color: null },
+    }).success).toBe(true)
+    expect(stripNullObjectValues({
+      layerKey: 'districts',
+      bbox: null,
+      options: { label: '区划', color: null },
+    })).toEqual({
+      layerKey: 'districts',
+      options: { label: '区划' },
+    })
+  })
 })
+
+function builtinProviders(): ToolProvider[] {
+  process.env.API_PORT ??= '0'
+  process.env.API_HOST ??= '127.0.0.1'
+  process.env.DATABASE_URL ??= 'postgres://user:password@127.0.0.1:5432/geoforge_test'
+  process.env.RUNTIME_ROOT ??= 'runtime-test'
+  process.env.ENABLED_TOOL_PROVIDERS ??= 'geo-platform-spatial'
+  const fakePostgis = {} as unknown as PostGisRepository
+  return [
+    chartProvider as ToolProvider,
+    geocodeProvider as ToolProvider,
+    mediaProvider as ToolProvider,
+    memoryProvider as ToolProvider,
+    planProvider as ToolProvider,
+    developerProvider as ToolProvider,
+    meteorologyProvider as ToolProvider,
+    createSpatialProvider(fakePostgis),
+    createRoutingProvider(),
+  ]
+}
 
 function provider(fails = false): ToolProvider {
   return {
@@ -99,6 +185,7 @@ function provider(fails = false): ToolProvider {
     },
     tools: () => [{
       name: 'example', label: '示例', description: '示例工具', group: '测试', tags: [],
+      prompt: '用于测试工具注册和执行边界。',
       isReadOnly: true, isDestructive: false, jsonSchema: { type: 'object', properties: {} },
       handler: async () => {
         if (fails) throw new Error('真实失败')
@@ -113,6 +200,7 @@ function artifactProvider(metadata: Record<string, unknown>): ToolProvider {
     name: 'artifact_example',
     label: 'Artifact 示例',
     description: '验证 artifact 展示面契约',
+    prompt: '用于测试 artifact 展示面校验。',
     group: '测试',
     tags: [],
     isReadOnly: true,
@@ -147,7 +235,7 @@ function artifactProvider(metadata: Record<string, unknown>): ToolProvider {
 
 function nestedProvider(): ToolProvider {
   const definition = {
-    name: 'nested', label: '嵌套参数', description: '嵌套参数校验', group: '测试', tags: [],
+    name: 'nested', label: '嵌套参数', description: '嵌套参数校验', prompt: '用于测试嵌套参数 schema 校验。', group: '测试', tags: [],
     isReadOnly: true, isDestructive: false,
     jsonSchema: {
       type: 'object',

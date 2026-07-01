@@ -10,7 +10,7 @@
 
 # Tool Integration Standard
 
-本文档规定 Newmap 工具接入的公开契约、运行边界和测试要求。工具可以由不同团队开发，但进入平台后必须表现为同一套 `ToolProvider → valueRef → artifact → UI` 链路。
+本文档规定 GeoForge 工具接入的公开契约、运行边界和测试要求。工具可以由不同团队开发，但进入平台后必须表现为同一套 `ToolProvider → valueRef → artifact → UI` 链路。
 
 ## 基本原则
 
@@ -36,7 +36,7 @@ packages/gis-meteorology/src/gis_meteorology/third_party/radar_mosaic_agent/sour
 third_party/<tool_name>/
   source/original/ # 原始源码快照，只读，保留 UI、README、启动脚本等审计材料
   source/*.py      # 可选的纯算法运行快照，不承载 Flask/bat/session/cache
-  adapter.py       # Newmap 运行边界，只接 valueRef 解析后的 runtime 相对路径
+  adapter.py       # GeoForge 运行边界，只接 valueRef 解析后的 runtime 相对路径
   __init__.py
 ```
 

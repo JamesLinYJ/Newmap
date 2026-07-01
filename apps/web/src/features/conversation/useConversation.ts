@@ -10,13 +10,11 @@
 
 import { useMemo } from 'react'
 import type {
-  ClarificationState,
   ConversationItem,
+  DecisionRequest,
   ToolDescriptor,
-  UserIntent,
 } from '@geo-agent-platform/shared-types'
 import { deriveEntriesFromItems } from './items'
-import type { ActiveClarification } from './types'
 
 // 聊天 UI 的事实入口是 ConversationItem[]。
 //
@@ -44,29 +42,10 @@ export function errorCardTitle(message?: string) {
   return '运行出错'
 }
 
-export function buildActiveClarification(
-  clarification?: ClarificationState | null,
-  intent?: UserIntent,
-): ActiveClarification | null {
-  if (clarification && !clarification.selectedOptionId) {
-    return {
-      key: clarification.clarificationId,
-      question: clarification.question,
-      options: clarification.options,
-      allowFreeText: clarification.allowFreeText,
-    }
-  }
-
-  if (intent?.clarificationRequired) {
-    return {
-      key: `intent:${intent.clarificationQuestion ?? 'clarification'}`,
-      question: intent.clarificationQuestion ?? '请确认下一步。',
-      options: intent.clarificationOptions ?? [],
-      allowFreeText: true,
-    }
-  }
-
-  return null
+export function pickPendingDecision(decisions: ReadonlyArray<DecisionRequest> = []): DecisionRequest | null {
+  return decisions.find(decision => decision.status === 'pending' && decision.kind === 'approval')
+    ?? decisions.find(decision => decision.status === 'pending' && decision.kind === 'clarification')
+    ?? null
 }
 
 export function formatStatusLine(

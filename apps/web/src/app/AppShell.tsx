@@ -19,6 +19,7 @@ import { useLocation } from 'react-router-dom'
 import type {
   AgentExecutionMode,
   ConversationItem,
+  MemoryFileRecord,
   ToolDescriptor,
 } from '@geo-agent-platform/shared-types'
 
@@ -34,11 +35,14 @@ import { pickPreferredArtifactId } from '../features/artifacts/artifactSelection
 import { buildListItemVariants, buildListVariants, motionSpring } from '../shared/motion'
 import { pickConversationHeadline } from '../features/conversation/items'
 import { ChatPanel } from '../features/conversation/ChatPanel'
+import type { MemoryEntry, MemoryWriteInput } from '../features/conversation/types'
+import { deleteMemory, dreamMemories, listMemories, readMemory, searchMemories, writeMemory } from '../api/client'
 import { TopBar } from './layout/TopBar'
 import { WorkspaceLayout, type WorkspaceSidebarItem } from './layout/WorkspaceLayout'
 import { AppRoutes } from './routes'
 import { supportsAgentSdkLiveSupervisor } from '../shared/providerCapabilities'
 import { MapErrorBoundary } from '../features/map/MapErrorBoundary'
+import { AppIcon } from '../shared/components/AppIcon'
 import {
   formatUiError,
   reportNonBlockingError,
@@ -125,7 +129,7 @@ function AppShell() {
     stopSubmitting,
     setError: setUiError,
     cancelRun,
-    resolveApproval,
+    respondDecision,
     startAnalysis,
     startThreadRun,
   } = useRunController()
@@ -178,6 +182,8 @@ function AppShell() {
     setProvider,
   } = useConnectionController()
   const currentThreadId = run?.threadId ?? agentState?.threadId ?? activeThreadId
+  const [memoryRecords, setMemoryRecords] = useState<MemoryFileRecord[]>([])
+  const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([])
   const {
     activeNav,
     activeSidebarItem,
@@ -563,12 +569,10 @@ function AppShell() {
   const submitMessage = useCallback(
     async ({
       text,
-      clarificationOptionId,
       forceNewThread = false,
       executionMode = 'auto',
     }: {
       text?: string
-      clarificationOptionId?: string | null
       forceNewThread?: boolean
       executionMode?: AgentExecutionMode
     } = {}) => {
@@ -619,8 +623,8 @@ function AppShell() {
         }
 
         const createdRun = targetThreadId
-          ? await startThreadRun(targetThreadId, submittedQuery, provider, model || undefined, clarificationOptionId, executionMode)
-          : await startAnalysis(session.id, submittedQuery, provider, model || undefined, clarificationOptionId, executionMode)
+          ? await startThreadRun(targetThreadId, submittedQuery, provider, model || undefined, executionMode)
+          : await startAnalysis(session.id, submittedQuery, provider, model || undefined, executionMode)
         const nextThreadId = createdRun.threadId ?? targetThreadId
         startTransition(() => {
           acceptRun(createdRun)
@@ -632,7 +636,7 @@ function AppShell() {
         void refreshSessionHistory(session.id).catch((error) => reportNonBlockingError('refreshSessionHistory:submitMessage', error))
         syncUrl(session.id, createdRun.id, nextThreadId)
       } catch (error) {
-        setUiError(formatUiError(error, clarificationOptionId ? '回复提交失败，请重试。' : '任务提交失败，请重试。'))
+        setUiError(formatUiError(error, '任务提交失败，请重试。'))
         stopSubmitting()
       }
     },
@@ -694,11 +698,49 @@ function AppShell() {
     }
   }, [acceptRun, cancelRun, refreshSessionHistory, run?.id, setUiError, stopSubmitting])
 
-  const handleClarificationSelect = useCallback(
-    async (value: string, optionId?: string | null) => {
-      await submitMessage({ text: value, clarificationOptionId: optionId })
+  const handleRespondDecision = useCallback(
+    async (decisionId: string, optionId?: string | null, text?: string | null) => {
+      if (!run?.id) return
+      try {
+        setUiError(undefined)
+        startRun()
+        const nextRun = await respondDecision(run.id, decisionId, optionId, text)
+        const nextThreadId = nextRun.threadId ?? currentThreadId
+        startTransition(() => {
+          acceptRun(nextRun)
+          setProvider(nextRun.modelProvider ?? provider)
+          setModel(nextRun.modelName ?? model)
+          setActiveThreadId(nextThreadId)
+          setThreadRuns((current) => (nextThreadId ? mergeThreadRuns(current, nextRun) : current))
+        })
+        if (nextRun.sessionId) {
+          void refreshSessionHistory(nextRun.sessionId).catch((error) => reportNonBlockingError('refreshSessionHistory:respondDecision', error))
+        }
+        syncUrl(nextRun.sessionId, nextRun.id, nextThreadId)
+        await hydrateRunState(nextRun.id)
+      } catch (error) {
+        setUiError(formatUiError(error, '决策提交失败，请重试。'))
+        stopSubmitting()
+      }
     },
-    [submitMessage],
+    [
+      acceptRun,
+      currentThreadId,
+      hydrateRunState,
+      model,
+      provider,
+      refreshSessionHistory,
+      respondDecision,
+      run?.id,
+      setActiveThreadId,
+      setModel,
+      setProvider,
+      setThreadRuns,
+      setUiError,
+      startRun,
+      stopSubmitting,
+      syncUrl,
+    ],
   )
 
   const handleNewConversation = useCallback(() => {
@@ -734,23 +776,6 @@ function AppShell() {
     setThreadRuns,
     syncUrl,
   ])
-
-  const handleResolveApproval = useCallback(
-    async (approvalId: string, approved: boolean) => {
-      if (!run?.id) {
-        return
-      }
-
-      try {
-        setUiError(undefined)
-        await resolveApproval(run.id, approvalId, approved)
-        await hydrateRunState(run.id)
-      } catch (error) {
-        setUiError(formatUiError(error, approved ? '审批操作没成功，请重试。' : '拒绝操作没成功，请重试。'))
-      }
-    },
-    [hydrateRunState, resolveApproval, run?.id, setUiError],
-  )
 
   const handleSelectThread = useCallback(
     async (threadId: string) => {
@@ -873,6 +898,57 @@ function AppShell() {
     }
   }, [currentThreadId, rebuildCurrentThreadMemory, setUiError])
 
+  const refreshMemoryEntries = useCallback(async () => {
+    const response = await listMemories()
+    startTransition(() => {
+      setMemoryRecords(response.records)
+      setMemoryEntries(response.records.map(memoryRecordToEntry))
+    })
+    return response
+  }, [])
+
+  useEffect(() => {
+    if (runtimeConfig?.context.memoryEnabled === false) {
+      setMemoryEntries([])
+      return
+    }
+    void refreshMemoryEntries().catch((error) => reportNonBlockingError('refreshMemoryEntries', error))
+  }, [refreshMemoryEntries, runtimeConfig?.context.memoryEnabled])
+
+  const handleRefreshMemories = useCallback(async () => {
+    try {
+      setUiError(undefined)
+      await refreshMemoryEntries()
+    } catch (error) {
+      setUiError(formatUiError(error, '记忆索引刷新失败。'))
+    }
+  }, [refreshMemoryEntries, setUiError])
+
+  const handleReadMemory = useCallback(async (scope: 'private' | 'team', relativePath: string) => {
+    return readMemory(scope, relativePath)
+  }, [])
+
+  const handleWriteMemory = useCallback(async (input: MemoryWriteInput) => {
+    const record = await writeMemory(input)
+    await refreshMemoryEntries()
+    return record
+  }, [refreshMemoryEntries])
+
+  const handleDeleteMemory = useCallback(async (scope: 'private' | 'team', relativePath: string) => {
+    await deleteMemory(scope, relativePath)
+    await refreshMemoryEntries()
+  }, [refreshMemoryEntries])
+
+  const handleSearchMemories = useCallback(async (queryText: string) => {
+    const response = await searchMemories(queryText)
+    return response.matches
+  }, [])
+
+  const handleDreamMemories = useCallback(async () => {
+    await dreamMemories(true)
+    await refreshMemoryEntries()
+  }, [refreshMemoryEntries])
+
   const handleForkMessage = useCallback(async (entryId: string) => {
     if (!currentThreadId || !session?.id) return
     try {
@@ -909,16 +985,16 @@ function AppShell() {
 
   // 稳定化 ChatPanel 回调引用，避免每次渲染重建导致子树无效重渲染
   const onSubmitStable = useStableVoid(handleSubmit)
-  const onSelectClarificationStable = useStableVoid(handleClarificationSelect)
+  const onRespondDecisionStable = useStableVoid(handleRespondDecision)
   const onSelectTaskStable = useStableVoid(handleSelectThread)
   const onRenameTaskStable = useStableVoid(handleRenameThread)
   const onDeleteTaskStable = useStableVoid(handleDeleteThread)
-  const onResolveApprovalStable = useStableVoid(handleResolveApproval)
   const onForkMessageStable = useStableVoid(handleForkMessage)
   const onLoadThreadContextStable = useStableVoid(handleLoadThreadContext)
   const onCompactThreadStable = useStableVoid(handleCompactThread)
   const onSaveThreadMemoryStable = useStableVoid(handleSaveThreadMemory)
   const onRebuildThreadMemoryStable = useStableVoid(handleRebuildThreadMemory)
+  const onRefreshMemoriesStable = useStableVoid(handleRefreshMemories)
   const handleRefreshTrash = useCallback(async () => { await refreshTrash() }, [refreshTrash])
   const onRefreshTrashStable = useStableVoid(handleRefreshTrash)
   const onRestoreThreadStable = useStableVoid(handleRestoreThread)
@@ -1015,9 +1091,13 @@ function AppShell() {
                 reducedMotion={reducedMotion}
                 workspaceListVariants={workspaceListVariants}
                 workspaceItemVariants={workspaceItemVariants}
-              >
-                {activeNav === 'tools' ? (
-                  <m.div className="tool-management-host workspace-pane workspace-pane--tools min-w-0" layout variants={workspaceItemVariants}>
+                currentThreadId={currentThreadId}
+                sessionThreads={sessionThreads}
+                onNewTask={handleNewConversation}
+                onSelectThread={onSelectTaskStable}
+                toolsMode={activeNav === 'tools'}
+                toolsSlot={
+                  <div className="tool-management-host min-w-0">
                     <ToolManagementPage
                       tools={availableTools}
                       artifacts={artifacts}
@@ -1038,71 +1118,82 @@ function AppShell() {
                         void handleDeleteToolCatalogEntry(tool)
                       }}
                     />
-                  </m.div>
-                ) : (
-                  <>
-                    <m.div className="workspace-pane workspace-pane--chat min-w-0" layout variants={workspaceItemVariants}>
-                      <ChatPanel
-                        artifactCount={artifacts.length}
-                        runStatus={run?.status}
-                        providerLabel={providerLabel}
-                        query={query}
-                        currentRunId={run?.id}
-                        currentThreadId={currentThreadId}
-                        currentThreadTitle={currentThreadTitle}
-                        runCreatedAt={run?.createdAt}
-                        isSubmitting={isSubmitting}
-                        errorMessage={uiError}
-                        uploadedLayerName={uploadedLayerName}
-                        intent={intent}
-                        clarification={agentState?.clarification}
-                        sessionThreads={sessionThreads}
-                        items={threadConversationItems}
-                        runtimeConfig={runtimeConfig}
-                        availableTools={availableTools}
-                        onQueryChange={setQuery}
-                        onSubmit={onSubmitStable}
-                        onInterrupt={handleInterruptRun}
-                        onNewConversation={handleNewConversation}
-                        onFillSample={handleSampleSelect}
-                        onSelectClarification={onSelectClarificationStable}
-                        onUseTemplate={handleUseTemplate}
-                        onUploadFiles={(files) => {
-                          void handleUploadFiles(files)
-                        }}
-                        onSelectArtifact={setSelectedArtifactId}
-                        onSelectTask={onSelectTaskStable}
-                        onRenameTask={onRenameTaskStable}
-                        onDeleteTask={onDeleteTaskStable}
-                        onResolveApproval={onResolveApprovalStable}
-                        onForkMessage={onForkMessageStable}
-                        dataReferences={dataReferences}
-                        threadContext={threadContext}
-                        threadMemory={threadMemory}
-                        onLoadThreadContext={onLoadThreadContextStable}
-                        onCompactThread={onCompactThreadStable}
-                        onSaveThreadMemory={onSaveThreadMemoryStable}
-                        onRebuildThreadMemory={onRebuildThreadMemoryStable}
-                        trashedThreads={trashedThreads}
-                        onLoadTrash={onRefreshTrashStable}
-                        onRestoreThread={onRestoreThreadStable}
-                        onPurgeThread={onPurgeThreadStable}
-                        tokenBudget={tokenBudget}
-                        activeSkills={activeSkills}
-                        compactionLevel={compactionLevel}
-                        runStats={runStats}
-                        denialCounts={denialCounts}
-                        executionPlan={executionPlan}
-                        tasks={progressTasks}
-                      />
-                    </m.div>
-
-                    <m.div
-                      className="workspace-pane workspace-pane--map min-w-0"
-                      layout
-                      variants={workspaceItemVariants}
-                      onPointerEnter={preloadMap}
-                    >
+                  </div>
+                }
+                mainSlot={
+                  <ChatPanel
+                    artifactCount={artifacts.length}
+                    runStatus={run?.status}
+                    providerLabel={providerLabel}
+                    query={query}
+                    currentRunId={run?.id}
+                    currentThreadId={currentThreadId}
+                    currentThreadTitle={currentThreadTitle}
+                    runCreatedAt={run?.createdAt}
+                    isSubmitting={isSubmitting}
+                    errorMessage={uiError}
+                    uploadedLayerName={uploadedLayerName}
+                    decisions={agentState?.decisions ?? []}
+                    sessionThreads={sessionThreads}
+                    items={threadConversationItems}
+                    runtimeConfig={runtimeConfig}
+                    availableTools={availableTools}
+                    onQueryChange={setQuery}
+                    onSubmit={onSubmitStable}
+                    onInterrupt={handleInterruptRun}
+                    onNewConversation={handleNewConversation}
+                    onFillSample={handleSampleSelect}
+                    onRespondDecision={onRespondDecisionStable}
+                    onUseTemplate={handleUseTemplate}
+                    onUploadFiles={(files) => {
+                      void handleUploadFiles(files)
+                    }}
+                    onSelectArtifact={setSelectedArtifactId}
+                    onSelectTask={onSelectTaskStable}
+                    onRenameTask={onRenameTaskStable}
+                    onDeleteTask={onDeleteTaskStable}
+                    onForkMessage={onForkMessageStable}
+                    dataReferences={dataReferences}
+                    threadContext={threadContext}
+                    threadMemory={threadMemory}
+                    onLoadThreadContext={onLoadThreadContextStable}
+                    onCompactThread={onCompactThreadStable}
+                    onSaveThreadMemory={onSaveThreadMemoryStable}
+                    onRebuildThreadMemory={onRebuildThreadMemoryStable}
+                    trashedThreads={trashedThreads}
+                    onLoadTrash={onRefreshTrashStable}
+                    onRestoreThread={onRestoreThreadStable}
+                    onPurgeThread={onPurgeThreadStable}
+                    memories={memoryEntries}
+                    memoryRecords={memoryRecords}
+                    onRefreshMemories={onRefreshMemoriesStable}
+                    onReadMemory={handleReadMemory}
+                    onWriteMemory={handleWriteMemory}
+                    onDeleteMemory={handleDeleteMemory}
+                    onSearchMemories={handleSearchMemories}
+                    onDreamMemories={handleDreamMemories}
+                    tokenBudget={tokenBudget}
+                    activeSkills={activeSkills}
+                    compactionLevel={compactionLevel}
+                    runStats={runStats}
+                    denialCounts={denialCounts}
+                    executionPlan={executionPlan}
+                    tasks={progressTasks}
+                  />
+                }
+                mapSlot={
+                  <m.section
+                    className="workbench-map-shell"
+                    aria-label="空间地图"
+                    layout
+                    transition={motionSpring.gentle}
+                    onPointerEnter={preloadMap}
+                  >
+                    <div className="workbench-map-shell__head">
+                      <strong>地图与图层</strong>
+                      <button type="button" className="workbench-inspector-link" onClick={() => setPanelMode('layerManager')}>图层</button>
+                    </div>
+                    <div className="workbench-map-shell__body">
                       {isMapActivated ? (
                         <MapErrorBoundary>
                           <Suspense fallback={<div className="dc-map-stage dc-map-stage--loading">正在初始化地图…</div>}>
@@ -1129,14 +1220,35 @@ function AppShell() {
                           onFocus={preloadMap}
                         >
                           <strong>空间地图</strong>
-                          <span>工作台就绪后自动加载，点击可立即打开</span>
+                          <span>点击打开地图检查器</span>
                         </button>
                       )}
-                    </m.div>
-
-                    <m.div className="workspace-pane workspace-pane--results min-w-0" layout variants={workspaceItemVariants} transition={motionSpring.gentle}>
+                    </div>
+                  </m.section>
+                }
+                inspectorSlot={
+                  <>
+                    <m.section
+                      className="workbench-inspector-card workbench-inspector-card--progress"
+                      aria-label="任务进度"
+                      layout
+                      transition={motionSpring.gentle}
+                    >
+                      <div className="workbench-inspector-card__head">
+                        <strong>Progress</strong>
+                        <AppIcon name="tune" size={15} />
+                      </div>
+                      <div className="workbench-progress-steps" aria-label="分析进度">
+                        <span className={run?.status ? 'workbench-progress-step workbench-progress-step--done' : 'workbench-progress-step'} />
+                        <span className={run?.status === 'running' || run?.status === 'completed' ? 'workbench-progress-step workbench-progress-step--done' : 'workbench-progress-step'} />
+                        <span className={run?.status === 'completed' ? 'workbench-progress-step workbench-progress-step--done' : 'workbench-progress-step'} />
+                      </div>
+                      <p>{run?.status === 'completed' ? '本轮分析已经完成。' : '较长的 GIS / 气象任务会在这里显示进度。'}</p>
+                    </m.section>
+                    <m.div className="workbench-inspector-detail" layout transition={motionSpring.gentle}>
                       <Suspense fallback={<DetailPanelFallback />}>
-                        <DetailPanel
+                        <m.div layout transition={motionSpring.gentle}>
+                          <DetailPanel
                         panelMode={panelMode}
                         currentRunId={run?.id}
                         runStatus={run?.status}
@@ -1173,9 +1285,6 @@ function AppShell() {
                         }}
                         onProviderChange={handleProviderChange}
                         onModelChange={setModel}
-                        onResolveApproval={(approvalId, approved) => {
-                          void handleResolveApproval(approvalId, approved)
-                        }}
                         onImportManagedLayer={(file) => {
                           void handleImportManagedLayer(file)
                         }}
@@ -1213,11 +1322,13 @@ function AppShell() {
                         onDeleteFile={(fileId) => { void handleDeleteAnyFile(fileId) }}
                           isFileSubmitting={isFileSubmitting}
                         />
+                        </m.div>
                       </Suspense>
                     </m.div>
                   </>
-                )}
-              </WorkspaceLayout>
+                }
+                mapMode={activeNav === 'layers' || activeSidebarItem === 'sources'}
+              />
             }
             debug={
               <DebugPage
@@ -1278,6 +1389,30 @@ function AppShell() {
       </LazyMotion>
     </Suspense>
   )
+}
+
+function memoryRecordToEntry(record: MemoryFileRecord): MemoryEntry {
+  const updatedAt = Number.isFinite(record.mtimeMs) ? record.mtimeMs : Date.now()
+  return {
+    scope: record.scope === 'team' ? 'team' : 'private',
+    relativePath: record.relativePath,
+    name: record.name || record.relativePath,
+    description: record.description || record.relativePath,
+    type: record.type ?? 'project',
+    age: formatRelativeAge(updatedAt),
+  }
+}
+
+function formatRelativeAge(mtimeMs: number): string {
+  const delta = Math.max(0, Date.now() - mtimeMs)
+  const minutes = Math.floor(delta / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes}分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}小时前`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}天前`
+  return new Date(mtimeMs).toLocaleDateString('zh-CN')
 }
 
 export default AppShell

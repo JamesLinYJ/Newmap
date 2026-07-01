@@ -46,6 +46,7 @@ import {
   requireSingleFeature,
 } from '../../gis/geojson.js'
 import { makeId } from '../../utils/ids.js'
+import { SPATIAL_ANALYSIS_PROMPT } from '../spatial/prompts.js'
 
 type TurfUnits = 'kilometers' | 'meters' | 'miles'
 const UNITS = new Set<TurfUnits>(['kilometers', 'meters', 'miles'])
@@ -55,6 +56,7 @@ export function createSpatialAnalysisTool(): ToolDef {
     name: 'spatial_analysis',
     label: '空间分析',
     description: '执行确定性 GIS 空间分析。支持面积、距离、缓冲、相交、合并、路径插值、方位角等操作。',
+    prompt: SPATIAL_ANALYSIS_PROMPT,
     group: '空间分析',
     tags: ['turf', 'analysis', 'gis'],
     isReadOnly: true,

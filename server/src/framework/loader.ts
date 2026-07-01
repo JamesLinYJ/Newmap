@@ -15,6 +15,7 @@ import type { PostGisRepository } from '../gis/postgis.js'
 import chartProvider from '../tools/chart/index.js'
 import geocodeProvider from '../tools/geocode/index.js'
 import mediaProvider from '../tools/media/index.js'
+import memoryProvider from '../tools/memory/index.js'
 import planProvider from '../tools/plan/index.js'
 import developerProvider from '../tools/developer/index.js'
 import meteorologyProvider from '../tools/meteorology/index.js'
@@ -32,6 +33,7 @@ export async function discoverAndLoad(postgis: PostGisRepository): Promise<void>
     chartProvider as ToolProvider,
     geocodeProvider as ToolProvider,
     mediaProvider as ToolProvider,
+    memoryProvider as ToolProvider,
     planProvider as ToolProvider,
     developerProvider as ToolProvider,
     meteorologyProvider as ToolProvider,
