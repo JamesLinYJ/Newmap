@@ -81,6 +81,40 @@ describe('thread transcript projection', () => {
       ['function_call', 'list_meteorological_files'],
     ])
     expect(projected[1].metadata.assistantContentForCallId).toBe('call_1')
+    expect(projected[1].metadata.transcriptEntryId).toBe('entry_checkpoint_1')
+  })
+
+  // checkpoint 正文和 live item 使用同一个 transcript 身份；
+  // 刷新或重连后不能在主时间线里显示两遍同一句工具前置文案。
+  it('deduplicates live assistant content that came from a checkpoint', () => {
+    const canonical = transcriptEntriesToConversationItems([
+      entry(1, 'entry_user_1', 'run_1', 'user', '做 QPF 统计。'),
+      toolEntry(2, 'entry_tool_1', 'run_1', 'call_1', 'meteorological_stats', ''),
+      assistantContentCheckpoint(3, 'entry_checkpoint_1', 'run_1', 'call_1', '现在做 QPF 统计。'),
+    ])
+    const live: ConversationItem[] = [{
+      itemId: 'item_live_assistant_content',
+      itemType: 'message',
+      runId: 'run_1',
+      threadId: 'thread_1',
+      turnId: 'turn_live',
+      callId: null,
+      role: 'assistant',
+      body: '现在做 QPF 统计。',
+      name: null,
+      arguments: null,
+      output: null,
+      isError: false,
+      phase: null,
+      status: 'completed',
+      metadata: { transcriptEntryId: 'entry_checkpoint_1', live: true },
+      timestamp: new Date(2026, 5, 22, 8, 0, 2).toISOString(),
+    }]
+
+    const merged = mergeConversationItems(canonical, live)
+
+    expect(merged.filter(item => item.body === '现在做 QPF 统计。')).toHaveLength(1)
+    expect(merged.find(item => item.body === '现在做 QPF 统计。')?.metadata.live).toBe(true)
   })
 
   // 文件型 transcript 的 seq 是协议顺序；同一毫秒落盘时，前端不能退回到不稳定字符串排序。

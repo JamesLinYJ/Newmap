@@ -89,28 +89,39 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
       if (!callId) return []
       const contentFromCheckpoint = assistantContentByCallId.get(callId) ?? null
       const assistantContent = contentFromCheckpoint
-        ?? (typeof entry.payload.assistantContent === 'string' && entry.payload.assistantContent.trim()
-        ? entry.payload.assistantContent.trim()
-        : null)
+        ?? assistantContentFromToolEntry(entry)
+      const assistantContentText = assistantContent?.content ?? null
+      const assistantContentEntryId = assistantContent?.entryId ?? entry.entryId
+      const assistantContentSeq = assistantContent?.displaySeq ?? entry.seq
+      const assistantContentTimestamp = assistantContent?.displayTimestamp ?? entry.timestamp
+      const assistantContentSource = assistantContent?.source ?? 'tool_call'
       const items: ConversationItem[] = []
-      if (assistantContent) {
+      if (assistantContentText) {
+        // assistant_content_for_tool_call 是这段正文的真实身份；
+        // 展示顺序仍贴在工具调用之前，避免 canonical history 与 live item 双写成两条消息。
         items.push({
-          itemId: `transcript:${entry.entryId}:assistant-content`,
+          itemId: `transcript:${assistantContentEntryId}:assistant-content`,
           itemType: 'message',
           runId: entry.runId ?? `thread:${entry.threadId}`,
           threadId: entry.threadId,
           turnId: entry.turnId,
           callId: null,
           role: 'assistant',
-          body: assistantContent,
+          body: assistantContentText,
           name: null,
           arguments: null,
           output: null,
           isError: false,
           phase: null,
           status: 'completed',
-          metadata: { transcriptEntryId: entry.entryId, transcriptSeq: entry.seq, assistantContentForCallId: callId, canonical: true },
-          timestamp: entry.timestamp,
+          metadata: {
+            transcriptEntryId: assistantContentEntryId,
+            transcriptSeq: assistantContentSeq,
+            assistantContentForCallId: callId,
+            assistantContentSource,
+            canonical: true,
+          },
+          timestamp: assistantContentTimestamp,
         })
       }
       items.push({
@@ -159,21 +170,55 @@ export function transcriptEntriesToConversationItems(entries: TranscriptEntry[])
   })
 }
 
-function assistantToolContentByCallId(entries: TranscriptEntry[]): Map<string, string> {
-  const contentByCallId = new Map<string, string>()
+interface AssistantToolContent {
+  content: string
+  entryId: string
+  displaySeq: number
+  displayTimestamp: string
+  source: 'checkpoint' | 'tool_call'
+}
+
+function assistantToolContentByCallId(entries: TranscriptEntry[]): Map<string, AssistantToolContent> {
+  const contentByCallId = new Map<string, AssistantToolContent>()
+  const toolCallDisplayByCallId = new Map<string, { seq: number; timestamp: string }>()
   for (const entry of entries) {
     if (entry.kind === 'tool_call') {
       const callId = typeof entry.payload.callId === 'string' ? entry.payload.callId : null
-      const content = typeof entry.payload.assistantContent === 'string' ? entry.payload.assistantContent.trim() : ''
-      if (callId && content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
+      if (!callId) continue
+      toolCallDisplayByCallId.set(callId, { seq: entry.seq, timestamp: entry.timestamp })
+      const content = assistantContentFromToolEntry(entry)
+      if (content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
       continue
     }
     if (entry.kind !== 'checkpoint' || entry.payload.type !== 'assistant_content_for_tool_call') continue
     const callId = typeof entry.payload.callId === 'string' ? entry.payload.callId : null
     const content = typeof entry.payload.content === 'string' ? entry.payload.content.trim() : ''
-    if (callId && content && !contentByCallId.has(callId)) contentByCallId.set(callId, content)
+    if (callId && content && !contentByCallId.has(callId)) {
+      const display = toolCallDisplayByCallId.get(callId)
+      contentByCallId.set(callId, {
+        content,
+        entryId: entry.entryId,
+        displaySeq: display?.seq ?? entry.seq,
+        displayTimestamp: display?.timestamp ?? entry.timestamp,
+        source: 'checkpoint',
+      })
+    }
   }
   return contentByCallId
+}
+
+function assistantContentFromToolEntry(entry: TranscriptEntry): AssistantToolContent | null {
+  const content = typeof entry.payload.assistantContent === 'string'
+    ? entry.payload.assistantContent.trim()
+    : ''
+  if (!content) return null
+  return {
+    content,
+    entryId: entry.entryId,
+    displaySeq: entry.seq,
+    displayTimestamp: entry.timestamp,
+    source: 'tool_call',
+  }
 }
 
 export async function retryAsync<T>(task: () => Promise<T>, retries: number, delayMs: number): Promise<T> {
