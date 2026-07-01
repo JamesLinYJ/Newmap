@@ -599,10 +599,48 @@ button.workbench-chrome__icon:hover,
   margin-bottom: 16px;
 }
 
+.workbench-inspector-card__head > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
 .workbench-inspector-card__head strong {
   font-size: 18px;
   font-weight: 760;
   letter-spacing: -0.02em;
+}
+
+.workbench-inspector-card__head span {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workbench-inspector-card__action {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  place-items: center;
+  border: 1px solid rgb(15 23 42 / 0.08);
+  border-radius: 10px;
+  color: #25313d;
+  background: rgb(255 255 255 / 0.76);
+  box-shadow: 0 8px 18px rgb(15 23 42 / 0.06);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.workbench-inspector-card__action:hover {
+  border-color: rgb(15 23 42 / 0.14);
+  background: #fff;
+  box-shadow: 0 10px 22px rgb(15 23 42 / 0.09);
+  transform: translateY(-1px);
 }
 
 .workbench-inspector-card p {
@@ -661,6 +699,7 @@ button.workbench-chrome__icon:hover,
 }
 
 .workbench-progress-step--done {
+  border-color: rgb(17 24 39 / 0.22);
   background: #ffffff;
   transform: scale(1.02);
 }
@@ -675,6 +714,64 @@ button.workbench-chrome__icon:hover,
   border: solid #a1a7aa;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
+}
+
+.workbench-progress-step--active {
+  border-color: rgb(14 116 144 / 0.34);
+  background: #e7f6f7;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 0 0 6px rgb(14 116 144 / 0.08);
+}
+
+.workbench-progress-step--active::after {
+  content: "";
+  position: absolute;
+  inset: 13px;
+  border-radius: inherit;
+  background: #0891b2;
+}
+
+.workbench-progress-step--pending {
+  opacity: 0.72;
+}
+
+.workbench-progress-step--warning {
+  border-color: rgb(190 18 60 / 0.28);
+  background: #fff1f2;
+}
+
+.workbench-progress-step--warning::before {
+  background: rgb(190 18 60 / 0.24);
+}
+
+.workbench-progress-card__meta {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.workbench-progress-card__meta strong {
+  overflow: hidden;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-progress-card--running .workbench-inspector-card__head span {
+  color: #0e7490;
+}
+
+.workbench-progress-card--done .workbench-inspector-card__head span {
+  color: #15803d;
+}
+
+.workbench-progress-card--warning .workbench-inspector-card__head span {
+  color: #be123c;
 }
 
 .workbench-inspector-map {

@@ -8,11 +8,14 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 
-import { useEffect, useRef, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react'
-import { Check, ChevronDown, ClipboardList, Sparkles, Square, Upload, Zap } from 'lucide-react'
+import { useEffect, useMemo, useRef, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react'
+import { Check, ChevronDown, ClipboardList, FolderUp, LoaderCircle, Mic, MicOff, Sparkles, Square, Upload, X, Zap } from 'lucide-react'
+import type { SpeechLanguageOption } from '@geo-agent-platform/shared-types'
 import { AppIcon } from '../../shared/components/AppIcon'
+import type { UploadReference } from '../../app/types'
 import { COMPOSER_MODES } from './composerModes'
 import type { ChatPanelProps, ComposerMode } from './types'
+import type { SpeechRecognitionStatus } from './useSpeechRecognition'
 
 interface ComposerProps {
   query: string
@@ -30,6 +33,17 @@ interface ComposerProps {
   onInterrupt?: () => void
   onUseTemplate: () => void
   onUploadFiles: (files: File[]) => void
+  uploadReferences?: UploadReference[]
+  onDismissUploadReference?: (id: string) => void
+  speechStatus?: SpeechRecognitionStatus
+  speechError?: string | null
+  speechInterimText?: string
+  speechLanguage?: string
+  speechLanguages?: SpeechLanguageOption[]
+  onSpeechLanguageChange?: (language: string) => void
+  onStartSpeechRecognition?: () => void
+  onStopSpeechRecognition?: () => void
+  onClearSpeechError?: () => void
   modeMenuOpen: boolean
   onModeMenuOpenChange: (open: boolean) => void
   onComposerModeChange: (mode: ComposerMode) => void
@@ -57,6 +71,17 @@ export function Composer({
   onInterrupt,
   onUseTemplate,
   onUploadFiles,
+  uploadReferences = [],
+  onDismissUploadReference,
+  speechStatus = 'idle',
+  speechError = null,
+  speechInterimText = '',
+  speechLanguage = 'zh-CN',
+  speechLanguages = [],
+  onSpeechLanguageChange,
+  onStartSpeechRecognition,
+  onStopSpeechRecognition,
+  onClearSpeechError,
   modeMenuOpen,
   onModeMenuOpenChange,
   onComposerModeChange,
@@ -68,7 +93,11 @@ export function Composer({
   const modeShortLabel = mode.id === 'auto' ? '自动' : '计划'
   const ModeTriggerIcon = mode.id === 'plan' ? ClipboardList : Zap
   const canSubmit = Boolean(query.trim()) && !isSubmitting
+  const speechEnabled = Boolean(onStartSpeechRecognition && onStopSpeechRecognition)
+  const speechBusy = speechStatus === 'authorizing' || speechStatus === 'stopping'
+  const speechActive = speechStatus === 'recognizing' || speechBusy
   const modePickerRef = useRef<HTMLDivElement | null>(null)
+  const uploadCards = useMemo(() => visibleUploadCards(uploadReferences), [uploadReferences])
 
   useEffect(() => {
     const input = composerInputRef.current
@@ -102,6 +131,10 @@ export function Composer({
 
   return (
     <form className="cc-composer" onSubmit={onSubmit}>
+      <UploadProgressTray
+        references={uploadCards}
+        onDismiss={onDismissUploadReference}
+      />
       <textarea
         id="analysis-query-input"
         ref={composerInputRef}
@@ -125,6 +158,18 @@ export function Composer({
 
       <div className="cc-composer-toolbar">
         <FileUploadButton onUploadFiles={onUploadFiles} disabled={isSubmitting} />
+        {speechEnabled ? (
+          <SpeechInputControl
+            status={speechStatus}
+            error={speechError}
+            language={speechLanguage}
+            languages={speechLanguages}
+            disabled={isSubmitting}
+            onLanguageChange={onSpeechLanguageChange}
+            onStart={onStartSpeechRecognition}
+            onStop={onStopSpeechRecognition}
+          />
+        ) : null}
         <button
           className="cc-composer-tool cc-composer-tool--template"
           type="button"
@@ -214,6 +259,17 @@ export function Composer({
         </button>
       </div>
 
+      {speechEnabled && (speechActive || speechInterimText || speechError) ? (
+        <div className={`cc-speech-status cc-speech-status--${speechError ? 'error' : speechStatus}`} role={speechError ? 'alert' : 'status'}>
+          <span>{formatSpeechStatus(speechStatus, speechInterimText, speechError)}</span>
+          {speechError && onClearSpeechError ? (
+            <button type="button" onClick={onClearSpeechError} aria-label="关闭语音错误提示">
+              <X size={13} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       <ComposerDiagnostics
         tokenBudget={tokenBudget}
         activeSkills={activeSkills}
@@ -225,6 +281,141 @@ export function Composer({
   )
 }
 
+function SpeechInputControl({
+  status,
+  error,
+  language,
+  languages,
+  disabled,
+  onLanguageChange,
+  onStart,
+  onStop,
+}: {
+  status: SpeechRecognitionStatus
+  error?: string | null
+  language: string
+  languages: SpeechLanguageOption[]
+  disabled: boolean
+  onLanguageChange?: (language: string) => void
+  onStart?: () => void
+  onStop?: () => void
+}) {
+  const busy = status === 'authorizing' || status === 'stopping'
+  const active = status === 'recognizing' || busy
+  const Icon = busy ? LoaderCircle : active ? MicOff : Mic
+  const label = active ? '停止语音输入' : '开始语音输入'
+  return (
+    <div className="cc-speech-control">
+      <button
+        className={`cc-composer-tool cc-composer-tool--speech${active ? ' cc-composer-tool--speech-active' : ''}${error ? ' cc-composer-tool--speech-error' : ''}`}
+        type="button"
+        disabled={disabled || busy}
+        title={label}
+        aria-label={label}
+        onClick={() => active ? onStop?.() : onStart?.()}
+      >
+        <Icon size={16} className={busy ? 'cc-spin' : undefined} />
+      </button>
+      {languages.length > 1 ? (
+        <select
+          className="cc-speech-language"
+          value={language}
+          disabled={disabled || active}
+          aria-label="语音识别语言"
+          onChange={(event) => onLanguageChange?.(event.target.value)}
+        >
+          {languages.map(option => (
+            <option key={option.locale} value={option.locale}>{option.label}</option>
+          ))}
+        </select>
+      ) : null}
+    </div>
+  )
+}
+
+function formatSpeechStatus(status: SpeechRecognitionStatus, interimText?: string, error?: string | null): string {
+  if (error) return error
+  if (interimText?.trim()) return `正在识别：${interimText.trim()}`
+  if (status === 'authorizing') return '正在申请语音授权...'
+  if (status === 'recognizing') return '正在听写，识别结果会填入输入框。'
+  if (status === 'stopping') return '正在停止语音输入...'
+  return ''
+}
+
+function UploadProgressTray({
+  references,
+  onDismiss,
+}: {
+  references: UploadReference[]
+  onDismiss?: (id: string) => void
+}) {
+  if (!references.length) return null
+
+  return (
+    <div className="cc-upload-tray" aria-label="上传进度">
+      {references.map((item) => {
+        const progress = uploadProgress(item)
+        const state = uploadVisualState(item.status)
+        const style = { '--cc-upload-progress': `${Math.round(progress * 360)}deg` } as CSSProperties
+        return (
+          <div key={item.id} className={`cc-upload-card cc-upload-card--${state}`} role="status">
+            <span className="cc-upload-card__icon" style={style} aria-hidden="true">
+              <span />
+            </span>
+            <span className="cc-upload-card__copy">
+              <strong title={item.name}>{item.name}</strong>
+              <small>{uploadSubtitle(item)}</small>
+            </span>
+            {onDismiss ? (
+              <button
+                type="button"
+                className="cc-upload-card__close"
+                aria-label={`收起 ${item.name} 上传提示`}
+                title="收起上传提示"
+                onClick={() => onDismiss(item.id)}
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function visibleUploadCards(references: UploadReference[]): UploadReference[] {
+  const aggregate = references.find(item => item.isAggregate)
+  if (aggregate) return [aggregate]
+  return references
+    .filter(item => ['uploading', 'queued', 'running', 'failed', 'ready', 'completed'].includes(item.status))
+    .slice(-2)
+}
+
+function uploadProgress(item: UploadReference): number {
+  if (typeof item.progress === 'number' && Number.isFinite(item.progress)) {
+    return Math.max(0, Math.min(1, item.progress))
+  }
+  if (['ready', 'completed', 'failed'].includes(item.status)) return 1
+  return 0
+}
+
+function uploadVisualState(status: string): 'active' | 'done' | 'failed' {
+  if (status === 'failed') return 'failed'
+  if (status === 'ready' || status === 'completed') return 'done'
+  return 'active'
+}
+
+function uploadSubtitle(item: UploadReference): string {
+  if (item.detail) return item.detail
+  if (item.totalCount && item.totalCount > 1) {
+    return `${item.completedCount ?? 0}/${item.totalCount} 个文件`
+  }
+  if (item.status === 'failed') return '上传失败'
+  if (item.status === 'ready' || item.status === 'completed') return '上传完成'
+  return '正在上传'
+}
+
 function FileUploadButton({
   disabled,
   onUploadFiles,
@@ -233,21 +424,36 @@ function FileUploadButton({
   onUploadFiles: (files: File[]) => void
 }) {
   return (
-    <label className={`cc-composer-tool${disabled ? ' cc-composer-tool--disabled' : ''}`} title="上传文件" aria-label="上传文件">
-      <Upload size={16} />
-      <input
-        type="file"
-        multiple
-        hidden
-        disabled={disabled}
-        onChange={(event) => {
-          const files = Array.from(event.target.files ?? [])
-          if (files.length) onUploadFiles(files)
-          event.currentTarget.value = ''
-        }}
-      />
-    </label>
+    <>
+      <label className={`cc-composer-tool${disabled ? ' cc-composer-tool--disabled' : ''}`} title="上传文件" aria-label="上传文件">
+        <Upload size={16} />
+        <input
+          type="file"
+          multiple
+          hidden
+          disabled={disabled}
+          onChange={(event) => consumeUploadInput(event.currentTarget, onUploadFiles)}
+        />
+      </label>
+      <label className={`cc-composer-tool${disabled ? ' cc-composer-tool--disabled' : ''}`} title="上传文件夹" aria-label="上传文件夹">
+        <FolderUp size={16} />
+        <input
+          type="file"
+          multiple
+          hidden
+          disabled={disabled}
+          {...{ webkitdirectory: '', directory: '' }}
+          onChange={(event) => consumeUploadInput(event.currentTarget, onUploadFiles)}
+        />
+      </label>
+    </>
   )
+}
+
+function consumeUploadInput(input: HTMLInputElement, onUploadFiles: (files: File[]) => void) {
+  const files = Array.from(input.files ?? [])
+  if (files.length) onUploadFiles(files)
+  input.value = ''
 }
 
 function ComposerDiagnostics({

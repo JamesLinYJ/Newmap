@@ -28,10 +28,11 @@ import type {
 
 import { apiBaseUrl } from '../../api/client'
 import { providerUnavailableLabel, supportsAgentSdkLiveSupervisor } from '../../shared/providerCapabilities'
-import type { LayerTreeNode } from '../layers/useLayerManager'
+import type { LayerPanelView, LayerTreeNode, LayerVisibilityFilter } from '../layers/useLayerManager'
 import { AppIcon } from '../../shared/components/AppIcon'
 import { LayerPanel } from '../layers/LayerManagerPanel'
 import { pickConversationHeadline } from '../conversation/items'
+import { buildDetailSummaryFacts } from './detailSummaryModel'
 
 interface ProgressItem {
   id: string
@@ -87,6 +88,8 @@ interface DetailPanelProps {
   onReplaceManagedLayer: (layerKey: string, file: File) => void
   onToggleLayerStatus: (layerKey: string, nextStatus: string) => void
   onDeleteLayer: (layerKey: string) => void
+  onRefreshManagedLayers: () => void
+  onCloseLayerManager: () => void
   // LayerPanel props
   layerTree?: LayerTreeNode[]
   layerSelectedId?: string | null
@@ -94,20 +97,26 @@ interface DetailPanelProps {
   layerTotalCount?: number
   layerVisibleCount?: number
   layerSelectedNode?: LayerTreeNode | undefined
-  onLayerSelect?: (id: string | null) => void
-  onLayerToggleVisibility?: (id: string) => void
-  onLayerToggleAllVisibility?: () => void
-  onLayerSetOpacity?: (id: string, opacity: number) => void
-  onLayerRename?: (id: string, name: string) => void
-  onLayerMoveUp?: (id: string) => void
-  onLayerMoveDown?: (id: string) => void
-  onLayerRemove?: (id: string) => void
-  onLayerCreateGroup?: (name: string, memberIds: string[]) => void
-  onLayerToggleGroup?: (id: string) => void
-  onLayerSetSearchQuery?: (q: string) => void
-  onLayerSetColor?: (id: string, color: string) => void
-  onLayerZoomTo?: (id: string) => void
-  onLayerExport?: (id: string) => void
+  layerActiveView: LayerPanelView
+  layerVisibilityFilter: LayerVisibilityFilter
+  onLayerSelect: (id: string | null) => void
+  onLayerToggleVisibility: (id: string) => void
+  onLayerToggleAllVisibility: () => void
+  onLayerSetOpacity: (id: string, opacity: number) => void
+  onLayerRename: (id: string, name: string) => void
+  onLayerMoveUp: (id: string) => void
+  onLayerMoveDown: (id: string) => void
+  onLayerRemove: (id: string) => void
+  onLayerCreateGroup: (name: string, memberIds: string[]) => void
+  onLayerToggleGroup: (id: string) => void
+  onLayerSetSearchQuery: (q: string) => void
+  onLayerSetColor: (id: string, color: string) => void
+  onLayerZoomTo: (id: string) => void
+  onLayerExport: (id: string) => void
+  onLayerSetActiveView: (view: LayerPanelView) => void
+  onLayerSetVisibilityFilter: (filter: LayerVisibilityFilter) => void
+  onLayerSetLabelEnabled: (id: string, enabled: boolean) => void
+  onLayerSetLabelField: (id: string, fieldName: string) => void
   // 统一文件管理
   allFiles?: import('../../api/client').FileEntry[]
   onUploadFile?: (file: File) => void
@@ -150,12 +159,16 @@ export const DetailPanel = memo(function DetailPanel({
   onReplaceManagedLayer,
   onToggleLayerStatus,
   onDeleteLayer,
+  onRefreshManagedLayers,
+  onCloseLayerManager,
   layerTree,
   layerSelectedId,
   layerSearchQuery,
   layerTotalCount,
   layerVisibleCount,
   layerSelectedNode,
+  layerActiveView,
+  layerVisibilityFilter,
   onLayerSelect,
   onLayerToggleVisibility,
   onLayerToggleAllVisibility,
@@ -170,6 +183,10 @@ export const DetailPanel = memo(function DetailPanel({
   onLayerSetColor,
   onLayerZoomTo,
   onLayerExport,
+  onLayerSetActiveView,
+  onLayerSetVisibilityFilter,
+  onLayerSetLabelEnabled,
+  onLayerSetLabelField,
   // 统一文件管理
   allFiles,
   onUploadFile,
@@ -190,8 +207,11 @@ export const DetailPanel = memo(function DetailPanel({
     ? `${apiBaseUrl}${typeof selectedArtifact.metadata.imageUrl === 'string' ? selectedArtifact.metadata.imageUrl : selectedArtifact.uri}`
     : null
   const selectedCollection = selectedArtifact ? artifactData[selectedArtifact.artifactId] : undefined
-  const featureCount = selectedCollection?.features.length ?? 0
   const summaryTitle = deriveSummaryTitle(agentState?.parsedIntent?.area ?? undefined, selectedArtifact?.name)
+  const resultFeatureCount = useMemo(
+    () => artifacts.reduce((total, artifact) => total + (artifactData[artifact.artifactId]?.features.length ?? 0), 0),
+    [artifacts, artifactData],
+  )
   const conversationHeadline = useMemo(
     () => pickConversationHeadline(items, runStatus),
     [items, runStatus],
@@ -201,45 +221,34 @@ export const DetailPanel = memo(function DetailPanel({
     (selectedArtifact
       ? `当前结果图层“${selectedArtifact.name}”已经生成，你可以继续查看对象分布、下载数据，或复制当前工作区链接。`
       : '分析完成后，这里会用更容易理解的语言总结地图结果和可执行建议。')
-  const metricScore = featureCount ? (92 + Math.min(featureCount, 8) * 0.55).toFixed(1) : '--'
-  const growthLabel = runStatus === 'completed' ? `+${Math.max(featureCount, 1) * 6.25}%` : '等待结果'
   const todoItems = agentState?.todos ?? []
   const subAgents = agentState?.subAgents ?? []
   const approvals = agentState?.approvals ?? []
-  const managedLayers = useMemo(
-    () => layers.filter((layer) => !layer.sourceType.startsWith('session_') && layer.sourceType !== 'upload'),
-    [layers],
-  )
-  const sessionUploadLayers = useMemo(
-    () => layers.filter((layer) => layer.sourceType.startsWith('session_') || layer.sourceType === 'upload'),
-    [layers],
-  )
   void uploadedLayerName
   void selectedBasemapName
-  void onImportManagedLayer
-  void onReplaceManagedLayer
-  void onToggleLayerStatus
-  void onDeleteLayer
   void isFileSubmitting
-  void managedLayers
-  void sessionUploadLayers
   const layerSummary = useMemo(() => buildLayerSummary(layers), [layers])
   const primaryItems = useMemo(() => artifacts.slice(0, 2), [artifacts])
   const cardLabels = useMemo(
-    () => primaryItems.map((artifact, index) => ({
-      title: index === 0 ? artifact.name : `${artifact.name}分布`,
+    () => primaryItems.map(artifact => ({
+      title: artifact.name,
       subtitle:
         artifact.artifactType === 'chart_png'
           ? '统计图表已生成，可直接预览或下载 PNG'
           : artifact.artifactType !== 'geojson'
             ? '文件结果已生成，可在详情面板预览或下载'
             :
-        index === 0
-          ? `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象已生成，可继续查看位置与范围`
-          : `当前结果已覆盖 ${Math.max(1.2, (artifactData[artifact.artifactId]?.features.length ?? 1) * 0.8).toFixed(1)}km² 可视区域`,
+        `${artifactData[artifact.artifactId]?.features.length ?? 0} 个对象 · ${mapLayers.find(layer => layer.artifact.artifactId === artifact.artifactId)?.geometrySummary ?? '矢量结果'}`,
     })),
-    [primaryItems, artifactData],
+    [primaryItems, artifactData, mapLayers],
   )
+  const summaryFacts = useMemo(() => buildDetailSummaryFacts({
+    runStatus,
+    artifactCount: artifacts.length,
+    resultFeatureCount,
+    activeReferenceLayerCount: layerSummary.active,
+    totalReferenceLayerCount: layerSummary.total,
+  }), [artifacts.length, layerSummary.active, layerSummary.total, resultFeatureCount, runStatus])
 
   return (
     <div className="dc-detail-column">
@@ -256,16 +265,22 @@ export const DetailPanel = memo(function DetailPanel({
               </div>
             </div>
 
-            <div className="dc-metric-grid">
-              <div className="dc-metric">
-                <span>活跃指数</span>
-                <strong>{metricScore}</strong>
-              </div>
-              <div className="dc-metric">
-                <span>增长率</span>
-                <strong className="dc-metric__accent">{growthLabel}</strong>
-              </div>
+            <div className="dc-summary-grid" aria-label="结果概览">
+              {summaryFacts.map(item => (
+                <div key={item.label} className="dc-summary-fact">
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </div>
+              ))}
             </div>
+
+            {selectedArtifact ? (
+              <div className="dc-current-result">
+                <span>当前结果</span>
+                <strong>{selectedArtifact.name}</strong>
+                <p>{cardLabels[primaryItems.findIndex(item => item.artifactId === selectedArtifact.artifactId)]?.subtitle ?? `${selectedCollection?.features.length ?? 0} 个对象可继续分析`}</p>
+              </div>
+            ) : null}
 
             <div className="dc-result-list">
               {primaryItems.length ? (
@@ -820,20 +835,33 @@ export const DetailPanel = memo(function DetailPanel({
           totalCount={layerTotalCount ?? 0}
           visibleCount={layerVisibleCount ?? 0}
           selectedNode={layerSelectedNode}
-          onSelectLayer={onLayerSelect ?? (() => {})}
-          onToggleVisibility={onLayerToggleVisibility ?? (() => {})}
-          onToggleAllVisibility={onLayerToggleAllVisibility ?? (() => {})}
-          onSetOpacity={onLayerSetOpacity ?? (() => {})}
-          onRenameLayer={onLayerRename ?? (() => {})}
-          onMoveUp={onLayerMoveUp ?? (() => {})}
-          onMoveDown={onLayerMoveDown ?? (() => {})}
-          onRemoveLayer={onLayerRemove ?? (() => {})}
-          onCreateGroup={onLayerCreateGroup ?? (() => {})}
-          onToggleGroup={onLayerToggleGroup ?? (() => {})}
-          onSetSearchQuery={onLayerSetSearchQuery ?? (() => {})}
-          onSetColor={onLayerSetColor ?? (() => {})}
-          onZoomToLayer={onLayerZoomTo ?? (() => {})}
-          onExportLayer={onLayerExport ?? (() => {})}
+          activeView={layerActiveView}
+          visibilityFilter={layerVisibilityFilter}
+          referenceLayers={layers}
+          onSelectLayer={onLayerSelect}
+          onToggleVisibility={onLayerToggleVisibility}
+          onToggleAllVisibility={onLayerToggleAllVisibility}
+          onSetOpacity={onLayerSetOpacity}
+          onRenameLayer={onLayerRename}
+          onMoveUp={onLayerMoveUp}
+          onMoveDown={onLayerMoveDown}
+          onRemoveLayer={onLayerRemove}
+          onCreateGroup={onLayerCreateGroup}
+          onToggleGroup={onLayerToggleGroup}
+          onSetSearchQuery={onLayerSetSearchQuery}
+          onSetColor={onLayerSetColor}
+          onZoomToLayer={onLayerZoomTo}
+          onExportLayer={onLayerExport}
+          onSetActiveView={onLayerSetActiveView}
+          onSetVisibilityFilter={onLayerSetVisibilityFilter}
+          onSetLabelEnabled={onLayerSetLabelEnabled}
+          onSetLabelField={onLayerSetLabelField}
+          onImportManagedLayer={onImportManagedLayer}
+          onReplaceManagedLayer={onReplaceManagedLayer}
+          onToggleReferenceLayerStatus={onToggleLayerStatus}
+          onDeleteReferenceLayer={onDeleteLayer}
+          onRefreshReferenceLayers={onRefreshManagedLayers}
+          onClose={onCloseLayerManager}
         />
       ) : null}
 

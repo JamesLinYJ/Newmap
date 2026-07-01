@@ -74,5 +74,6 @@ function contentTypeFor(artifactType: string): string {
   if (artifactType === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   if (artifactType === 'npz') return 'application/octet-stream'
   if (artifactType === 'raster_png') return 'image/png'
+  if (artifactType === 'audio_mp3') return 'audio/mpeg'
   return 'application/octet-stream'
 }

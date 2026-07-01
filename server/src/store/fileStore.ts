@@ -16,6 +16,7 @@ import { makeId, nowUtc } from '../utils/ids.js'
 export interface StoredFileEntry {
   id: string
   name: string
+  sourceRelativePath: string | null
   size: string
   sizeBytes: number
   uploadedAt: string
@@ -29,6 +30,7 @@ export interface StoredFileEntry {
 interface StoredFileMetadata {
   id: string
   name: string
+  sourceRelativePath: string | null
   sizeBytes: number
   uploadedAt: string
   status: string
@@ -63,19 +65,20 @@ export class RuntimeFileStore {
     const sorted = entries.sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt))
     const seen = new Set<string>()
     return sorted.filter(entry => {
-      const key = `${entry.threadId ?? '__global__'}:${entry.name}`
+      const key = `${entry.threadId ?? '__global__'}:${entry.sourceRelativePath ?? entry.name}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
     })
   }
 
-  async save(file: FileLike, threadId?: string | null, requestId?: string | null): Promise<StoredFileEntry> {
+  async save(file: FileLike, threadId?: string | null, requestId?: string | null, sourceRelativePath?: string | null): Promise<StoredFileEntry> {
     const uploadedAt = nowUtc()
     const cleanName = sanitizeFilename(file.name || 'upload.bin')
+    const cleanSourceRelativePath = sanitizeSourceRelativePath(sourceRelativePath, cleanName)
     const scope = scopeName(threadId)
-    // 线程文件按名称覆盖；requestId 同时保证连接中断后的重试落到同一条目。
-    const existing = await findMetadataByName(path.join(this.root, scope), cleanName)
+    // 线程文件按来源相对路径覆盖；没有目录信息时退回文件名。requestId 只负责新条目的幂等键。
+    const existing = await findMetadataBySourceKey(path.join(this.root, scope), cleanSourceRelativePath ?? cleanName)
     const id = existing?.id ?? (requestId?.trim() ? safePathSegment(requestId, 'requestId') : makeId('file'))
     const dir = path.join(this.root, scope, id)
     await mkdir(dir, { recursive: true })
@@ -95,6 +98,7 @@ export class RuntimeFileStore {
     const metadata: StoredFileMetadata = {
       id,
       name: cleanName,
+      sourceRelativePath: cleanSourceRelativePath,
       sizeBytes: bytes.byteLength,
       uploadedAt,
       status: 'ready',
@@ -132,6 +136,7 @@ export class RuntimeFileStore {
       const metadata: StoredFileMetadata = {
         id: entry.id,
         name: entry.name,
+        sourceRelativePath: entry.sourceRelativePath,
         sizeBytes: entry.sizeBytes,
         uploadedAt: entry.uploadedAt,
         status: entry.status,
@@ -158,6 +163,7 @@ function toEntry(metadata: StoredFileMetadata): StoredFileEntry {
   return {
     id: metadata.id,
     name: metadata.name,
+    sourceRelativePath: metadata.sourceRelativePath,
     size: formatBytes(metadata.sizeBytes),
     sizeBytes: metadata.sizeBytes,
     uploadedAt: metadata.uploadedAt,
@@ -191,6 +197,9 @@ async function readMetadata(filePath: string): Promise<StoredFileMetadata | null
     return {
       id: String(parsed.id ?? ''),
       name: String(parsed.name ?? ''),
+      sourceRelativePath: typeof parsed.sourceRelativePath === 'string' && parsed.sourceRelativePath.trim()
+        ? parsed.sourceRelativePath
+        : null,
       sizeBytes: Number(parsed.sizeBytes ?? 0),
       uploadedAt: String(parsed.uploadedAt ?? ''),
       status: String(parsed.status ?? 'ready'),
@@ -209,10 +218,10 @@ function scopeName(threadId?: string | null): string {
   return threadId?.trim() ? safePathSegment(threadId, 'threadId') : '__global__'
 }
 
-async function findMetadataByName(scopeDir: string, name: string): Promise<StoredFileMetadata | null> {
+async function findMetadataBySourceKey(scopeDir: string, sourceKey: string): Promise<StoredFileMetadata | null> {
   for (const metadataPath of await listMetadataFiles(scopeDir)) {
     const metadata = await readMetadata(metadataPath)
-    if (metadata?.name === name) return metadata
+    if (metadata && (metadata.sourceRelativePath ?? metadata.name) === sourceKey) return metadata
   }
   return null
 }
@@ -226,6 +235,26 @@ function safePathSegment(value: string, field: string): string {
 function sanitizeFilename(name: string): string {
   const base = path.basename(name).replace(/[^\w.\-\u4e00-\u9fff]+/gu, '_')
   return base || 'upload.bin'
+}
+
+function sanitizeSourceRelativePath(value: string | null | undefined, fallbackName: string): string | null {
+  const raw = value?.trim().replaceAll('\\', '/') ?? ''
+  if (!raw || raw === fallbackName) return null
+  if (raw.includes('\0')) throw new Error('sourceRelativePath 包含非法空字节')
+  if (raw.length > 1024) throw new Error('sourceRelativePath 过长')
+  if (path.posix.isAbsolute(raw) || /^[A-Za-z]:/u.test(raw)) {
+    throw new Error('sourceRelativePath 必须是相对路径')
+  }
+  const normalized = path.posix.normalize(raw)
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
+    throw new Error('sourceRelativePath 不能跳出上传目录')
+  }
+  const segments = normalized.split('/').filter(Boolean)
+  if (!segments.length || segments.some(segment => segment === '.' || segment === '..')) {
+    throw new Error('sourceRelativePath 包含非法路径段')
+  }
+  const cleaned = segments.map(segment => sanitizeFilename(segment)).join('/')
+  return cleaned && cleaned !== fallbackName ? cleaned : null
 }
 
 function safeObjectExtension(name: string): string {

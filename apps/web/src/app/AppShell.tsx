@@ -35,14 +35,14 @@ import { pickPreferredArtifactId } from '../features/artifacts/artifactSelection
 import { buildListItemVariants, buildListVariants, motionSpring } from '../shared/motion'
 import { pickConversationHeadline } from '../features/conversation/items'
 import { ChatPanel } from '../features/conversation/ChatPanel'
-import type { MemoryEntry, MemoryWriteInput } from '../features/conversation/types'
-import { deleteMemory, dreamMemories, listMemories, readMemory, searchMemories, writeMemory } from '../api/client'
+import type { MemoryEntry } from '../features/conversation/types'
+import { listMemories } from '../api/client'
 import { TopBar } from './layout/TopBar'
 import { WorkspaceLayout, type WorkspaceSidebarItem } from './layout/WorkspaceLayout'
+import { WorkbenchProgressCard } from './layout/WorkbenchProgressCard'
 import { AppRoutes } from './routes'
 import { supportsAgentSdkLiveSupervisor } from '../shared/providerCapabilities'
 import { MapErrorBoundary } from '../features/map/MapErrorBoundary'
-import { AppIcon } from '../shared/components/AppIcon'
 import {
   formatUiError,
   reportNonBlockingError,
@@ -115,6 +115,7 @@ function AppShell() {
   // 网络语义和实时订阅分别由控制器与 useRunState 所有。
   const location = useLocation()
   const [isMapActivated, setIsMapActivated] = useState(false)
+  const [mapFocusRequest, setMapFocusRequest] = useState<{ artifactId?: string; nonce: number }>()
   const [canonicalThreadItems, setCanonicalThreadItems] = useState<ConversationItem[]>([])
 
   const {
@@ -135,7 +136,6 @@ function AppShell() {
   } = useRunController()
   const {
     activeThreadId,
-    compactCurrentThread,
     ensureUploadThread: ensureSessionUploadThread,
     getThread,
     getThreadHistory,
@@ -144,23 +144,18 @@ function AppShell() {
     isRunHistoryLoading,
     loadRunHistory,
     loadWorkspaceBootstrap,
-    loadThreadContextState,
     purgeTrashedThread,
-    rebuildCurrentThreadMemory,
     refreshTrash,
     refreshSessionHistory,
     removeThread,
     renameThread,
     restoreTrashedThread,
-    saveThreadMemory,
     session,
     sessionRuns,
     sessionThreads,
     setActiveThreadId,
     setSession,
     setThreadRuns,
-    threadContext,
-    threadMemory,
     threadRuns,
     trashedThreads,
   } = useSessionThreadController()
@@ -182,11 +177,11 @@ function AppShell() {
     setProvider,
   } = useConnectionController()
   const currentThreadId = run?.threadId ?? agentState?.threadId ?? activeThreadId
-  const [memoryRecords, setMemoryRecords] = useState<MemoryFileRecord[]>([])
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([])
   const {
     activeNav,
     activeSidebarItem,
+    changeWorkspaceMode,
     changePrimaryNav: handleNavChange,
     copyShareLink: handleCopyShareLink,
     focusQueryInput,
@@ -202,6 +197,7 @@ function AppShell() {
     showSources,
     syncUrl,
     useNextTemplate: handleUseTemplate,
+    workspaceMode,
   } = useNavigationController({
     currentThreadId,
     runId: run?.id,
@@ -266,6 +262,7 @@ function AppShell() {
     artifacts,
     currentThreadId,
     ensureUploadThread,
+    layerPreferenceKey: `${currentThreadId ?? 'no-thread'}:${run?.id ?? 'no-run'}`,
     onSessionRecord: setSession,
     onShowSources: showSources,
     runStatus: run?.status,
@@ -395,6 +392,13 @@ function AppShell() {
   const primaryActionLabel = selectedArtifactId ? '发布结果' : '开始分析'
   const workspaceListVariants = buildListVariants(reducedMotion, 0.04, 0.02)
   const workspaceItemVariants = buildListItemVariants(reducedMotion, 16)
+
+  const handleLayerZoomTo = useCallback((artifactId: string) => {
+    // 图层管理的定位是一个显式地图动作：先同步选中结果，再发出一次性视角请求。
+    setSelectedArtifactId(artifactId)
+    setIsMapActivated(true)
+    setMapFocusRequest(current => ({ artifactId, nonce: (current?.nonce ?? 0) + 1 }))
+  }, [setSelectedArtifactId])
 
   const clearActiveRunState = useCallback(() => {
     clearRun()
@@ -856,52 +860,9 @@ function AppShell() {
     [clearActiveRunState, currentThreadId, removeThread, session?.id, setUiError, syncUrl],
   )
 
-  const handleLoadThreadContext = useCallback(async () => {
-    if (!currentThreadId) return
-    try {
-      await loadThreadContextState(currentThreadId)
-    } catch (error) {
-      setUiError(formatUiError(error, '上下文状态加载失败。'))
-    }
-  }, [currentThreadId, loadThreadContextState, setUiError])
-
-  const handleCompactThread = useCallback(async () => {
-    if (!currentThreadId) return
-    try {
-      setUiError(undefined)
-      await compactCurrentThread(currentThreadId)
-      const history = await getThreadHistory(currentThreadId, null, 200)
-      setCanonicalThreadItems(transcriptEntriesToConversationItems(history.entries))
-    } catch (error) {
-      setUiError(formatUiError(error, '线程压缩失败。'))
-    }
-  }, [compactCurrentThread, currentThreadId, getThreadHistory, setUiError])
-
-  const handleSaveThreadMemory = useCallback(async (content: string) => {
-    if (!currentThreadId) return
-    try {
-      setUiError(undefined)
-      await saveThreadMemory(currentThreadId, content)
-      await loadThreadContextState(currentThreadId)
-    } catch (error) {
-      setUiError(formatUiError(error, '线程记忆保存失败。'))
-    }
-  }, [currentThreadId, loadThreadContextState, saveThreadMemory, setUiError])
-
-  const handleRebuildThreadMemory = useCallback(async () => {
-    if (!currentThreadId) return
-    try {
-      setUiError(undefined)
-      await rebuildCurrentThreadMemory(currentThreadId)
-    } catch (error) {
-      setUiError(formatUiError(error, '线程记忆重建失败。'))
-    }
-  }, [currentThreadId, rebuildCurrentThreadMemory, setUiError])
-
   const refreshMemoryEntries = useCallback(async () => {
     const response = await listMemories()
     startTransition(() => {
-      setMemoryRecords(response.records)
       setMemoryEntries(response.records.map(memoryRecordToEntry))
     })
     return response
@@ -923,31 +884,6 @@ function AppShell() {
       setUiError(formatUiError(error, '记忆索引刷新失败。'))
     }
   }, [refreshMemoryEntries, setUiError])
-
-  const handleReadMemory = useCallback(async (scope: 'private' | 'team', relativePath: string) => {
-    return readMemory(scope, relativePath)
-  }, [])
-
-  const handleWriteMemory = useCallback(async (input: MemoryWriteInput) => {
-    const record = await writeMemory(input)
-    await refreshMemoryEntries()
-    return record
-  }, [refreshMemoryEntries])
-
-  const handleDeleteMemory = useCallback(async (scope: 'private' | 'team', relativePath: string) => {
-    await deleteMemory(scope, relativePath)
-    await refreshMemoryEntries()
-  }, [refreshMemoryEntries])
-
-  const handleSearchMemories = useCallback(async (queryText: string) => {
-    const response = await searchMemories(queryText)
-    return response.matches
-  }, [])
-
-  const handleDreamMemories = useCallback(async () => {
-    await dreamMemories(true)
-    await refreshMemoryEntries()
-  }, [refreshMemoryEntries])
 
   const handleForkMessage = useCallback(async (entryId: string) => {
     if (!currentThreadId || !session?.id) return
@@ -990,10 +926,6 @@ function AppShell() {
   const onRenameTaskStable = useStableVoid(handleRenameThread)
   const onDeleteTaskStable = useStableVoid(handleDeleteThread)
   const onForkMessageStable = useStableVoid(handleForkMessage)
-  const onLoadThreadContextStable = useStableVoid(handleLoadThreadContext)
-  const onCompactThreadStable = useStableVoid(handleCompactThread)
-  const onSaveThreadMemoryStable = useStableVoid(handleSaveThreadMemory)
-  const onRebuildThreadMemoryStable = useStableVoid(handleRebuildThreadMemory)
   const onRefreshMemoriesStable = useStableVoid(handleRefreshMemories)
   const handleRefreshTrash = useCallback(async () => { await refreshTrash() }, [refreshTrash])
   const onRefreshTrashStable = useStableVoid(handleRefreshTrash)
@@ -1095,6 +1027,8 @@ function AppShell() {
                 sessionThreads={sessionThreads}
                 onNewTask={handleNewConversation}
                 onSelectThread={onSelectTaskStable}
+                workspaceMode={workspaceMode}
+                onWorkspaceModeChange={changeWorkspaceMode}
                 toolsMode={activeNav === 'tools'}
                 toolsSlot={
                   <div className="tool-management-host min-w-0">
@@ -1133,6 +1067,7 @@ function AppShell() {
                     isSubmitting={isSubmitting}
                     errorMessage={uiError}
                     uploadedLayerName={uploadedLayerName}
+                    uploadReferences={uploadReferences}
                     decisions={agentState?.decisions ?? []}
                     sessionThreads={sessionThreads}
                     items={threadConversationItems}
@@ -1154,24 +1089,12 @@ function AppShell() {
                     onDeleteTask={onDeleteTaskStable}
                     onForkMessage={onForkMessageStable}
                     dataReferences={dataReferences}
-                    threadContext={threadContext}
-                    threadMemory={threadMemory}
-                    onLoadThreadContext={onLoadThreadContextStable}
-                    onCompactThread={onCompactThreadStable}
-                    onSaveThreadMemory={onSaveThreadMemoryStable}
-                    onRebuildThreadMemory={onRebuildThreadMemoryStable}
                     trashedThreads={trashedThreads}
                     onLoadTrash={onRefreshTrashStable}
                     onRestoreThread={onRestoreThreadStable}
                     onPurgeThread={onPurgeThreadStable}
                     memories={memoryEntries}
-                    memoryRecords={memoryRecords}
                     onRefreshMemories={onRefreshMemoriesStable}
-                    onReadMemory={handleReadMemory}
-                    onWriteMemory={handleWriteMemory}
-                    onDeleteMemory={handleDeleteMemory}
-                    onSearchMemories={handleSearchMemories}
-                    onDreamMemories={handleDreamMemories}
                     tokenBudget={tokenBudget}
                     activeSkills={activeSkills}
                     compactionLevel={compactionLevel}
@@ -1191,7 +1114,7 @@ function AppShell() {
                   >
                     <div className="workbench-map-shell__head">
                       <strong>地图与图层</strong>
-                      <button type="button" className="workbench-inspector-link" onClick={() => setPanelMode('layerManager')}>图层</button>
+                      <button type="button" className="workbench-inspector-link" onClick={() => setPanelMode('layerManager')}>图层管理</button>
                     </div>
                     <div className="workbench-map-shell__body">
                       {isMapActivated ? (
@@ -1206,6 +1129,7 @@ function AppShell() {
                               layers={mapLayers}
                               selectedArtifactId={selectedArtifactId}
                               selectedArtifactName={selectedArtifact?.name}
+                              focusRequest={mapFocusRequest}
                               onSelectArtifact={setSelectedArtifactId}
                               placeResolution={placeResolution}
                               agentState={agentState}
@@ -1228,106 +1152,107 @@ function AppShell() {
                 }
                 inspectorSlot={
                   <>
-                    <m.section
-                      className="workbench-inspector-card workbench-inspector-card--progress"
-                      aria-label="任务进度"
-                      layout
-                      transition={motionSpring.gentle}
-                    >
-                      <div className="workbench-inspector-card__head">
-                        <strong>Progress</strong>
-                        <AppIcon name="tune" size={15} />
-                      </div>
-                      <div className="workbench-progress-steps" aria-label="分析进度">
-                        <span className={run?.status ? 'workbench-progress-step workbench-progress-step--done' : 'workbench-progress-step'} />
-                        <span className={run?.status === 'running' || run?.status === 'completed' ? 'workbench-progress-step workbench-progress-step--done' : 'workbench-progress-step'} />
-                        <span className={run?.status === 'completed' ? 'workbench-progress-step workbench-progress-step--done' : 'workbench-progress-step'} />
-                      </div>
-                      <p>{run?.status === 'completed' ? '本轮分析已经完成。' : '较长的 GIS / 气象任务会在这里显示进度。'}</p>
-                    </m.section>
+                    <m.div layout transition={motionSpring.gentle}>
+                      <WorkbenchProgressCard
+                        runStatus={run?.status}
+                        progressItems={progressItems}
+                        tasks={progressTasks}
+                        events={deferredEvents}
+                        onOpenHistory={() => setPanelMode('history')}
+                      />
+                    </m.div>
                     <m.div className="workbench-inspector-detail" layout transition={motionSpring.gentle}>
                       <Suspense fallback={<DetailPanelFallback />}>
                         <m.div layout transition={motionSpring.gentle}>
                           <DetailPanel
-                        panelMode={panelMode}
-                        currentRunId={run?.id}
-                        runStatus={run?.status}
-                        agentState={agentState}
-                        items={deferredItems}
-                        artifacts={artifacts}
-                        artifactData={artifactData}
-                        mapLayers={mapLayers}
-                        layers={layers}
-                        events={deferredEvents}
-                        sessionRuns={sessionRuns}
-                        hasMoreHistory={hasMoreRunHistory}
-                        isHistoryLoading={isRunHistoryLoading}
-                        progressItems={progressItems}
-                        selectedArtifactId={selectedArtifactId}
-                        uploadedLayerName={uploadedLayerName}
-                        selectedBasemapName={selectedBasemap.name}
-                        provider={provider}
-                        model={model}
-                        providers={providers}
-                        systemComponents={systemComponents}
-                        isToolSubmitting={isToolSubmitting}
-                        onSelectArtifact={setSelectedArtifactId}
-                        onToggleArtifactVisibility={handleToggleArtifactVisibility}
-                        onChangeArtifactOpacity={handleArtifactOpacityChange}
-                        onSelectHistoryRun={(runId) => {
-                          void hydrateRunState(runId)
-                          setPanelMode('history')
-                          setActiveNav('history')
-                        }}
-                        onLoadMoreHistory={handleLoadMoreHistory}
-                        onCopyShareLink={() => {
-                          void handleCopyShareLink()
-                        }}
-                        onProviderChange={handleProviderChange}
-                        onModelChange={setModel}
-                        onImportManagedLayer={(file) => {
-                          void handleImportManagedLayer(file)
-                        }}
-                        onReplaceManagedLayer={(layerKey, file) => {
-                          void handleReplaceManagedLayer(layerKey, file)
-                        }}
-                        onToggleLayerStatus={(layerKey, nextStatus) => {
-                          void handleToggleLayerStatus(layerKey, nextStatus)
-                        }}
-                        onDeleteLayer={(layerKey) => {
-                          void handleDeleteLayer(layerKey)
-                        }}
-                        layerTree={layerManager.tree}
-                        layerSelectedId={layerManager.selectedId}
-                        layerSearchQuery={layerManager.searchQuery}
-                        layerTotalCount={layerManager.totalCount}
-                        layerVisibleCount={layerManager.visibleCount}
-                        layerSelectedNode={layerManager.selectedNode}
-                        onLayerSelect={layerManager.selectLayer}
-                        onLayerToggleVisibility={layerManager.toggleVisibility}
-                        onLayerToggleAllVisibility={layerManager.toggleAllVisibility}
-                        onLayerSetOpacity={layerManager.setOpacity}
-                        onLayerSetColor={layerManager.setColor}
-                        onLayerRename={layerManager.renameLayer}
-                        onLayerMoveUp={layerManager.moveUp}
-                        onLayerMoveDown={layerManager.moveDown}
-                        onLayerRemove={layerManager.removeLayer}
-                        onLayerCreateGroup={layerManager.createGroup}
-                        onLayerToggleGroup={layerManager.toggleGroup}
-                        onLayerSetSearchQuery={layerManager.setSearchQuery}
-                        onLayerZoomTo={setSelectedArtifactId}
-                        onLayerExport={handleExportLayer}
-                        allFiles={allFiles}
-                        onUploadFile={(file) => { void handleUploadAnyFile(file) }}
-                        onDeleteFile={(fileId) => { void handleDeleteAnyFile(fileId) }}
-                          isFileSubmitting={isFileSubmitting}
-                        />
+                            panelMode={panelMode}
+                            currentRunId={run?.id}
+                            runStatus={run?.status}
+                            agentState={agentState}
+                            items={deferredItems}
+                            artifacts={artifacts}
+                            artifactData={artifactData}
+                            mapLayers={mapLayers}
+                            layers={layers}
+                            events={deferredEvents}
+                            sessionRuns={sessionRuns}
+                            hasMoreHistory={hasMoreRunHistory}
+                            isHistoryLoading={isRunHistoryLoading}
+                            progressItems={progressItems}
+                            selectedArtifactId={selectedArtifactId}
+                            uploadedLayerName={uploadedLayerName}
+                            selectedBasemapName={selectedBasemap.name}
+                            provider={provider}
+                            model={model}
+                            providers={providers}
+                            systemComponents={systemComponents}
+                            isToolSubmitting={isToolSubmitting}
+                            onSelectArtifact={setSelectedArtifactId}
+                            onToggleArtifactVisibility={handleToggleArtifactVisibility}
+                            onChangeArtifactOpacity={handleArtifactOpacityChange}
+                            onSelectHistoryRun={(runId) => {
+                              void hydrateRunState(runId)
+                              setPanelMode('history')
+                              setActiveNav('history')
+                            }}
+                            onLoadMoreHistory={handleLoadMoreHistory}
+                            onCopyShareLink={() => {
+                              void handleCopyShareLink()
+                            }}
+                            onProviderChange={handleProviderChange}
+                            onModelChange={setModel}
+                            onImportManagedLayer={(file) => {
+                              void handleImportManagedLayer(file)
+                            }}
+                            onReplaceManagedLayer={(layerKey, file) => {
+                              void handleReplaceManagedLayer(layerKey, file)
+                            }}
+                            onToggleLayerStatus={(layerKey, nextStatus) => {
+                              void handleToggleLayerStatus(layerKey, nextStatus)
+                            }}
+                            onDeleteLayer={(layerKey) => {
+                              void handleDeleteLayer(layerKey)
+                            }}
+                            onRefreshManagedLayers={() => {
+                              void refreshLayers(session?.id, currentThreadId)
+                            }}
+                            onCloseLayerManager={() => setPanelMode('summary')}
+                            layerTree={layerManager.tree}
+                            layerSelectedId={layerManager.selectedId}
+                            layerSearchQuery={layerManager.searchQuery}
+                            layerTotalCount={layerManager.totalCount}
+                            layerVisibleCount={layerManager.visibleCount}
+                            layerSelectedNode={layerManager.selectedNode}
+                            layerActiveView={layerManager.activeView}
+                            layerVisibilityFilter={layerManager.visibilityFilter}
+                            onLayerSelect={layerManager.selectLayer}
+                            onLayerToggleVisibility={layerManager.toggleVisibility}
+                            onLayerToggleAllVisibility={layerManager.toggleAllVisibility}
+                            onLayerSetOpacity={layerManager.setOpacity}
+                            onLayerSetColor={layerManager.setColor}
+                            onLayerRename={layerManager.renameLayer}
+                            onLayerMoveUp={layerManager.moveUp}
+                            onLayerMoveDown={layerManager.moveDown}
+                            onLayerRemove={layerManager.removeLayer}
+                            onLayerCreateGroup={layerManager.createGroup}
+                            onLayerToggleGroup={layerManager.toggleGroup}
+                            onLayerSetSearchQuery={layerManager.setSearchQuery}
+                            onLayerZoomTo={handleLayerZoomTo}
+                            onLayerExport={handleExportLayer}
+                            onLayerSetActiveView={layerManager.setActiveView}
+                            onLayerSetVisibilityFilter={layerManager.setVisibilityFilter}
+                            onLayerSetLabelEnabled={layerManager.setLabelEnabled}
+                            onLayerSetLabelField={layerManager.setLabelField}
+                            allFiles={allFiles}
+                            onUploadFile={(file) => { void handleUploadAnyFile(file) }}
+                            onDeleteFile={(fileId) => { void handleDeleteAnyFile(fileId) }}
+                            isFileSubmitting={isFileSubmitting}
+                          />
                         </m.div>
                       </Suspense>
                     </m.div>
                   </>
                 }
-                mapMode={activeNav === 'layers' || activeSidebarItem === 'sources'}
               />
             }
             debug={

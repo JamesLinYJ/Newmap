@@ -66,4 +66,27 @@ describe('RuntimeFileStore path boundaries', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  // 文件夹上传依赖来源相对路径区分同名文件；工具读取仍使用安全的内容寻址路径。
+  it('preserves folder relative paths without using them as runtime object paths', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-files-'))
+    try {
+      const files = new RuntimeFileStore(root)
+      const file = (bytes: number[]) => ({
+        name: 'latest.bin.bz2',
+        arrayBuffer: async () => Uint8Array.from(bytes).buffer,
+      })
+
+      const first = await files.save(file([1]), 'thread_1', null, 'Z9041/latest.bin.bz2')
+      const second = await files.save(file([2]), 'thread_1', null, 'Z9573/latest.bin.bz2')
+      const entries = await files.list('thread_1')
+
+      expect(first.sourceRelativePath).toBe('Z9041/latest.bin.bz2')
+      expect(second.sourceRelativePath).toBe('Z9573/latest.bin.bz2')
+      expect(entries.map(entry => entry.sourceRelativePath).sort()).toEqual(['Z9041/latest.bin.bz2', 'Z9573/latest.bin.bz2'])
+      expect(entries.every(entry => entry.relativePath.startsWith('objects/sha256/'))).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })

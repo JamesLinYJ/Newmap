@@ -522,7 +522,12 @@ export class OpenAIAgentsRuntime {
         if (item.type === 'function_call') {
           const exists = (await this.store.activeTranscript(threadId))
             .some(entry => entry.kind === 'tool_call' && entry.payload.callId === item.callId)
-          if (!exists) throw new Error(`SDK Session 收到未准备的工具调用 '${item.callId}'`)
+          if (!exists) {
+            if (this.isPlatformManagedTool(item.name, options.runtimeConfig)) {
+              throw new Error(`SDK Session 收到未准备的工具调用 '${item.callId}'`)
+            }
+            await this.appendSandboxNativeToolCallTranscript(options.runId, threadId, turnId, item, itemSink)
+          }
           if (pendingSessionAssistantContent) {
             if (!assembly) throw new Error('SDK Session 工具调用早于运行时装配完成')
             await this.appendAssistantContentCheckpoint(assembly, item.callId, pendingSessionAssistantContent)
@@ -537,6 +542,10 @@ export class OpenAIAgentsRuntime {
           if (exists) continue
           const content = toolResultText(item.output)
           const isSubAgent = options.runtimeConfig.subAgents.some(config => config.agentId === item.name)
+          const isSandboxNativeTool = !this.isPlatformManagedTool(item.name, options.runtimeConfig)
+          const ledgerStatus = isSandboxNativeTool
+            ? sdkNativeLedgerStatus(item.status)
+            : (isSubAgent ? 'completed' : 'rejected')
           await this.store.appendTranscript({
             threadId,
             runId: options.runId,
@@ -548,10 +557,26 @@ export class OpenAIAgentsRuntime {
               summary: content,
               content,
               contentRef: null,
-              ledgerStatus: isSubAgent ? 'completed' : 'rejected',
+              ledgerStatus,
               resultId: null,
+              ...(isSandboxNativeTool ? { source: 'openai_agents_sandbox' } : {}),
             },
           })
+          if (isSandboxNativeTool) {
+            const outputItem = itemSink.startItem('function_call_output', {
+              callId: item.callId,
+              name: item.name,
+              role: 'tool',
+              metadata: { source: 'openai_agents_sandbox' },
+            })
+            itemSink.completeItem(outputItem.itemId, {
+              callId: item.callId,
+              name: item.name,
+              output: content,
+              isError: ledgerStatus === 'failed',
+              metadata: { source: 'openai_agents_sandbox' },
+            })
+          }
           await this.store.conversationStore.saveRun(this.store.getRun(options.runId), {
             pendingToolCallIds: [],
             recoveryStatus: 'clean',
@@ -815,6 +840,47 @@ export class OpenAIAgentsRuntime {
       })
       projected.entryId = entry.entryId
     }
+  }
+
+  private isPlatformManagedTool(toolName: string, runtimeConfig: AgentRuntimeConfig): boolean {
+    return Boolean(this.toolRegistry.get(toolName))
+      || runtimeConfig.subAgents.some(config => config.agentId === toolName)
+  }
+
+  private async appendSandboxNativeToolCallTranscript(
+    runId: string,
+    threadId: string,
+    turnId: string,
+    item: Extract<AgentInputItem, { type: 'function_call' }>,
+    itemSink: ItemSink,
+  ): Promise<void> {
+    const args = parseArguments(item.arguments)
+    await this.store.appendTranscript({
+      threadId,
+      runId,
+      turnId,
+      kind: 'tool_call',
+      payload: {
+        callId: item.callId,
+        name: item.name,
+        arguments: args,
+        ledgerStatus: sdkNativeLedgerStatus(item.status),
+        source: 'openai_agents_sandbox',
+      },
+    })
+    const callItem = itemSink.startItem('function_call', {
+      name: item.name,
+      callId: item.callId,
+      arguments: item.arguments,
+      metadata: { source: 'openai_agents_sandbox' },
+    })
+    itemSink.completeItem(callItem.itemId, {
+      name: item.name,
+      callId: item.callId,
+      body: item.status === 'incomplete' ? 'SDK 沙箱工具执行未完成' : 'SDK 沙箱工具已执行',
+      isError: item.status === 'incomplete',
+      metadata: { source: 'openai_agents_sandbox' },
+    })
   }
 
   // appendAssistantMessageTranscript
@@ -1259,6 +1325,12 @@ function requireThreadId(threadId: string | null | undefined): string {
 function requireString(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value) throw new Error(`${field} 不能为空`)
   return value
+}
+
+function sdkNativeLedgerStatus(status: 'completed' | 'in_progress' | 'incomplete'): 'started' | 'completed' | 'failed' {
+  if (status === 'incomplete') return 'failed'
+  if (status === 'in_progress') return 'started'
+  return 'completed'
 }
 
 function errorMessage(error: unknown): string {

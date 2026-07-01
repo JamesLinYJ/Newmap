@@ -28,6 +28,7 @@ import type {
   RunEvent,
   RunSummaryPage,
   SessionRecord,
+  SpeechAuthorization,
   SystemComponentsStatus,
   ToolDescriptor,
   ThreadDetailSnapshot,
@@ -321,6 +322,10 @@ export function getSystemComponents() {
   return requestControl<SystemComponentsStatus>('system:get')
 }
 
+export function getSpeechAuthorization() {
+  return requestControl<SpeechAuthorization>('speech:authorization')
+}
+
 export function listTools() {
   return requestControl<ToolDescriptor[]>('tool:list')
 }
@@ -396,24 +401,30 @@ export function runTool(payload: Record<string, unknown>) {
   return requestControl<Record<string, unknown>>('tool:run', payload)
 }
 
-export async function uploadLayer(sessionId: string, file: File, threadId?: string | null) {
+export async function uploadLayer(sessionId: string, file: File, threadId?: string | null, sourceRelativePath?: string | null) {
   // 图层上传走 FormData，避免手动处理二进制序列化。
   const formData = new FormData()
   formData.append('session_id', sessionId)
   if (threadId) {
     formData.append('threadId', threadId)
   }
+  if (sourceRelativePath) {
+    formData.append('sourceRelativePath', sourceRelativePath)
+  }
   formData.append('file', file)
 
   return requestFormJson<LayerDescriptor>('/api/v1/layers/register', formData, '图层上传请求失败')
 }
 
-export async function uploadMeteorologicalDataset(sessionId: string, file: File, threadId?: string | null) {
+export async function uploadMeteorologicalDataset(sessionId: string, file: File, threadId?: string | null, sourceRelativePath?: string | null) {
   // 气象数据上传只写 meteorology 数据面；后端负责把 datasetId 与 runtime 文件对象关联。
   const formData = new FormData()
   formData.append('sessionId', sessionId)
   if (threadId) {
     formData.append('threadId', threadId)
+  }
+  if (sourceRelativePath) {
+    formData.append('sourceRelativePath', sourceRelativePath)
   }
   formData.append('file', file)
 
@@ -495,6 +506,7 @@ export interface FileEntry {
   uploadedAt: string; status: string
   threadId?: string | null
   relativePath?: string
+  sourceRelativePath?: string | null
 }
 
 export function resumeRun(runId: string) {
@@ -509,12 +521,13 @@ export function listAllFiles(threadId?: string | null) {
   return requestControl<FileListResponse>('file:list', { threadId })
 }
 
-export async function uploadAnyFile(file: File, threadId?: string | null, requestId?: string) {
+export async function uploadAnyFile(file: File, threadId?: string | null, requestId?: string, sourceRelativePath?: string | null) {
   const form = new FormData()
   form.append('file', file)
   if (threadId) form.append('threadId', threadId)
   if (requestId) form.append('requestId', requestId)
-  return requestFormJson<{ id: string; name: string; size: string; sizeBytes: number }>(
+  if (sourceRelativePath) form.append('sourceRelativePath', sourceRelativePath)
+  return requestFormJson<{ id: string; name: string; size: string; sizeBytes: number; sourceRelativePath?: string | null }>(
     '/api/v1/files/upload',
     form,
     '文件上传请求失败',

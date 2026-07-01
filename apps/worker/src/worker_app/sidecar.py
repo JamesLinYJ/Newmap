@@ -12,11 +12,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
 import os
 from pathlib import Path
+import shutil
 import sys
-from typing import Any
+import tempfile
+from typing import Any, Iterator
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -158,7 +161,8 @@ def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, 
     if tool_name == "inspect_radar_station_collection":
         from gis_meteorology.third_party.radar_mosaic_agent.adapter import inspect_radar_station_collection
 
-        return inspect_radar_station_collection(referenced_paths(args, "files"))
+        with radar_semantic_input_paths(args, "files") as paths:
+            return inspect_radar_station_collection(paths)
     if tool_name == "recommend_radar_mosaic_strategy":
         from gis_meteorology.third_party.radar_mosaic_agent.adapter import recommend_radar_mosaic_strategy
 
@@ -173,19 +177,20 @@ def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, 
         output_npz = output_path(args, key="output_npz_relative_path")
         output_map_png_value = optional_text(args, "output_map_png_relative_path")
         output_map_png = output_path(args, key="output_map_png_relative_path") if output_map_png_value else None
-        result = render_radar_mosaic(
-            paths=referenced_paths(args, "files"),
-            output_png=output_png,
-            output_npz=output_npz,
-            output_map_png=output_map_png,
-            target_time=required_text(args, "target_time"),
-            tolerance_sec=optional_int(args, "tolerance_sec") or 300,
-            strategy=optional_text(args, "strategy") or "max",
-            product=optional_text(args, "product") or "reflectivity",
-            level_index=optional_int(args, "level_index") or 0,
-            grid_res_km=optional_float(args, "grid_res_km") or 1.0,
-            min_dbz=optional_float(args, "min_dbz") or 5.0,
-        )
+        with radar_semantic_input_paths(args, "files") as paths:
+            result = render_radar_mosaic(
+                paths=paths,
+                output_png=output_png,
+                output_npz=output_npz,
+                output_map_png=output_map_png,
+                target_time=required_text(args, "target_time"),
+                tolerance_sec=optional_int(args, "tolerance_sec") or 300,
+                strategy=optional_text(args, "strategy") or "max",
+                product=optional_text(args, "product") or "reflectivity",
+                level_index=optional_int(args, "level_index") or 0,
+                grid_res_km=optional_float(args, "grid_res_km") or 1.0,
+                min_dbz=optional_float(args, "min_dbz") or 5.0,
+            )
         return {
             **result,
             "outputPngRelativePath": relative_runtime_path(output_png),
@@ -388,6 +393,75 @@ def referenced_filename(value: dict[str, Any], source: Path) -> str:
         if isinstance(raw, str) and raw.strip():
             return Path(raw.strip()).name
     return source.name
+
+
+@contextmanager
+def radar_semantic_input_paths(args: dict[str, Any], key: str) -> Iterator[list[Path]]:
+    """为依赖文件名和父目录语义的雷达算法重建临时输入视图。"""
+
+    items = sequence_items({key: args.get(key)}) if key == "files" else _file_reference_items(args, key)
+    with tempfile.TemporaryDirectory(prefix="geoforge-radar-input-") as tmp:
+        root = Path(tmp)
+        aliases: list[Path] = []
+        for index, item in enumerate(items):
+            source = referenced_path(item)
+            alias = root / radar_semantic_relative_path(item, source, index)
+            alias.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, alias)
+            aliases.append(alias)
+        yield aliases
+
+
+def _file_reference_items(args: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    items = args.get(key)
+    if not isinstance(items, list) or not items:
+        raise ValueError(f"{key} 必须是非空文件引用数组")
+    if not all(isinstance(item, dict) for item in items):
+        raise ValueError(f"{key} 中每一项必须是对象")
+    return items
+
+
+def radar_semantic_relative_path(value: dict[str, Any], source: Path, index: int) -> Path:
+    """把平台文件引用投影成雷达算法需要的“站点目录/原始文件名”结构。"""
+
+    raw_relative = value.get("sourceRelativePath")
+    filename = referenced_filename(value, source)
+    if isinstance(raw_relative, str) and raw_relative.strip():
+        semantic = safe_relative_path(raw_relative.strip())
+        if semantic.name:
+            return Path(f"{index + 1:04d}") / semantic
+    station = radar_station_from_filename(filename)
+    return Path(f"{index + 1:04d}") / (station or f"station_{index + 1}") / safe_path_segment(filename)
+
+
+def safe_relative_path(value: str) -> Path:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        raise ValueError("雷达文件 sourceRelativePath 不能是绝对路径")
+    clean_parts: list[str] = []
+    for part in candidate.parts:
+        if part in {"", ".", ".."}:
+            if part == "..":
+                raise ValueError("雷达文件 sourceRelativePath 不能包含上级目录")
+            continue
+        clean_parts.append(safe_path_segment(part))
+    if not clean_parts:
+        raise ValueError("雷达文件 sourceRelativePath 不能为空")
+    return Path(*clean_parts)
+
+
+def safe_path_segment(value: str) -> str:
+    name = Path(value.strip()).name
+    if not name or name in {".", ".."} or "\x00" in name:
+        raise ValueError("雷达文件名不合法")
+    return name
+
+
+def radar_station_from_filename(filename: str) -> str | None:
+    parts = filename.split("_")
+    if len(parts) >= 4 and parts[0] == "Z" and parts[1] == "RADR":
+        return safe_path_segment(parts[3])
+    return None
 
 
 def resolve_runtime_path(relative: str, *, must_exist: bool) -> Path:

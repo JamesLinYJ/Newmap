@@ -37,6 +37,8 @@ import {
 import { memoryScopeSchema, memoryTypeSchema } from '../memory/schemas.js'
 import { buildSystemPrompt } from '../agent/prompts.js'
 import { ItemSink } from '../conversation/itemSink.js'
+import { getEnv } from '../framework/env.js'
+import { AzureSpeechService } from '../speech/azureSpeechService.js'
 
 interface WsDependencies {
   store: PostgresPlatformStore
@@ -412,6 +414,8 @@ async function handleMessage(
         toolProviders: toolRegistry.providerStatuses(),
       }
     }
+    case 'speech:authorization':
+      return new AzureSpeechService(getEnv()).issueAuthorization()
     case 'file:list': {
       const entries = await files.list(optionalString(payload.threadId))
       return { files: entries, total: entries.length }
@@ -428,7 +432,10 @@ async function handleMessage(
     case 'layer:list':
       return postgis.listLayers(optionalString(payload.sessionId), optionalString(payload.threadId))
     case 'layer:update':
-      return postgis.updateLayerMetadata(requiredString(payload, 'layerKey'), requiredRecord(payload, 'update'))
+      return postgis.updateLayerMetadata(
+        requiredString(payload, 'layerKey'),
+        requiredRecord(payload, 'update'),
+      )
     case 'layer:delete': {
       const layerKey = requiredString(payload, 'layerKey')
       const deleted = await postgis.deleteLayer(layerKey)
@@ -470,6 +477,12 @@ async function executeTool(
     runtimeConfig: run.runtimeConfigSnapshot ?? await resolveRuntimeConfig(store, runtimeConfigDefaults),
     state: values,
     resolveValueRef: refId => resolveRuntimeValueRef(values, refId),
+    resolveMeteorologicalDataset: input => store.resolveMeteorologicalDataset({
+      sessionId: run.sessionId,
+      threadId: run.threadId,
+      datasetId: input.datasetId ?? null,
+      filename: input.filename ?? null,
+    }),
     invokeStructuredModel: async prompt => {
       const adapter = modelRegistry.resolveProvider(run.modelProvider)
       const response = await adapter.chat(prompt, { model: run.modelName ?? adapter.defaultModel, reasoning: false })

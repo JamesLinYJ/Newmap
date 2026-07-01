@@ -730,6 +730,20 @@ export const modelProviderDescriptorSchema = z.object({
   contextWindowTokens: z.number().int().positive().default(128000),
 })
 
+export const speechLanguageOptionSchema = z.object({
+  locale: z.string(),
+  label: z.string(),
+})
+
+export const speechAuthorizationSchema = z.object({
+  authorizationToken: z.string(),
+  region: z.string(),
+  endpoint: z.string(),
+  expiresAt: z.string(),
+  defaultLanguage: z.string(),
+  supportedLanguages: z.array(speechLanguageOptionSchema).default([]),
+})
+
 export const toolParameterOptionSchema = z.object({
   label: z.string(),
   value: z.string(),
@@ -829,6 +843,8 @@ export type LayerPropertyDescriptor = z.infer<typeof layerPropertyDescriptorSche
 export type LayerDescriptor = z.infer<typeof layerDescriptorSchema>
 export type BasemapDescriptor = z.infer<typeof basemapDescriptorSchema>
 export type ModelProviderDescriptor = z.infer<typeof modelProviderDescriptorSchema>
+export type SpeechLanguageOption = z.infer<typeof speechLanguageOptionSchema>
+export type SpeechAuthorization = z.infer<typeof speechAuthorizationSchema>
 export type ToolParameterOption = z.infer<typeof toolParameterOptionSchema>
 export type ToolParameterDescriptor = z.infer<typeof toolParameterDescriptorSchema>
 export type ToolDescriptor = z.infer<typeof toolDescriptorSchema>

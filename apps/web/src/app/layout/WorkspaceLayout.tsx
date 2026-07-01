@@ -21,6 +21,8 @@ import type { AgentThreadRecord } from '@geo-agent-platform/shared-types'
 import { AppIcon, type AppIconName } from '../../shared/components/AppIcon'
 import { LiquidGlassLayer } from '../../shared/components/LiquidGlassLayer'
 import { buildFadeUpMotion, motionSpring } from '../../shared/motion'
+import type { WorkspaceMode } from '../types'
+import { isMapWorkspaceMode, reduceWorkspaceMode } from '../workspaceModeModel'
 
 export interface WorkspaceSidebarItem {
   id: string
@@ -59,7 +61,8 @@ interface WorkspaceLayoutProps {
   mapSlot: ReactNode
   inspectorSlot: ReactNode
   toolsSlot: ReactNode
-  mapMode: boolean
+  workspaceMode: WorkspaceMode
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void
   toolsMode: boolean
 }
 
@@ -106,14 +109,15 @@ export function WorkspaceLayout({
   mapSlot,
   inspectorSlot,
   toolsSlot,
-  mapMode,
+  workspaceMode,
+  onWorkspaceModeChange,
   toolsMode,
 }: WorkspaceLayoutProps) {
   const [mobilePanel, setMobilePanel] = useState<MobileWorkspacePanel>('chat')
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const effectiveMobilePanel = toolsMode ? 'tools' : mobilePanel === 'tools' ? 'chat' : mobilePanel
   const recentThreads = sessionThreads.slice(0, 7)
-  const isMapContext = mapMode || activeSidebarItem === 'query' || activeSidebarItem === 'sources' || activeSidebarItem === 'export'
+  const mapMode = isMapWorkspaceMode(workspaceMode)
   const panelTransition = reducedMotion ? { duration: 0 } : motionSpring.gentle
   const panelMotion = reducedMotion
     ? {
@@ -134,6 +138,11 @@ export function WorkspaceLayout({
     setMobileSidebarOpen(false)
   }
 
+  const selectWorkspaceMode = (mode: WorkspaceMode) => {
+    onWorkspaceModeChange(reduceWorkspaceMode(workspaceMode, { kind: 'mode-tab', mode }))
+    setMobileSidebarOpen(false)
+  }
+
   const selectMobilePanel = (panel: MobileWorkspacePanel) => {
     setMobilePanel(panel)
     if (panel === 'tools') {
@@ -145,7 +154,6 @@ export function WorkspaceLayout({
       return
     }
     if (panel === 'map') {
-      onSidebarItemClick('sources')
       return
     }
     onSidebarItemClick('assistant')
@@ -190,16 +198,18 @@ export function WorkspaceLayout({
           <div className="workbench-mode-tabs" aria-label="工作台模式">
             <button
               type="button"
-              className={!isMapContext ? 'workbench-mode-tab workbench-mode-tab--active' : 'workbench-mode-tab'}
-              onClick={() => selectSidebarItem('assistant')}
+              className={workspaceMode === 'meteorology' ? 'workbench-mode-tab workbench-mode-tab--active' : 'workbench-mode-tab'}
+              aria-pressed={workspaceMode === 'meteorology'}
+              onClick={() => selectWorkspaceMode('meteorology')}
             >
               <AppIcon name="psychology" size={16} />
               <span>气象分析</span>
             </button>
             <button
               type="button"
-              className={isMapContext ? 'workbench-mode-tab workbench-mode-tab--active' : 'workbench-mode-tab'}
-              onClick={() => selectSidebarItem('sources')}
+              className={workspaceMode === 'map' ? 'workbench-mode-tab workbench-mode-tab--active' : 'workbench-mode-tab'}
+              aria-pressed={workspaceMode === 'map'}
+              onClick={() => selectWorkspaceMode('map')}
             >
               <AppIcon name="deployed_code" size={16} />
               <span>地图浏览</span>

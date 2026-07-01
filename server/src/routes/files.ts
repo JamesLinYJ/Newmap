@@ -22,7 +22,8 @@ export function fileRoutes(runtimeRoot: string, store: PostgresPlatformStore) {
         const file = requireFile(form.get('file'))
         const threadId = formString(form, 'threadId')
         const requestId = formString(form, 'requestId')
-        const entry = await files.save(file, threadId, requestId)
+        const sourceRelativePath = formString(form, 'sourceRelativePath') ?? formString(form, 'relativePath')
+        const entry = await files.save(file, threadId, requestId, sourceRelativePath)
         if (threadId) await store.recordAttachment(threadId, entry)
         return c.json(entry)
       } catch (error) {

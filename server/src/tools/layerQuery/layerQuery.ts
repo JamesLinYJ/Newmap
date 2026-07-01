@@ -29,7 +29,7 @@ export function createLayerQueryTool(postgis) {
             },
             required: ['layerKey'],
         },
-        async handler(args) {
+        async handler(args, ctx) {
             const layerKey = String(args.layerKey);
             const bbox = Array.isArray(args.bbox) ? args.bbox.map(Number) : undefined;
             const limit = typeof args.limit === 'number' ? args.limit : 100;

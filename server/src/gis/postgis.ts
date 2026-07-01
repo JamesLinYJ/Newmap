@@ -28,7 +28,7 @@ export class PostGisRepository {
       SELECT layer_key, name, source_type, geometry_type, srid, table_name,
              description, feature_count, tags, metadata_json, created_at, updated_at
       FROM layers_metadata
-      WHERE 1 = 1
+      WHERE TRUE
       ${sessionId ? sql `
         AND (
           metadata_json->>'sessionId' = ${sessionId}
@@ -179,7 +179,8 @@ export class PostGisRepository {
         return layer;
     }
     async updateLayerMetadata(layerKey, patch) {
-        const layer = await this.getLayer(layerKey);
+        const record = await this.getLayerRecord(layerKey);
+        const layer = record?.descriptor ?? null;
         if (!layer)
             throw new Error(`图层 '${layerKey}' 不存在`);
         const metadataPatch = {

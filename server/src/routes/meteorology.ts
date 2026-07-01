@@ -98,7 +98,8 @@ export function meteorologyRoutes(db: Database, runtimeRoot: string, store: Post
   app.get('/api/v1/meteorology/datasets', async c => {
     const sessionId = queryString(c.req.query('sessionId') ?? c.req.query('session_id'))
     const threadId = queryString(c.req.query('threadId') ?? c.req.query('thread_id'))
-    const rows = await listDatasets(db, { sessionId, threadId })
+    const filename = queryString(c.req.query('filename'))
+    const rows = await listDatasets(db, { sessionId, threadId, filename })
     return c.json(rows)
   })
 
@@ -114,7 +115,8 @@ export function meteorologyRoutes(db: Database, runtimeRoot: string, store: Post
         return c.json({ detail: `不支持的气象数据格式：${file.name}` }, 415)
       }
 
-      const stored = await files.save(file, threadId)
+      const sourceRelativePath = formString(form, 'sourceRelativePath') ?? formString(form, 'relativePath')
+      const stored = await files.save(file, threadId, null, sourceRelativePath)
       if (threadId) await store.recordAttachment(threadId, stored)
       const now = nowUtc()
       const dataset: MeteorologicalDatasetRecord = {
@@ -129,7 +131,11 @@ export function meteorologyRoutes(db: Database, runtimeRoot: string, store: Post
         contentHash: stored.contentHash,
         mediaType: stored.mediaType,
         status: 'ready',
-        metadata: { source: 'upload', inputKind: inputKind(stored.name) },
+        metadata: {
+          source: 'upload',
+          inputKind: inputKind(stored.name),
+          ...(stored.sourceRelativePath ? { sourceRelativePath: stored.sourceRelativePath } : {}),
+        },
         createdAt: now,
         updatedAt: now,
       }
@@ -193,12 +199,34 @@ async function listDatasets(
   filters: { sessionId?: string | null; threadId?: string | null; filename?: string | null; limit?: number },
 ): Promise<MeteorologicalDatasetRecord[]> {
   const limit = Math.max(1, Math.min(filters.limit ?? 100, 500))
+  if (filters.filename && filters.threadId && filters.sessionId) {
+    const result = await db.execute(sql`
+      SELECT *
+      FROM platform_meteorological_datasets
+      WHERE session_id = ${filters.sessionId}
+        AND thread_id = ${filters.threadId}
+        AND lower(filename) = lower(${filters.filename})
+      ORDER BY updated_at DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
+  }
   if (filters.filename && filters.threadId) {
     const result = await db.execute(sql`
       SELECT *
       FROM platform_meteorological_datasets
-      WHERE session_id = ${filters.sessionId ?? ''}
-        AND thread_id = ${filters.threadId}
+      WHERE thread_id = ${filters.threadId}
+        AND lower(filename) = lower(${filters.filename})
+      ORDER BY updated_at DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
+  }
+  if (filters.filename && filters.sessionId) {
+    const result = await db.execute(sql`
+      SELECT *
+      FROM platform_meteorological_datasets
+      WHERE session_id = ${filters.sessionId}
         AND lower(filename) = lower(${filters.filename})
       ORDER BY updated_at DESC
       LIMIT ${limit}
@@ -216,11 +244,31 @@ async function listDatasets(
     `)
     return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
   }
+  if (filters.threadId) {
+    const result = await db.execute(sql`
+      SELECT *
+      FROM platform_meteorological_datasets
+      WHERE thread_id = ${filters.threadId}
+      ORDER BY updated_at DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
+  }
   if (filters.sessionId) {
     const result = await db.execute(sql`
       SELECT *
       FROM platform_meteorological_datasets
       WHERE session_id = ${filters.sessionId}
+      ORDER BY updated_at DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
+  }
+  if (filters.filename) {
+    const result = await db.execute(sql`
+      SELECT *
+      FROM platform_meteorological_datasets
+      WHERE lower(filename) = lower(${filters.filename})
       ORDER BY updated_at DESC
       LIMIT ${limit}
     `)

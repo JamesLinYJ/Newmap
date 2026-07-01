@@ -23,6 +23,7 @@ export const clientMsgType = z.enum([
   'tool-catalog:list', 'tool-catalog:upsert', 'tool-catalog:delete',
   'runtime-config:get', 'runtime-config:update',
   'provider:list', 'system:get',
+  'speech:authorization',
   'memory:list', 'memory:read', 'memory:write', 'memory:delete', 'memory:search',
   'memory:extract', 'memory:dream',
   'memory:session:get', 'memory:session:rebuild',

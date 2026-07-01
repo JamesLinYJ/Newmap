@@ -192,6 +192,28 @@ export class PostgresPlatformStore {
       `)
       return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
     }
+    if (filters.filename && filters.threadId) {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE thread_id = ${filters.threadId}
+          AND lower(filename) = lower(${filters.filename})
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `)
+      return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+    }
+    if (filters.filename && filters.sessionId) {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE session_id = ${filters.sessionId}
+          AND lower(filename) = lower(${filters.filename})
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `)
+      return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+    }
     if (filters.threadId && filters.sessionId) {
       const result = await this.db.execute(sql`
         SELECT *
@@ -203,11 +225,31 @@ export class PostgresPlatformStore {
       `)
       return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
     }
+    if (filters.threadId) {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE thread_id = ${filters.threadId}
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `)
+      return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+    }
     if (filters.sessionId) {
       const result = await this.db.execute(sql`
         SELECT *
         FROM platform_meteorological_datasets
         WHERE session_id = ${filters.sessionId}
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `)
+      return result.rows.map(row => mapMeteorologicalDatasetRow(row as Record<string, unknown>))
+    }
+    if (filters.filename) {
+      const result = await this.db.execute(sql`
+        SELECT *
+        FROM platform_meteorological_datasets
+        WHERE lower(filename) = lower(${filters.filename})
         ORDER BY updated_at DESC
         LIMIT ${limit}
       `)
@@ -281,7 +323,7 @@ export class PostgresPlatformStore {
   }
 
   async createThread(sessionId: string, title?: string | null): Promise<AgentThreadRecord> {
-    this.getSession(sessionId)
+    const session = this.getSession(sessionId)
     const now = nowUtc()
     const thread: AgentThreadRecord = {
       id: makeId('thread'), sessionId, title: title || '新对话',

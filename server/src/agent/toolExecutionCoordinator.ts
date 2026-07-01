@@ -153,6 +153,7 @@ export class ToolExecutionCoordinator {
   }
 
   private createToolContext(): ToolContext {
+    const run = this.options.store.getRun(this.options.runId)
     return {
       runId: this.options.runId,
       sessionId: this.options.sessionId,

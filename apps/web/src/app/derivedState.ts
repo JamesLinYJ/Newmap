@@ -183,6 +183,7 @@ export function buildDataReferences({
   )
 
   for (const item of uploadReferences) {
+    if (item.isAggregate) continue
     const key = `${item.kind}:${item.relativePath ?? item.name}`
     seen.add(key)
     seen.add(`${item.kind}:${item.name}`)
@@ -201,7 +202,8 @@ export function buildDataReferences({
   // 没有 thread 上下文时跳过，避免新建对话看到旧 thread 的数据。
   if (currentThreadId) {
     for (const file of files) {
-      const key = `file:${file.name}`
+      const displayPath = file.sourceRelativePath ?? file.name
+      const key = `file:${displayPath}`
       if (seen.has(key)) {
         continue
       }
@@ -212,7 +214,7 @@ export function buildDataReferences({
         name: file.name,
         status: uploadStatusLabel(file.status),
         detail: `${file.size} · 线程文件`,
-        relativePath: file.relativePath,
+        relativePath: file.sourceRelativePath ?? file.relativePath,
       })
     }
 

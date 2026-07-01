@@ -15,7 +15,7 @@ import {
   readWorkspacePointer,
   syncCleanWorkspaceUrl,
 } from '../../shared/workspacePointer'
-import type { PanelMode, PrimaryNav, SidebarItemId } from '../types'
+import type { PanelMode, PrimaryNav, SidebarItemId, WorkspaceMode } from '../types'
 
 interface NavigationControllerOptions {
   currentThreadId?: string | null
@@ -37,6 +37,7 @@ export function useNavigationController({
   const [activeNav, setActiveNav] = useState<PrimaryNav>('analysis')
   const [panelMode, setPanelMode] = useState<PanelMode>('summary')
   const [activeSidebarItem, setActiveSidebarItem] = useState<SidebarItemId>('assistant')
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('meteorology')
 
   const focusQueryInput = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -52,6 +53,10 @@ export function useNavigationController({
     setActiveNav('layers')
     setPanelMode('layerManager')
     setActiveSidebarItem('sources')
+  }, [])
+
+  const changeWorkspaceMode = useCallback((mode: WorkspaceMode) => {
+    setWorkspaceMode(mode)
   }, [])
 
   const changePrimaryNav = useCallback((nav: PrimaryNav) => {
@@ -100,7 +105,8 @@ export function useNavigationController({
       return
     }
     if (itemId === 'query') {
-      selectSample(SAMPLES[0])
+      setActiveNav('compute')
+      setPanelMode('compute')
       return
     }
     if (itemId === 'sources') {
@@ -114,7 +120,7 @@ export function useNavigationController({
     }
     setActiveNav('analysis')
     setPanelMode(itemId === 'config' ? 'config' : 'export')
-  }, [changePrimaryNav, selectSample, showSources])
+  }, [changePrimaryNav, showSources])
 
   const copyShareLink = useCallback(async () => {
     try {
@@ -128,6 +134,7 @@ export function useNavigationController({
   return {
     activeNav,
     activeSidebarItem,
+    changeWorkspaceMode,
     changePrimaryNav,
     copyShareLink,
     focusQueryInput,
@@ -143,5 +150,6 @@ export function useNavigationController({
     showSources,
     syncUrl: syncCleanWorkspaceUrl,
     useNextTemplate,
+    workspaceMode,
   }
 }

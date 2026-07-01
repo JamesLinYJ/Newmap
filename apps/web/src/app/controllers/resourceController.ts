@@ -58,6 +58,7 @@ interface ResourceControllerOptions {
   artifacts: ArtifactRef[]
   currentThreadId?: string | null
   ensureUploadThread: () => Promise<string>
+  layerPreferenceKey?: string
   onSessionRecord: (session: SessionRecord) => void
   onShowSources: () => void
   runStatus?: AnalysisRun['status']
@@ -72,6 +73,7 @@ export function useResourceController({
   artifacts,
   currentThreadId,
   ensureUploadThread,
+  layerPreferenceKey,
   onSessionRecord,
   onShowSources,
   runStatus,
@@ -197,12 +199,17 @@ export function useResourceController({
       relativePath,
       status: 'uploading',
       detail: `${formatFileSize(file.size)} · 正在上传`,
+      totalCount: 1,
+      completedCount: 0,
+      failedCount: 0,
+      totalBytes: file.size,
+      progress: 0,
     }
     setUploadReferences(current => upsertUploadReference(current, baseReference))
 
     try {
       if (kind === 'meteorology') {
-        const { dataset } = await uploadMeteorologicalDataset(session.id, file, threadId)
+        const { dataset } = await uploadMeteorologicalDataset(session.id, file, threadId, relativePath)
         startTransition(() => {
           setUploadedLayerName(dataset.filename)
           setUploadReferences(current => upsertUploadReference(current, {
@@ -210,6 +217,8 @@ export function useResourceController({
             name: dataset.filename,
             status: dataset.status,
             detail: `${formatFileSize(dataset.sizeBytes)} · 气象数据`,
+            completedCount: 1,
+            progress: 1,
           }))
         })
         return { kind, name: dataset.filename }
@@ -218,19 +227,21 @@ export function useResourceController({
       if (kind === 'file') {
         // 同一 requestId 会在服务端落到同一存储条目，允许瞬时网络失败后安全重试。
         const requestId = `upload_${crypto.randomUUID().replaceAll('-', '')}`
-        const uploaded = await retryAsync(() => uploadAnyFile(file, threadId, requestId), 2, 500)
+        const uploaded = await retryAsync(() => uploadAnyFile(file, threadId, requestId, relativePath), 2, 500)
         startTransition(() => {
           setUploadedLayerName(uploaded.name)
           setUploadReferences(current => upsertUploadReference(current, {
             ...baseReference,
             status: 'ready',
             detail: `${formatFileSize(file.size)} · 线程文件`,
+            completedCount: 1,
+            progress: 1,
           }))
         })
         return { kind, name: uploaded.name }
       }
 
-      const descriptor = await uploadLayer(session.id, file, threadId)
+      const descriptor = await uploadLayer(session.id, file, threadId, relativePath)
       startTransition(() => {
         setUploadedLayerName(descriptor.name)
         setUploadReferences(current => upsertUploadReference(current, {
@@ -238,6 +249,8 @@ export function useResourceController({
           name: descriptor.name,
           status: 'ready',
           detail: `${descriptor.featureCount ?? 0} 个对象 · ${descriptor.geometryType}`,
+          completedCount: 1,
+          progress: 1,
         }))
       })
       return { kind, name: descriptor.name }
@@ -246,6 +259,9 @@ export function useResourceController({
         ...baseReference,
         status: 'failed',
         detail: formatUiError(error, '上传失败'),
+        completedCount: 1,
+        failedCount: 1,
+        progress: 1,
       }))
       throw error
     }
@@ -270,16 +286,37 @@ export function useResourceController({
 
     setUiError(undefined)
     onShowSources()
+    const batchReference = buildUploadBatchReference(uploadable)
+    if (batchReference) {
+      setUploadReferences(current => upsertUploadReference(current, batchReference))
+    }
     let layerUploaded = false
     let meteorologyUploaded = false
     const failures: string[] = []
+    let processedCount = 0
+    let failedCount = 0
     for (const file of uploadable) {
       try {
         const result = await uploadOneFile(file, resolvedThreadId)
         layerUploaded ||= result.kind === 'layer'
         meteorologyUploaded ||= result.kind === 'meteorology'
       } catch (error) {
+        failedCount += 1
         failures.push(`${getUploadRelativePath(file)}：${formatUiError(error, '上传失败')}`)
+      } finally {
+        processedCount += 1
+        if (batchReference) {
+          setUploadReferences(current => upsertUploadReference(current, {
+            ...batchReference,
+            status: processedCount === uploadable.length
+              ? (failedCount === uploadable.length ? 'failed' : 'ready')
+              : 'uploading',
+            detail: uploadBatchDetail(processedCount, uploadable.length, failedCount, batchReference.totalBytes ?? 0),
+            completedCount: processedCount,
+            failedCount,
+            progress: processedCount / uploadable.length,
+          }))
+        }
       }
     }
 
@@ -358,7 +395,7 @@ export function useResourceController({
     setIsFileSubmitting(true)
     try {
       const resolvedThreadId = await ensureUploadThread()
-      await uploadAnyFile(file, resolvedThreadId)
+      await uploadAnyFile(file, resolvedThreadId, undefined, getUploadRelativePath(file))
       await refreshAllFiles(resolvedThreadId)
     } catch (error) {
       setUiError(formatUiError(error, `上传 ${file.name} 失败`))
@@ -392,6 +429,16 @@ export function useResourceController({
         },
       }
     })
+  }, [])
+
+  const setArtifactVisibility = useCallback((artifactId: string, visible: boolean) => {
+    setMapLayerPreferences(current => ({
+      ...current,
+      [artifactId]: {
+        visible,
+        opacity: current[artifactId]?.opacity ?? 0.9,
+      },
+    }))
   }, [])
 
   const changeArtifactOpacity = useCallback((artifactId: string, opacity: number) => {
@@ -443,24 +490,12 @@ export function useResourceController({
   const layerManager = useLayerManager({
     mapLayers: baseMapLayers,
     onToggleVisibility: toggleArtifactVisibility,
+    onSetVisibility: setArtifactVisibility,
     onChangeOpacity: changeArtifactOpacity,
+    preferenceKey: layerPreferenceKey,
   })
 
-  const mapLayers = useMemo(() => baseMapLayers.map(layer => {
-    const override = layerManager.styleOverrides[layer.artifact.artifactId]
-    if (!override?.color) return layer
-    return {
-      ...layer,
-      artifact: {
-        ...layer.artifact,
-        metadata: {
-          ...layer.artifact.metadata,
-          color: override.color,
-          layerColorOverride: true,
-        },
-      },
-    }
-  }), [baseMapLayers, layerManager.styleOverrides])
+  const mapLayers = layerManager.renderLayers
 
   const exportLayer = useCallback((id: string) => {
     const artifact = artifacts.find(item => item.artifactId === id)
@@ -492,6 +527,7 @@ export function useResourceController({
     selectedBasemapKey,
     setSelectedArtifactId,
     setSelectedBasemapKey,
+    setArtifactVisibility,
     toggleArtifactVisibility,
     toggleLayerStatus,
     uploadedLayerName,
@@ -499,4 +535,37 @@ export function useResourceController({
     uploadFiles,
     uploadReferences,
   }
+}
+
+function buildUploadBatchReference(files: File[]): UploadReference | null {
+  if (files.length <= 1) return null
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+  const firstKind = classifyUploadFile(files[0]) ?? 'file'
+  const name = uploadBatchName(files)
+  return {
+    id: `batch:${files.length}:${files.map(file => `${getUploadRelativePath(file)}:${file.size}`).join('|')}`,
+    kind: firstKind,
+    name,
+    status: 'uploading',
+    detail: uploadBatchDetail(0, files.length, 0, totalBytes),
+    isAggregate: true,
+    totalCount: files.length,
+    completedCount: 0,
+    failedCount: 0,
+    totalBytes,
+    progress: 0,
+  }
+}
+
+function uploadBatchName(files: File[]): string {
+  const roots = files
+    .map(file => getUploadRelativePath(file).split(/[\\/]/).filter(Boolean)[0])
+    .filter(Boolean)
+  const sharedRoot = roots.length && roots.every(root => root === roots[0]) ? roots[0] : undefined
+  return sharedRoot ? `${sharedRoot} 文件夹` : `${files.length} 个文件`
+}
+
+function uploadBatchDetail(done: number, total: number, failed: number, totalBytes: number): string {
+  const failureText = failed > 0 ? ` · ${failed} 个失败` : ''
+  return `${done}/${total} 个文件 · ${formatFileSize(totalBytes)}${failureText}`
 }

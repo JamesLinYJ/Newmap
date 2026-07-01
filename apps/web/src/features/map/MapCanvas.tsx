@@ -103,6 +103,7 @@ interface MapCanvasProps {
   }>
   selectedArtifactId?: string
   selectedArtifactName?: string
+  focusRequest?: { artifactId?: string; nonce: number }
   onSelectArtifact: (artifactId: string) => void
   placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null
   agentState?: { placeResolution?: { status: string; selected?: { latitude?: number | null; longitude?: number | null } | null } | null } | null
@@ -115,6 +116,7 @@ export function MapCanvas({
   layers,
   selectedArtifactId,
   selectedArtifactName,
+  focusRequest,
   onSelectArtifact,
 }: MapCanvasProps) {
   // 地图主画布
@@ -131,6 +133,7 @@ export function MapCanvas({
   const hoverPopupRef = useRef<maplibregl.Popup | null>(null)
   const hoverTimerRef = useRef<number | null>(null)
   const manualDragRef = useRef<MapManualDragState | null>(null)
+  const handledFocusRequestRef = useRef<number | null>(null)
   const suppressNextMapClickRef = useRef(false)
   const measureModeRef = useRef(false)
   const layersRef = useRef(layers)
@@ -152,6 +155,7 @@ export function MapCanvas({
   const visibleTileWarning = tileWarning && !isStaleArtifactMapError(tileWarning, layers)
     ? formatMapResourceWarning(tileWarning)
     : null
+  const canFocusSelection = layers.length > 0 && !mapError
   const initialBasemapRef = useRef(activeBasemap)
 
   const cycleBasemap = useCallback(() => {
@@ -166,17 +170,16 @@ export function MapCanvas({
     onSelectBasemap(availableBasemaps[nextIndex]?.basemapKey ?? availableBasemaps[0].basemapKey)
   }, [availableBasemaps, onSelectBasemap, selectedBasemapKey])
 
-  const focusSelection = useCallback(() => {
-    // 定位到当前结果
+  const focusLayerBounds = useCallback((artifactId?: string) => {
+    // 定位到结果图层
     //
-    // 有选中 artifact 时优先聚焦该结果；否则回退到当前所有结果的总 bounds，
-    // 再不行才飞回默认城市视图。
+    // 外部图层管理和地图控件共用同一套 bounds 解析，避免面板选择和地图视角各管一份状态。
     const map = mapRef.current
     if (!map) {
       return
     }
-    const selectionBounds = selectedArtifactId
-      ? boundsFromLayer(layers.find((item) => item.artifact.artifactId === selectedArtifactId))
+    const selectionBounds = artifactId
+      ? boundsFromLayer(layers.find((item) => item.artifact.artifactId === artifactId))
       : boundsRef.current
 
     if (selectionBounds && !selectionBounds.isEmpty()) {
@@ -184,8 +187,16 @@ export function MapCanvas({
       return
     }
 
-    map.flyTo({ center: [121.4737, 31.2304], zoom: 11.2 })
-  }, [layers, selectedArtifactId])
+    setInteractionHint('当前结果没有可定位的空间范围')
+  }, [layers])
+
+  const focusSelection = useCallback(() => {
+    // 定位到当前结果
+    //
+    // 有选中 artifact 时优先聚焦该结果；否则回退到当前所有结果的总 bounds。
+    // 没有结果图层时按钮在渲染层禁用，避免“定位当前结果”变成默认城市飞行。
+    focusLayerBounds(selectedArtifactId)
+  }, [focusLayerBounds, selectedArtifactId])
 
   const handlePointerMove = useCallback((lng: number, lat: number) => {
     setCursor(`${lng.toFixed(4)}, ${lat.toFixed(4)}`)
@@ -561,6 +572,28 @@ export function MapCanvas({
   }, [layers, selectedArtifactId, activeBasemap])
 
   useEffect(() => {
+    if (!focusRequest || handledFocusRequestRef.current === focusRequest.nonce) {
+      return
+    }
+    const map = mapRef.current
+    if (!map) {
+      return
+    }
+
+    const focus = () => {
+      handledFocusRequestRef.current = focusRequest.nonce
+      focusLayerBounds(focusRequest.artifactId)
+    }
+
+    if (map.isStyleLoaded()) {
+      focus()
+      return
+    }
+
+    map.once('styledata', focus)
+  }, [focusLayerBounds, focusRequest])
+
+  useEffect(() => {
     const map = mapRef.current
     if (!map) {
       return
@@ -665,7 +698,15 @@ export function MapCanvas({
         <m.button type="button" className="dc-map-stage__icon" onClick={cycleBasemap} aria-label="切换底图" title={activeBasemap.name} {...pressMotion}>
           <AppIcon name="deployed_code" size={18} />
         </m.button>
-        <m.button type="button" className="dc-map-stage__icon" onClick={focusSelection} aria-label="定位到当前结果" disabled={Boolean(mapError)} {...pressMotion}>
+        <m.button
+          type="button"
+          className="dc-map-stage__icon"
+          onClick={focusSelection}
+          aria-label="定位到当前结果"
+          disabled={!canFocusSelection}
+          title={canFocusSelection ? '定位到当前结果' : '暂无可定位的结果图层'}
+          {...pressMotion}
+        >
           <AppIcon name="my_location" size={18} />
         </m.button>
       </m.div>
@@ -805,6 +846,8 @@ function syncArtifactLayers(
     })
   })
 
+  applyArtifactLayerOrder(map, layers)
+
   return hasBounds ? bounds : null
 }
 
@@ -841,6 +884,31 @@ function removeArtifactSource(map: Map, sourceId: string) {
   if (map.getSource(sourceId)) {
     map.removeSource(sourceId)
   }
+}
+
+function applyArtifactLayerOrder(map: Map, layers: MapCanvasProps['layers']) {
+  // MapLibre 的真实绘制顺序来自 style layer 顺序；仅改变 React 数组不会移动已存在图层。
+  //
+  // 这里按面板输出的图层顺序把每个 artifact 子图层依次移到顶层，使“上移/下移”和地图叠放一致。
+  for (const layer of layers) {
+    for (const layerId of artifactRenderedLayerIds(layer.artifact.artifactId)) {
+      if (map.getLayer(layerId)) {
+        map.moveLayer(layerId)
+      }
+    }
+  }
+}
+
+function artifactRenderedLayerIds(artifactId: string) {
+  const sourceId = `artifact-${artifactId}`
+  return [
+    `${sourceId}-raster`,
+    `${sourceId}-fill`,
+    `${sourceId}-outline`,
+    `${sourceId}-path`,
+    `${sourceId}-point`,
+    `${sourceId}-label`,
+  ]
 }
 
 function syncRasterLayerSet(
@@ -909,6 +977,8 @@ function syncArtifactLayerSet({
   const visibility = visible ? 'visible' : 'none'
   const isRoute = hasRouteProperties(layer.data)
   const featureColor = featureColorExpression(layer.data, color)
+  const metadata = layer.artifact.metadata as Record<string, unknown> | undefined
+  const labelField = readLabelField(layer.data, metadata)
 
   syncMapLayer(map, {
     id: `${sourceId}-fill`,
@@ -977,6 +1047,13 @@ function syncArtifactLayerSet({
       'circle-opacity': opacity,
     },
   })
+  syncSymbolLayer(map, {
+    id: `${sourceId}-label`,
+    sourceId,
+    enabled: Boolean(metadata?.labelEnabled === true && labelField),
+    visibility,
+    fieldName: labelField,
+  })
 }
 
 function featureColorExpression(collection: GeoJSON.FeatureCollection, fallback: string) {
@@ -1030,6 +1107,69 @@ function syncMapLayer(
   Object.entries(paint).forEach(([property, value]) => {
     map.setPaintProperty(id, property, value)
   })
+}
+
+function syncSymbolLayer(
+  map: Map,
+  {
+    id,
+    sourceId,
+    enabled,
+    visibility,
+    fieldName,
+  }: {
+    id: string
+    sourceId: string
+    enabled: boolean
+    visibility: 'visible' | 'none'
+    fieldName?: string
+  },
+) {
+  if (!enabled || !fieldName) {
+    if (map.getLayer(id)) {
+      map.removeLayer(id)
+    }
+    return
+  }
+
+  const layout = {
+    visibility,
+    'text-field': ['to-string', ['get', fieldName]],
+    'text-size': 12,
+    'text-offset': [0, 1.1],
+    'text-anchor': 'top',
+    'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
+  }
+  const paint = {
+    'text-color': '#111827',
+    'text-halo-color': '#ffffff',
+    'text-halo-width': 1.4,
+    'text-halo-blur': 0.2,
+  }
+
+  if (!map.getLayer(id)) {
+    map.addLayer({
+      id,
+      type: 'symbol',
+      source: sourceId,
+      layout,
+      paint,
+    } as Parameters<Map['addLayer']>[0])
+    return
+  }
+
+  map.setLayoutProperty(id, 'visibility', visibility)
+  map.setLayoutProperty(id, 'text-field', layout['text-field'])
+}
+
+function readLabelField(collection: GeoJSON.FeatureCollection, metadata?: Record<string, unknown>) {
+  const field = typeof metadata?.labelField === 'string' ? metadata.labelField : ''
+  if (!field) return undefined
+  return collection.features.some(feature => {
+    const props = feature.properties as Record<string, unknown> | null | undefined
+    const value = props?.[field]
+    return value !== null && value !== undefined && String(value).trim() !== ''
+  }) ? field : undefined
 }
 
 function hasRouteProperties(collection: GeoJSON.FeatureCollection) {

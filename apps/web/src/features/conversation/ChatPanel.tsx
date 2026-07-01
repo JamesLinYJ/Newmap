@@ -17,14 +17,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'framer-motion'
-import { BrainCircuit, Maximize2, Minimize2, Pencil, Plus, RefreshCw, Save, Search, Trash2 } from 'lucide-react'
-import type { AgentThreadRecord, MemoryFileRecord, MemorySearchResult } from '@geo-agent-platform/shared-types'
+import { Maximize2, Minimize2, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import type { AgentThreadRecord } from '@geo-agent-platform/shared-types'
 import { SAMPLES } from '../../shared/constants'
 import { buildFadeMotion, buildFadeUpMotion, buildListItemVariants, buildListVariants, motionSpring } from '../../shared/motion'
 import { AppIcon } from '../../shared/components/AppIcon'
 import { Composer } from './Composer'
 import { DecisionSheet } from './DecisionSheet'
-import type { ChatPanelProps, ComposerMode, MemoryWriteInput, TaskView } from './types'
+import type { ChatPanelProps, ComposerMode, TaskView } from './types'
 import {
   errorCardTitle,
   formatSessionDate,
@@ -32,6 +32,7 @@ import {
   pickPendingDecision,
   useConversationEntries,
 } from './useConversation'
+import { useSpeechRecognition } from './useSpeechRecognition'
 import { deriveThreadTitleFromText, formatThreadDisplayTitle } from './threadTitles'
 import { rectToMotion, surfaceStyleToMotion, usePanelExpansionMotion } from '../../shared/usePanelExpansionMotion'
 
@@ -54,6 +55,7 @@ export function ChatPanel(props: ChatPanelProps) {
     isSubmitting,
     errorMessage,
     uploadedLayerName,
+    uploadReferences = [],
     decisions = [],
     sessionThreads,
     items,
@@ -72,24 +74,12 @@ export function ChatPanel(props: ChatPanelProps) {
     onDeleteTask,
     onForkMessage,
     dataReferences,
-    threadContext,
-    threadMemory,
-    onLoadThreadContext,
-    onCompactThread,
-    onSaveThreadMemory,
-    onRebuildThreadMemory,
     trashedThreads = [],
     onLoadTrash,
     onRestoreThread,
     onPurgeThread,
     memories,
-    memoryRecords = [],
     onRefreshMemories,
-    onReadMemory,
-    onWriteMemory,
-    onDeleteMemory,
-    onSearchMemories,
-    onDreamMemories,
     tokenBudget,
     activeSkills,
     compactionLevel,
@@ -110,15 +100,21 @@ export function ChatPanel(props: ChatPanelProps) {
   const [composerMode, setComposerMode] = useState<ComposerMode>('auto')
   const [modeDecisionOpen, setModeDecisionOpen] = useState(false)
   const [dismissedDecisionId, setDismissedDecisionId] = useState<string | null>(null)
-  const [contextOpen, setContextOpen] = useState(false)
-  const [memoryEdit, setMemoryEdit] = useState<{ threadId: string; version: number; draft: string } | null>(null)
   const [showTrash, setShowTrash] = useState(false)
+  const [dismissedUploadIds, setDismissedUploadIds] = useState<Set<string>>(() => new Set())
   const triggerRef = useRef<HTMLElement | null>(null)
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
   const submittingRef = useRef(false)
+  const previousThreadRef = useRef<string | undefined>(currentThreadId)
   const reducedMotion = useReducedMotion() ?? false
   const panelExpansion = usePanelExpansionMotion({ reducedMotion })
   const isPanelExpanded = panelExpansion.isExpanded
+  const speech = useSpeechRecognition({
+    query,
+    inputRef: composerInputRef,
+    onQueryChange,
+  })
+  const stopSpeechRecognition = speech.stopRecognition
 
   const taskView = taskViewState.bound === currentRunId ? taskViewState.mode : 'chat'
   const setTaskView = (mode: TaskView) => setTaskViewState({ mode, bound: currentRunId })
@@ -148,6 +144,10 @@ export function ChatPanel(props: ChatPanelProps) {
       }
   const isTaskMode = taskView === 'history'
   const showSamples = !isSubmitting && !query.trim() && conversation.length === 0 && !isTaskMode
+  const visibleUploadReferences = useMemo(
+    () => uploadReferences.filter(item => !dismissedUploadIds.has(item.id)),
+    [dismissedUploadIds, uploadReferences],
+  )
   const currentThread = useMemo(
     () => sessionThreads.find((task) => task.id === currentThreadId),
     [currentThreadId, sessionThreads],
@@ -155,21 +155,18 @@ export function ChatPanel(props: ChatPanelProps) {
   const displayCurrentThreadTitle = currentThread
     ? formatThreadDisplayTitle(currentThread)
     : deriveThreadTitleFromText(currentThreadTitle)
-  // memory 默认直接派生自服务端版本；只有用户编辑后才保存版本绑定的本地草稿。
-  const matchingMemoryEdit = memoryEdit
-    && memoryEdit.threadId === currentThreadId
-    && memoryEdit.version === (threadMemory?.version ?? 0)
-    ? memoryEdit
-    : null
-  const memoryDraft = matchingMemoryEdit
-    ? matchingMemoryEdit.draft
-    : threadMemory?.content ?? ''
-
   useEffect(() => {
     if (!isSubmitting) {
       submittingRef.current = false
     }
   }, [isSubmitting])
+
+  useEffect(() => {
+    if (previousThreadRef.current !== currentThreadId) {
+      stopSpeechRecognition()
+      previousThreadRef.current = currentThreadId
+    }
+  }, [currentThreadId, stopSpeechRecognition])
 
   const filteredTasks = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -219,6 +216,7 @@ export function ChatPanel(props: ChatPanelProps) {
     }
     submittingRef.current = true
     setModeDecisionOpen(false)
+    stopSpeechRecognition()
     onSubmit(composerMode)
   }
   const handleKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -238,6 +236,7 @@ export function ChatPanel(props: ChatPanelProps) {
   }
   const handleInterrupt = () => {
     setModeDecisionOpen(false)
+    stopSpeechRecognition()
     onInterrupt?.()
   }
   const handleDecisionSubmit = (decisionId: string, optionId?: string | null, text?: string | null) => {
@@ -283,20 +282,6 @@ export function ChatPanel(props: ChatPanelProps) {
               <small>{formatStatusLine(runStatus, providerLabel, artifactCount, uploadedLayerName)}</small>
             </div>
             <div className="cc-header-actions">
-              {currentThreadId && (
-                <button
-                  className={`cc-icon-button ${contextOpen ? 'cc-icon-button--active' : ''}`}
-                  aria-label="上下文管理"
-                  onClick={() => {
-                    const next = !contextOpen
-                    setContextOpen(next)
-                    if (next) onLoadThreadContext?.()
-                  }}
-                >
-                  <BrainCircuit size={14} />
-                  <span>上下文</span>
-                </button>
-              )}
               {sessionThreads.length > 0 && (
                 <button
                   className="cc-icon-button"
@@ -323,40 +308,6 @@ export function ChatPanel(props: ChatPanelProps) {
               </button>
             </div>
           </header>
-
-          {contextOpen && currentThreadId && (
-            <section className="cc-context-drawer" aria-label="线程上下文管理">
-              <div className="cc-context-metrics">
-                <span><strong>{threadContext?.estimatedTokens.toLocaleString() ?? '--'}</strong> token</span>
-                <span><strong>{threadContext ? `${Math.round(threadContext.usageRatio * 100)}%` : '--'}</strong> 使用率</span>
-                <span><strong>{threadContext?.includedEntryIds.length ?? '--'}</strong> 条上下文</span>
-                <span title={threadContext?.activeLeafEntryId ?? ''}><strong>{threadContext?.activeLeafEntryId?.slice(-8) ?? '--'}</strong> 活动叶</span>
-              </div>
-              <div className="cc-context-actions">
-                <button type="button" onClick={onCompactThread}>压缩历史</button>
-                <button type="button" onClick={onRefreshMemories}><RefreshCw size={13} />刷新记忆</button>
-              </div>
-              <MemoryWorkbench
-                currentThreadId={currentThreadId}
-                threadMemory={threadMemory}
-                sessionDraft={memoryDraft}
-                memoryRecords={memoryRecords}
-                onSessionDraftChange={(value) => currentThreadId && setMemoryEdit({
-                  threadId: currentThreadId,
-                  version: threadMemory?.version ?? 0,
-                  draft: value,
-                })}
-                onSaveSessionMemory={onSaveThreadMemory}
-                onRebuildSessionMemory={onRebuildThreadMemory}
-                onReadMemory={onReadMemory}
-                onWriteMemory={onWriteMemory}
-                onDeleteMemory={onDeleteMemory}
-                onSearchMemories={onSearchMemories}
-                onRefreshMemories={onRefreshMemories}
-                onDreamMemories={onDreamMemories}
-              />
-            </section>
-          )}
 
           {/* 历史视图和聊天视图是互斥事实视图，使用 wait 模式保证退出动画结束后
               再挂载下一视图，避免历史列表和当前对话在同一时间线里重叠。 */}
@@ -503,6 +454,19 @@ export function ChatPanel(props: ChatPanelProps) {
             onInterrupt={handleInterrupt}
             onUseTemplate={onUseTemplate}
             onUploadFiles={onUploadFiles}
+            uploadReferences={visibleUploadReferences}
+            onDismissUploadReference={(id) => {
+              setDismissedUploadIds(current => new Set(current).add(id))
+            }}
+            speechStatus={speech.status}
+            speechError={speech.error}
+            speechInterimText={speech.interimText}
+            speechLanguage={speech.language}
+            speechLanguages={speech.languages}
+            onSpeechLanguageChange={speech.setLanguage}
+            onStartSpeechRecognition={speech.startRecognition}
+            onStopSpeechRecognition={stopSpeechRecognition}
+            onClearSpeechError={speech.clearSpeechError}
             modeMenuOpen={modeDecisionOpen}
             onModeMenuOpenChange={(open) => {
               if (open && activeServerDecision) {
@@ -613,279 +577,4 @@ export function ChatPanel(props: ChatPanelProps) {
       ) : null}
     </>
   )
-}
-
-type MemoryScope = 'private' | 'team'
-type MemoryTab = MemoryScope | 'session' | 'instruction'
-type MemoryType = MemoryWriteInput['type']
-
-const MEMORY_TYPE_OPTIONS: Array<{ value: MemoryType; label: string }> = [
-  { value: 'user', label: '用户' },
-  { value: 'feedback', label: '反馈' },
-  { value: 'project', label: '项目' },
-  { value: 'reference', label: '参考' },
-]
-
-function emptyMemoryDraft(scope: MemoryScope): MemoryWriteInput {
-  return { scope, type: 'project', name: '', description: '', content: '', relativePath: '' }
-}
-
-function MemoryWorkbench({
-  currentThreadId,
-  threadMemory,
-  sessionDraft,
-  memoryRecords,
-  onSessionDraftChange,
-  onSaveSessionMemory,
-  onRebuildSessionMemory,
-  onReadMemory,
-  onWriteMemory,
-  onDeleteMemory,
-  onSearchMemories,
-  onRefreshMemories,
-  onDreamMemories,
-}: {
-  currentThreadId?: string
-  threadMemory?: ChatPanelProps['threadMemory']
-  sessionDraft: string
-  memoryRecords: MemoryFileRecord[]
-  onSessionDraftChange: (value: string) => void
-  onSaveSessionMemory?: ChatPanelProps['onSaveThreadMemory']
-  onRebuildSessionMemory?: ChatPanelProps['onRebuildThreadMemory']
-  onReadMemory?: ChatPanelProps['onReadMemory']
-  onWriteMemory?: ChatPanelProps['onWriteMemory']
-  onDeleteMemory?: ChatPanelProps['onDeleteMemory']
-  onSearchMemories?: ChatPanelProps['onSearchMemories']
-  onRefreshMemories?: ChatPanelProps['onRefreshMemories']
-  onDreamMemories?: ChatPanelProps['onDreamMemories']
-}) {
-  const [tab, setTab] = useState<MemoryTab>('private')
-  const [draft, setDraft] = useState<MemoryWriteInput>(emptyMemoryDraft('private'))
-  const [searchText, setSearchText] = useState('')
-  const [searchResults, setSearchResults] = useState<MemorySearchResult[]>([])
-  const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const activeScope = tab === 'team' ? 'team' : 'private'
-  const scopedRecords = useMemo(
-    () => memoryRecords.filter(record => record.scope === activeScope),
-    [activeScope, memoryRecords],
-  )
-  const visibleRecords = searchResults.length
-    ? searchResults.map(result => result.record).filter(record => record.scope === activeScope)
-    : scopedRecords
-
-  useEffect(() => {
-    if (tab === 'private' || tab === 'team') {
-      setDraft(current => current.scope === tab ? current : { ...emptyMemoryDraft(tab), type: current.type })
-      setSearchResults([])
-    }
-  }, [tab])
-
-  const runMemoryAction = async (label: string, action: () => Promise<void>) => {
-    setBusy(label)
-    setError(null)
-    try {
-      await action()
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const openRecord = (record: MemoryFileRecord) => {
-    const scope = record.scope === 'team' ? 'team' : 'private'
-    void runMemoryAction('read', async () => {
-      const full = onReadMemory ? await onReadMemory(scope, record.relativePath) : record
-      setTab(scope)
-      setDraft({
-        scope,
-        type: full.type ?? 'project',
-        name: full.name,
-        description: full.description,
-        content: full.content ?? '',
-        relativePath: full.relativePath,
-      })
-    })
-  }
-
-  const saveLongMemory = () => {
-    void runMemoryAction('save', async () => {
-      if (!onWriteMemory) return
-      const saved = await onWriteMemory({
-        ...draft,
-        scope: activeScope,
-        name: draft.name.trim(),
-        description: draft.description.trim(),
-        content: draft.content.trim(),
-        relativePath: draft.relativePath?.trim() || null,
-      })
-      setDraft({
-        scope: saved.scope === 'team' ? 'team' : 'private',
-        type: saved.type ?? draft.type,
-        name: saved.name,
-        description: saved.description,
-        content: saved.content ?? draft.content,
-        relativePath: saved.relativePath,
-      })
-      setSearchResults([])
-    })
-  }
-
-  const deleteLongMemory = () => {
-    void runMemoryAction('delete', async () => {
-      if (!onDeleteMemory || !draft.relativePath) return
-      await onDeleteMemory(activeScope, draft.relativePath)
-      setDraft(emptyMemoryDraft(activeScope))
-      setSearchResults([])
-    })
-  }
-
-  const searchLongMemory = () => {
-    void runMemoryAction('search', async () => {
-      if (!onSearchMemories || !searchText.trim()) {
-        setSearchResults([])
-        return
-      }
-      setSearchResults(await onSearchMemories(searchText.trim()))
-    })
-  }
-
-  const refreshLongMemory = () => {
-    void runMemoryAction('refresh', async () => { await onRefreshMemories?.() })
-  }
-
-  const dreamLongMemory = () => {
-    void runMemoryAction('dream', async () => {
-      await onDreamMemories?.()
-      setSearchResults([])
-    })
-  }
-
-  return (
-    <div className="cc-memory-workbench">
-      <div className="cc-memory-tabs" role="tablist" aria-label="记忆类型">
-        {(['private', 'team', 'session', 'instruction'] as MemoryTab[]).map(item => (
-          <button
-            key={item}
-            type="button"
-            className={tab === item ? 'cc-memory-tab cc-memory-tab--active' : 'cc-memory-tab'}
-            onClick={() => setTab(item)}
-          >
-            {formatMemoryTab(item)}
-          </button>
-        ))}
-      </div>
-
-      {(tab === 'private' || tab === 'team') && (
-        <div className="cc-memory-workbench__grid">
-          <div className="cc-memory-browser">
-            <div className="cc-memory-search">
-              <Search size={14} />
-              <input
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                onKeyDown={(event) => event.key === 'Enter' && searchLongMemory()}
-                placeholder="搜索记忆"
-              />
-              <button type="button" onClick={searchLongMemory} disabled={busy === 'search'}>搜索</button>
-            </div>
-            <div className="cc-memory-browser__actions">
-              <button type="button" onClick={() => setDraft(emptyMemoryDraft(activeScope))}><Plus size={13} />新建</button>
-              <button type="button" onClick={refreshLongMemory}><RefreshCw size={13} />刷新</button>
-              <button type="button" onClick={dreamLongMemory}>整理</button>
-            </div>
-            <div className="cc-memory-record-list">
-              {visibleRecords.length ? visibleRecords.map(record => (
-                <button
-                  key={`${record.scope}:${record.relativePath}`}
-                  type="button"
-                  className={draft.relativePath === record.relativePath && draft.scope === record.scope ? 'cc-memory-record cc-memory-record--active' : 'cc-memory-record'}
-                  onClick={() => openRecord(record)}
-                >
-                  <strong>{record.name || record.relativePath}</strong>
-                  <span>{record.description || record.relativePath}</span>
-                  <small>{record.relativePath}</small>
-                </button>
-              )) : (
-                <div className="cc-memory-empty">暂无记忆</div>
-              )}
-            </div>
-          </div>
-
-          <div className="cc-memory-editor-form">
-            <div className="cc-memory-editor-form__row">
-              <label>
-                <span>类型</span>
-                <select value={draft.type} onChange={(event) => setDraft(current => ({ ...current, type: event.target.value as MemoryType }))}>
-                  {MEMORY_TYPE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>路径</span>
-                <input value={draft.relativePath ?? ''} onChange={(event) => setDraft(current => ({ ...current, relativePath: event.target.value }))} placeholder={`${draft.type}/topic.md`} />
-              </label>
-            </div>
-            <label>
-              <span>名称</span>
-              <input value={draft.name} onChange={(event) => setDraft(current => ({ ...current, name: event.target.value }))} />
-            </label>
-            <label>
-              <span>摘要</span>
-              <input value={draft.description} onChange={(event) => setDraft(current => ({ ...current, description: event.target.value }))} />
-            </label>
-            <label>
-              <span>正文</span>
-              <textarea value={draft.content} onChange={(event) => setDraft(current => ({ ...current, content: event.target.value }))} />
-            </label>
-            {error && <div className="cc-memory-error">{error}</div>}
-            <div className="cc-memory-editor-form__actions">
-              <button type="button" onClick={saveLongMemory} disabled={!onWriteMemory || busy === 'save' || !draft.name.trim() || !draft.description.trim() || !draft.content.trim()}>
-                <Save size={13} />保存
-              </button>
-              <button type="button" onClick={deleteLongMemory} disabled={!onDeleteMemory || busy === 'delete' || !draft.relativePath}>
-                <Trash2 size={13} />删除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {tab === 'session' && (
-        <div className="cc-session-memory-form">
-          <div className="cc-session-memory-form__head">
-            <span>线程记忆 <small>v{threadMemory?.version ?? 0}</small></span>
-            <button type="button" onClick={onRebuildSessionMemory}><RefreshCw size={13} />重建</button>
-          </div>
-          <textarea
-            value={sessionDraft}
-            onChange={(event) => onSessionDraftChange(event.target.value)}
-            placeholder="线程目标、约束、确认事实和用户固定记忆"
-          />
-          <button
-            className="cc-memory-save"
-            type="button"
-            disabled={!currentThreadId || !onSaveSessionMemory || sessionDraft === (threadMemory?.content ?? '')}
-            onClick={() => onSaveSessionMemory?.(sessionDraft)}
-          >
-            <Save size={13} />保存记忆
-          </button>
-        </div>
-      )}
-
-      {tab === 'instruction' && (
-        <div className="cc-memory-instruction-state">
-          <strong>AGENTS.md</strong>
-          <span>已关闭</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function formatMemoryTab(tab: MemoryTab): string {
-  if (tab === 'private') return 'Private'
-  if (tab === 'team') return 'Team'
-  if (tab === 'session') return 'Session'
-  return 'Instruction'
 }

@@ -106,7 +106,7 @@ export function ConversationEntryView({
 
   if (entry.kind === 'command_batch') {
     const commands = entry.commands ?? []
-    if (commands.length === 1 && commands[0].toolName === 'synthesize_speech') {
+    if (commands.length === 1 && isSpeechSynthesisCommand(commands[0])) {
       return (
         <div key={entry.id} className="cc-timeline-item cc-timeline-item--answer">
           <span className="cc-timeline-dot" />
@@ -414,9 +414,33 @@ function extractSpeechText(command: ConversationCommand) {
 function extractSpeechAudioUrl(command: ConversationCommand) {
   const result = command.details?.result
   if (isRecord(result)) {
-    return stringOrNull(result.audio_url ?? result.audioUrl)
+    const directUrl = stringOrNull(result.audio_url ?? result.audioUrl ?? result.uri ?? result.downloadUrl)
+    if (directUrl) return directUrl
   }
+  const artifactUrl = firstAudioArtifactUrl(command)
+  if (artifactUrl) return artifactUrl
   return stringOrNull(command.details?.audio_url ?? command.details?.audioUrl)
+}
+
+function isSpeechSynthesisCommand(command: ConversationCommand) {
+  return command.toolName === 'synthesize_speech'
+    || command.toolName === 'text_to_speech'
+    || firstAudioArtifactUrl(command) !== null
+}
+
+function firstAudioArtifactUrl(command: ConversationCommand) {
+  const artifacts = command.details?.artifacts
+  if (!Array.isArray(artifacts)) return null
+  for (const artifact of artifacts) {
+    if (!isRecord(artifact)) continue
+    const artifactType = typeof artifact.artifactType === 'string' ? artifact.artifactType : ''
+    const mimeType = isRecord(artifact.metadata) && typeof artifact.metadata.mimeType === 'string' ? artifact.metadata.mimeType : ''
+    if (artifactType === 'audio_mp3' || mimeType.startsWith('audio/')) {
+      const uri = stringOrNull(artifact.uri)
+      if (uri) return uri
+    }
+  }
+  return null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

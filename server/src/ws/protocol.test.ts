@@ -29,6 +29,8 @@ describe('WebSocket control protocol', () => {
     expect(parseMessage(JSON.stringify({
       type: 'run:respond-decision', id: 'decision', payload: { runId: 'run_1', decisionId: 'decision_1', optionId: 'approve' },
     })).type).toBe('run:respond-decision')
+    expect(parseMessage(JSON.stringify({ type: 'speech:authorization', id: 'speech', payload: {} })).type)
+      .toBe('speech:authorization')
   })
 
   it('returns explicit errors and uncorrelated run pushes', () => {

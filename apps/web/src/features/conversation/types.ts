@@ -17,14 +17,11 @@ import type {
   AgentRuntimeConfig,
   AgentThreadRecord,
   ConversationItem,
-  ContextAssemblyReport,
   DecisionRequest,
-  MemoryFileRecord,
-  MemorySearchResult,
-  ThreadMemoryDocument,
   ToolDescriptor,
 } from '@geo-agent-platform/shared-types'
 import type { DataReferenceSummary } from '../../shared/constants'
+import type { UploadReference } from '../../app/types'
 
 export type MemoryEntry = {
   scope: 'private' | 'team'
@@ -63,6 +60,7 @@ export interface ChatPanelProps {
   isSubmitting: boolean
   errorMessage?: string
   uploadedLayerName?: string
+  uploadReferences?: UploadReference[]
   decisions?: DecisionRequest[]
   sessionThreads: AgentThreadRecord[]
   items: ReadonlyArray<ConversationItem>
@@ -82,25 +80,13 @@ export interface ChatPanelProps {
   onDeleteTask: (id: string) => void
   onForkMessage?: (entryId: string) => void
   dataReferences: DataReferenceSummary[]
-  threadContext?: ContextAssemblyReport
-  threadMemory?: ThreadMemoryDocument
-  onLoadThreadContext?: () => void
-  onCompactThread?: () => void
-  onSaveThreadMemory?: (content: string) => void
-  onRebuildThreadMemory?: () => void
   trashedThreads?: Array<{ thread: AgentThreadRecord; deletedAt: string; purgeAfter: string }>
   onLoadTrash?: () => void
   onRestoreThread?: (threadId: string) => void
   onPurgeThread?: (threadId: string) => void
 
   memories?: MemoryEntry[]
-  memoryRecords?: MemoryFileRecord[]
   onRefreshMemories?: () => Promise<void> | void
-  onReadMemory?: (scope: 'private' | 'team', relativePath: string) => Promise<MemoryFileRecord>
-  onWriteMemory?: (input: MemoryWriteInput) => Promise<MemoryFileRecord>
-  onDeleteMemory?: (scope: 'private' | 'team', relativePath: string) => Promise<void>
-  onSearchMemories?: (query: string) => Promise<MemorySearchResult[]>
-  onDreamMemories?: () => Promise<void>
 
   tokenBudget?: { used: number; max: number; status: 'normal' | 'warning' | 'critical' | 'exceeded' }
 

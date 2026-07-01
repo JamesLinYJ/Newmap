@@ -229,13 +229,23 @@ async function listMeteorologicalFiles(_args: Record<string, unknown>, ctx: Tool
   // 开发期旧数据可能存在同名重传；按已排序列表保留最新条目，避免重复时次进入序列。
   const entries = (await new RuntimeFileStore(getEnv().RUNTIME_ROOT).list(ctx.threadId))
     .filter(entry => METEOROLOGICAL_FILE_SUFFIXES.some(suffix => entry.name.toLowerCase().endsWith(suffix)))
-    .filter((entry, index, all) => all.findIndex(candidate => candidate.name === entry.name) === index)
+    .filter((entry, index, all) => all.findIndex(candidate => uploadSourceKey(candidate) === uploadSourceKey(entry)) === index)
   const fileRefs: ValueRef[] = entries.map(entry => ({
     refId: makeId('ref'),
     kind: 'meteorological_file',
     label: entry.name,
-    value: { fileId: entry.id, name: entry.name, relativePath: entry.relativePath },
-    metadata: { threadId: entry.threadId, sizeBytes: entry.sizeBytes, inputKind: inputKind(entry.name) },
+    value: {
+      fileId: entry.id,
+      name: entry.name,
+      relativePath: entry.relativePath,
+      ...(entry.sourceRelativePath ? { sourceRelativePath: entry.sourceRelativePath } : {}),
+    },
+    metadata: {
+      threadId: entry.threadId,
+      sizeBytes: entry.sizeBytes,
+      inputKind: inputKind(entry.name),
+      ...(entry.sourceRelativePath ? { sourceRelativePath: entry.sourceRelativePath } : {}),
+    },
   }))
   const datasetFiles = fileRefs.filter(ref => ref.metadata?.inputKind === 'dataset').map(ref => refObject(ref.value))
   const radarFiles = fileRefs.filter(ref => ref.metadata?.inputKind === 'radar').map(ref => refObject(ref.value))
@@ -1026,6 +1036,10 @@ function collectionFiles(collection: Record<string, unknown>, key: string): Reco
     throw new Error(`${key} 不包含文件集合`)
   }
   return files
+}
+
+function uploadSourceKey(entry: { name: string; sourceRelativePath?: string | null }): string {
+  return entry.sourceRelativePath || entry.name
 }
 
 function sequenceFiles(sequence: Record<string, unknown>): Record<string, unknown>[] {

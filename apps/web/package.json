@@ -15,6 +15,7 @@
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.546.0",
     "maplibre-gl": "^5.11.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",

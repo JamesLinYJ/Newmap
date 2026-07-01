@@ -13,6 +13,7 @@ import type { ArtifactRef } from '@geo-agent-platform/shared-types'
 export type PrimaryNav = 'analysis' | 'layers' | 'history' | 'compute' | 'tools'
 export type PanelMode = 'summary' | 'layers' | 'history' | 'compute' | 'sources' | 'export' | 'config' | 'layerManager' | 'tools'
 export type SidebarItemId = 'assistant' | 'query' | 'sources' | 'tools' | 'config' | 'export'
+export type WorkspaceMode = 'meteorology' | 'map'
 export type MapLayerPreference = { visible: boolean; opacity: number }
 export type MemoryKind = 'user' | 'feedback' | 'project' | 'reference'
 
@@ -35,4 +36,10 @@ export interface UploadReference {
   relativePath?: string
   status: 'pending' | 'uploading' | 'queued' | 'running' | 'completed' | 'failed' | 'ready' | string
   detail?: string
+  isAggregate?: boolean
+  totalCount?: number
+  completedCount?: number
+  failedCount?: number
+  totalBytes?: number
+  progress?: number
 }

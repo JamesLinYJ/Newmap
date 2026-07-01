@@ -60,9 +60,36 @@
   color: #344054;
 }
 
+.arcgis-layer-panel__window-actions button,
+.arcgis-layer-panel__filter-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  place-items: center;
+  border: 1px solid rgba(100, 116, 139, 0.22);
+  border-radius: 7px;
+  color: #344054;
+  background: rgba(255, 255, 255, 0.58);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.arcgis-layer-panel__window-actions button:hover,
+.arcgis-layer-panel__filter-button:hover {
+  border-color: rgba(100, 116, 139, 0.38);
+  color: #111827;
+  background: rgba(255, 255, 255, 0.88);
+  transform: translateY(-1px);
+}
+
 .arcgis-layer-panel__search-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 18px;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
   align-items: center;
   gap: 7px;
   padding: 0 10px;
@@ -87,6 +114,31 @@
   color: #172033;
   font-size: 13px;
   outline: 0;
+}
+
+.arcgis-layer-panel__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 4px 41px;
+}
+
+.arcgis-layer-panel__filters button {
+  min-height: 28px;
+  cursor: pointer;
+  border: 1px solid rgba(100, 116, 139, 0.26);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.54);
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+
+.arcgis-layer-panel__filters button.is-active {
+  border-color: rgba(15, 23, 42, 0.18);
+  background: rgba(15, 23, 42, 0.075);
+  color: #172033;
 }
 
 .arcgis-layer-panel__toolbar {
@@ -119,6 +171,7 @@
 
 .arcgis-layer-panel__toolbar button.is-active {
   color: #172033;
+  background: rgba(255, 255, 255, 0.56);
 }
 
 .arcgis-layer-panel__toolbar button.is-active::after {
@@ -211,8 +264,7 @@
   text-align: left;
 }
 
-.arcgis-layer-node__label strong,
-.arcgis-layer-node--basemap strong {
+.arcgis-layer-node__label strong {
   overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -234,19 +286,6 @@
 .arcgis-layer-node__folder {
   clip-path: polygon(0 26%, 38% 26%, 45% 10%, 100% 10%, 100% 100%, 0 100%);
   background: linear-gradient(135deg, rgb(255 255 255 / 0.54), rgb(92 102 112 / 0.26));
-}
-
-.arcgis-layer-node__symbol--terrain {
-  background: linear-gradient(135deg, #a7f3d0, #fef3c7 52%, #bfdbfe);
-}
-
-.arcgis-layer-node__symbol--hillshade {
-  background: linear-gradient(135deg, #f8fafc, #cbd5e1 55%, #64748b);
-}
-
-.arcgis-layer-node--basemap {
-  padding-left: 18px;
-  color: #344054;
 }
 
 .arcgis-layer-legend {
@@ -340,7 +379,9 @@
 }
 
 .arcgis-layer-panel__selected-actions button,
-.arcgis-layer-panel__grouping button {
+.arcgis-layer-panel__grouping button,
+.arcgis-layer-panel__file-action,
+.arcgis-layer-panel__large-file-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -361,6 +402,30 @@
   opacity: 0.46;
 }
 
+.arcgis-layer-panel__file-action,
+.arcgis-layer-panel__large-file-action {
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.arcgis-layer-panel__file-action input,
+.arcgis-layer-panel__large-file-action input {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.arcgis-layer-panel__large-file-action {
+  min-height: 76px;
+  width: 100%;
+  border-style: dashed;
+  border-radius: 8px;
+  color: #172033;
+  font-size: 13px;
+}
+
 .arcgis-layer-panel__selected-editor {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(150px, 1fr) 110px;
@@ -376,6 +441,7 @@
 }
 
 .arcgis-layer-panel__selected-editor input:not([type='range']):not([type='color']),
+.arcgis-layer-panel__selected-editor select,
 .arcgis-layer-panel__grouping input {
   min-width: 0;
   border: 1px solid rgba(100, 116, 139, 0.36);
@@ -384,6 +450,12 @@
   color: #111827;
   padding: 5px 7px;
   outline: 0;
+}
+
+.arcgis-layer-panel__selected-editor input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: #24292f;
 }
 
 .arcgis-layer-panel__selected-editor input[type='color'] {
@@ -399,6 +471,12 @@
   display: grid;
   gap: 10px;
   padding: 10px;
+}
+
+.arcgis-layer-details--compact {
+  margin: 0;
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(248, 250, 252, 0.66);
 }
 
 .arcgis-layer-details header {
@@ -469,6 +547,62 @@
   color: #344054;
   font-size: 11px;
   padding: 3px 7px;
+}
+
+.arcgis-layer-source-list {
+  display: grid;
+  gap: 8px;
+}
+
+.arcgis-layer-source {
+  display: grid;
+  gap: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.66);
+  padding: 9px;
+}
+
+.arcgis-layer-source.is-selected {
+  border-color: rgba(14, 116, 144, 0.34);
+  background: rgba(236, 254, 255, 0.55);
+}
+
+.arcgis-layer-source__main {
+  display: grid;
+  min-width: 0;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.arcgis-layer-source__main strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arcgis-layer-source__main span,
+.arcgis-layer-source__meta {
+  color: #667085;
+  font-size: 12px;
+}
+
+.arcgis-layer-source__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.arcgis-layer-source__meta span {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 2px 7px;
 }
 
 .arcgis-layer-table-scroll {
