@@ -16,6 +16,8 @@ import { defineConfig, loadEnv, type ProxyOptions } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const API_UNAVAILABLE_MESSAGE = 'GeoForge API 未连接，请启动 Node API 服务。'
+
 // https://vite.dev/config/
 // 构建配置
 //
@@ -91,8 +93,30 @@ function buildDevProxy(target?: string): Record<string, string | ProxyOptions> |
   // 把相对 /api 和 /health 转发到任意端口的 API 服务。
   if (!target) return undefined
   return {
-    '/ws': { target, changeOrigin: true, ws: true },
-    '/api': { target, changeOrigin: true },
-    '/health': { target, changeOrigin: true },
+    '/ws': buildProxyOptions(target, true),
+    '/api': buildProxyOptions(target),
+    '/health': buildProxyOptions(target),
+  }
+}
+
+function buildProxyOptions(target: string, ws = false): ProxyOptions {
+  return {
+    target,
+    changeOrigin: true,
+    ws,
+    configure(proxy) {
+      proxy.on('error', (_error, req, res) => {
+        if (res && 'writeHead' in res && !res.headersSent) {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({
+            detail: API_UNAVAILABLE_MESSAGE,
+            path: req.url ?? null,
+            target,
+          }))
+          return
+        }
+        req.socket.destroy()
+      })
+    },
   }
 }

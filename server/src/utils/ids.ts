@@ -8,7 +8,7 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import { randomUUID } from 'node:crypto';
-export function makeId(prefix) {
+export function makeId(prefix: string) {
     return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
 export function nowUtc() {

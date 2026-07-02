@@ -18,6 +18,7 @@ import { useLocation } from 'react-router-dom'
 
 import type {
   AgentExecutionMode,
+  AuthMe,
   ConversationItem,
   MemoryFileRecord,
   ToolDescriptor,
@@ -36,7 +37,8 @@ import { buildListItemVariants, buildListVariants, motionSpring } from '../share
 import { pickConversationHeadline } from '../features/conversation/items'
 import { ChatPanel } from '../features/conversation/ChatPanel'
 import type { MemoryEntry } from '../features/conversation/types'
-import { listMemories } from '../api/client'
+import { getAuthMe, listMemories, logout } from '../api/client'
+import { LoginScreen } from './auth/LoginScreen'
 import { TopBar } from './layout/TopBar'
 import { WorkspaceLayout, type WorkspaceSidebarItem } from './layout/WorkspaceLayout'
 import { WorkbenchProgressCard } from './layout/WorkbenchProgressCard'
@@ -77,6 +79,7 @@ const DetailPanel = lazy(() => import('../features/artifacts/DetailPanel').then(
 const loadMapCanvasModule = () => import('../features/map/MapCanvas')
 const MapCanvas = lazy(() => loadMapCanvasModule().then((module) => ({ default: module.MapCanvas })))
 const ToolManagementPage = lazy(() => import('../features/tools/ToolManagementPage').then((module) => ({ default: module.ToolManagementPage })))
+const SecurityAdminPage = lazy(() => import('../features/security/SecurityAdminPage'))
 
 const SIDEBAR_ITEMS: ReadonlyArray<WorkspaceSidebarItem & { id: SidebarItemId }> = [
   { id: 'assistant', icon: 'psychology', label: '智能指令', shortLabel: '助手' },
@@ -114,6 +117,9 @@ function AppShell() {
   // 装配会话、运行、资源、工具和导航控制器的页面投影。
   // 网络语义和实时订阅分别由控制器与 useRunState 所有。
   const location = useLocation()
+  const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'unauthenticated' | 'error'>('checking')
+  const [authMe, setAuthMe] = useState<AuthMe | null>(null)
+  const [authRefreshNonce, setAuthRefreshNonce] = useState(0)
   const [isMapActivated, setIsMapActivated] = useState(false)
   const [mapFocusRequest, setMapFocusRequest] = useState<{ artifactId?: string; nonce: number }>()
   const [canonicalThreadItems, setCanonicalThreadItems] = useState<ConversationItem[]>([])
@@ -455,6 +461,18 @@ function AppShell() {
 
     void (async () => {
       try {
+        const auth = await getAuthMe().catch(error => {
+          const message = error instanceof Error ? error.message : String(error)
+          if (message.includes('未登录') || message.includes('401')) return null
+          throw error
+        })
+        if (!auth) {
+          if (!disposed) setAuthStatus('unauthenticated')
+          return
+        }
+        if (disposed) return
+        setAuthMe(auth)
+        setAuthStatus('authenticated')
         const snapshot = await retryAsync(() => loadWorkspaceBootstrap(sharedSessionId), 2, 300)
         if (disposed) return
         applyProviders(snapshot.providers)
@@ -498,13 +516,17 @@ function AppShell() {
           syncUrl(sessionRecord.id)
         }
       } catch (error) {
-        if (!disposed) setUiError(formatUiError(error, '页面加载遇到问题，请刷新重试。'))
+        if (!disposed) {
+          setAuthStatus('error')
+          setUiError(formatUiError(error, '页面加载遇到问题，请刷新重试。'))
+        }
       }
     })()
 
     return () => { disposed = true }
   }, [
     applyProviders,
+    authRefreshNonce,
     clearActiveRunState,
     hydrateRunState,
     getThreadHistory,
@@ -975,6 +997,32 @@ function AppShell() {
     [currentThreadId, hydrateRunState, run?.id, runTool, session?.id, setIsToolSubmitting, setToolRunResult, setUiError, syncUrl],
   )
 
+  if (authStatus === 'checking') {
+    return <div className="dc-route-loading">正在校验登录状态…</div>
+  }
+
+  if (authStatus !== 'authenticated' || !authMe) {
+    return (
+      <LoginScreen
+        errorMessage={authStatus === 'error' ? uiError : undefined}
+        onAuthenticated={() => {
+          setAuthStatus('checking')
+          setAuthRefreshNonce(value => value + 1)
+        }}
+      />
+    )
+  }
+
+  const handleLogout = async () => {
+    try {
+      await logout()
+    } finally {
+      setAuthMe(null)
+      setAuthStatus('unauthenticated')
+      setUiError(undefined)
+    }
+  }
+
   return (
     <Suspense fallback={<div className="dc-route-loading">正在加载页面…</div>}>
       <LazyMotion features={domAnimation}>
@@ -988,7 +1036,9 @@ function AppShell() {
                     artifactCount={artifacts.length}
                     providerLabel={providerLabel}
                     runStatusLabel={formatTopBarRunStatus(run?.status)}
+                    authMe={authMe}
                     onNavChange={handleNavChange}
+                    onLogout={handleLogout}
                     onPrimaryAction={async () => {
                       if (selectedArtifactId) {
                         setPanelMode('export')
@@ -1309,6 +1359,7 @@ function AppShell() {
                 }}
               />
             }
+            security={<SecurityAdminPage />}
           />
         </MotionConfig>
       </LazyMotion>

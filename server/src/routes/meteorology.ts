@@ -14,7 +14,7 @@
 // Agent 工具通过 datasetId / latest_upload 解析到同一条 fileRelativePath。
 
 import { Hono } from 'hono'
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import type { Database } from '../db/connection.js'
 import type {
   MeteorologicalDatasetRecord,
@@ -23,6 +23,9 @@ import type {
 import { RuntimeFileStore, type FileLike } from '../store/fileStore.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
 import { makeId, nowUtc } from '../utils/ids.js'
+import type { SecurityServices } from '../security/routes.js'
+import { requireAuth } from '../security/routes.js'
+import type { Env } from '../framework/env.js'
 
 const METEOROLOGICAL_SUFFIXES = [
   '.nc',
@@ -43,6 +46,9 @@ export async function ensureMeteorologicalTables(db: Database): Promise<void> {
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS platform_meteorological_datasets (
       dataset_id text PRIMARY KEY,
+      workspace_id text,
+      created_by_user_id text,
+      visibility text NOT NULL DEFAULT 'workspace',
       session_id text NOT NULL,
       thread_id text,
       filename text NOT NULL,
@@ -70,6 +76,8 @@ export async function ensureMeteorologicalTables(db: Database): Promise<void> {
     CREATE TABLE IF NOT EXISTS platform_meteorological_jobs (
       job_id text PRIMARY KEY,
       dataset_id text NOT NULL,
+      workspace_id text,
+      created_by_user_id text,
       session_id text NOT NULL,
       thread_id text,
       kind text NOT NULL,
@@ -89,26 +97,42 @@ export async function ensureMeteorologicalTables(db: Database): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_meteorological_jobs_session_updated
     ON platform_meteorological_jobs (session_id, updated_at)
   `)
+  await db.execute(sql`ALTER TABLE platform_meteorological_datasets ADD COLUMN IF NOT EXISTS workspace_id text`)
+  await db.execute(sql`ALTER TABLE platform_meteorological_datasets ADD COLUMN IF NOT EXISTS created_by_user_id text`)
+  await db.execute(sql`ALTER TABLE platform_meteorological_datasets ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'workspace'`)
+  await db.execute(sql`ALTER TABLE platform_meteorological_jobs ADD COLUMN IF NOT EXISTS workspace_id text`)
+  await db.execute(sql`ALTER TABLE platform_meteorological_jobs ADD COLUMN IF NOT EXISTS created_by_user_id text`)
 }
 
-export function meteorologyRoutes(db: Database, runtimeRoot: string, store: PostgresPlatformStore) {
+export function meteorologyRoutes(db: Database, runtimeRoot: string, store: PostgresPlatformStore, security: SecurityServices, env?: Env) {
   const files = new RuntimeFileStore(runtimeRoot)
   const app = new Hono()
 
   app.get('/api/v1/meteorology/datasets', async c => {
+    const auth = requireAuth(c)
     const sessionId = queryString(c.req.query('sessionId') ?? c.req.query('session_id'))
     const threadId = queryString(c.req.query('threadId') ?? c.req.query('thread_id'))
     const filename = queryString(c.req.query('filename'))
-    const rows = await listDatasets(db, { sessionId, threadId, filename })
+    await security.authorization.enforce(auth, 'dataset', 'read', { workspaceId: auth.defaultWorkspaceId })
+    const rows = await listDatasets(db, { workspaceId: auth.defaultWorkspaceId, sessionId, threadId, filename })
     return c.json(rows)
   })
 
   app.post('/api/v1/meteorology/datasets', async c => {
     try {
+      enforceContentLength(c.req.header('content-length'), env?.MAX_METEOROLOGY_UPLOAD_BYTES)
+      const auth = requireAuth(c)
       const form = await c.req.formData()
       const sessionId = formString(form, 'sessionId') ?? formString(form, 'session_id')
       if (!sessionId) return c.json({ detail: 'sessionId 不能为空。' }, 400)
-      store.getSession(sessionId)
+      const session = store.getSession(sessionId)
+      await security.authorization.assertResourceWorkspace(auth, 'session', 'update', {
+        workspaceId: session.workspaceId,
+        createdByUserId: session.createdByUserId,
+        visibility: session.visibility,
+        resourceId: session.id,
+      })
+      await security.authorization.enforce(auth, 'dataset', 'create', { workspaceId: session.workspaceId ?? auth.defaultWorkspaceId })
       const threadId = formString(form, 'threadId') ?? formString(form, 'thread_id')
       const file = requireFile(form.get('file'))
       if (!isSupportedMeteorologicalFilename(file.name)) {
@@ -121,6 +145,9 @@ export function meteorologyRoutes(db: Database, runtimeRoot: string, store: Post
       const now = nowUtc()
       const dataset: MeteorologicalDatasetRecord = {
         datasetId: makeId('meteorological_dataset'),
+        workspaceId: session.workspaceId,
+        createdByUserId: auth?.userId ?? session.createdByUserId,
+        visibility: 'workspace',
         sessionId,
         threadId,
         filename: stored.name,
@@ -150,17 +177,31 @@ export function meteorologyRoutes(db: Database, runtimeRoot: string, store: Post
   app.get('/api/v1/meteorology/jobs/:jobId', async c => {
     const job = await getJob(db, c.req.param('jobId'))
     if (!job) return c.json({ detail: '气象处理任务不存在' }, 404)
+    await security.authorization.assertResourceWorkspace(requireAuth(c), 'dataset', 'read', {
+      workspaceId: job.workspaceId,
+      createdByUserId: job.createdByUserId,
+      resourceId: job.datasetId,
+    })
     return c.json(job)
   })
 
   app.post('/api/v1/meteorology/datasets/:datasetId/report', async c => {
     const dataset = await getDataset(db, c.req.param('datasetId'))
     if (!dataset) return c.json({ detail: '气象数据集不存在' }, 404)
+    const auth = requireAuth(c)
+    await security.authorization.assertResourceWorkspace(auth, 'dataset', 'execute', {
+      workspaceId: dataset.workspaceId,
+      createdByUserId: dataset.createdByUserId,
+      visibility: dataset.visibility,
+      resourceId: dataset.datasetId,
+    })
     const now = nowUtc()
     const payload = await safeJson(c.req.raw)
     const job: MeteorologicalJobRecord = {
       jobId: makeId('meteorological_job'),
       datasetId: dataset.datasetId,
+      workspaceId: dataset.workspaceId,
+      createdByUserId: auth?.userId ?? dataset.createdByUserId,
       sessionId: dataset.sessionId,
       threadId: dataset.threadId,
       kind: 'report',
@@ -176,6 +217,14 @@ export function meteorologyRoutes(db: Database, runtimeRoot: string, store: Post
   })
 
   return app
+}
+
+function enforceContentLength(value: string | undefined, limit?: number): void {
+  if (!limit || !value) return
+  const parsed = Number(value)
+  if (Number.isFinite(parsed) && parsed > limit) {
+    throw new Error(`气象数据文件过大，限制为 ${Math.round(limit / 1024 / 1024)}MB。`)
+  }
 }
 
 export async function resolveLatestMeteorologicalDataset(
@@ -196,87 +245,18 @@ export async function resolveLatestMeteorologicalDataset(
 
 async function listDatasets(
   db: Database,
-  filters: { sessionId?: string | null; threadId?: string | null; filename?: string | null; limit?: number },
+  filters: { workspaceId?: string | null; sessionId?: string | null; threadId?: string | null; filename?: string | null; limit?: number },
 ): Promise<MeteorologicalDatasetRecord[]> {
   const limit = Math.max(1, Math.min(filters.limit ?? 100, 500))
-  if (filters.filename && filters.threadId && filters.sessionId) {
-    const result = await db.execute(sql`
-      SELECT *
-      FROM platform_meteorological_datasets
-      WHERE session_id = ${filters.sessionId}
-        AND thread_id = ${filters.threadId}
-        AND lower(filename) = lower(${filters.filename})
-      ORDER BY updated_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
-  }
-  if (filters.filename && filters.threadId) {
-    const result = await db.execute(sql`
-      SELECT *
-      FROM platform_meteorological_datasets
-      WHERE thread_id = ${filters.threadId}
-        AND lower(filename) = lower(${filters.filename})
-      ORDER BY updated_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
-  }
-  if (filters.filename && filters.sessionId) {
-    const result = await db.execute(sql`
-      SELECT *
-      FROM platform_meteorological_datasets
-      WHERE session_id = ${filters.sessionId}
-        AND lower(filename) = lower(${filters.filename})
-      ORDER BY updated_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
-  }
-  if (filters.threadId && filters.sessionId) {
-    const result = await db.execute(sql`
-      SELECT *
-      FROM platform_meteorological_datasets
-      WHERE session_id = ${filters.sessionId}
-        AND thread_id = ${filters.threadId}
-      ORDER BY updated_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
-  }
-  if (filters.threadId) {
-    const result = await db.execute(sql`
-      SELECT *
-      FROM platform_meteorological_datasets
-      WHERE thread_id = ${filters.threadId}
-      ORDER BY updated_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
-  }
-  if (filters.sessionId) {
-    const result = await db.execute(sql`
-      SELECT *
-      FROM platform_meteorological_datasets
-      WHERE session_id = ${filters.sessionId}
-      ORDER BY updated_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
-  }
-  if (filters.filename) {
-    const result = await db.execute(sql`
-      SELECT *
-      FROM platform_meteorological_datasets
-      WHERE lower(filename) = lower(${filters.filename})
-      ORDER BY updated_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(row => mapDatasetRow(row as Record<string, unknown>))
-  }
+  const conditions: SQL[] = []
+  if (filters.workspaceId) conditions.push(sql`workspace_id = ${filters.workspaceId}`)
+  if (filters.sessionId) conditions.push(sql`session_id = ${filters.sessionId}`)
+  if (filters.threadId) conditions.push(sql`thread_id = ${filters.threadId}`)
+  if (filters.filename) conditions.push(sql`lower(filename) = lower(${filters.filename})`)
   const result = await db.execute(sql`
     SELECT *
     FROM platform_meteorological_datasets
+    WHERE ${conditions.length ? sql.join(conditions, sql` AND `) : sql`TRUE`}
     ORDER BY updated_at DESC
     LIMIT ${limit}
   `)
@@ -306,12 +286,14 @@ async function getJob(db: Database, jobId: string): Promise<MeteorologicalJobRec
 async function insertDataset(db: Database, dataset: MeteorologicalDatasetRecord): Promise<void> {
   await db.execute(sql`
     INSERT INTO platform_meteorological_datasets (
-      dataset_id, session_id, thread_id, filename, original_filename, file_id,
+      dataset_id, workspace_id, created_by_user_id, visibility,
+      session_id, thread_id, filename, original_filename, file_id,
       file_relative_path, size_bytes, content_hash, media_type, status,
       metadata_json, created_at, updated_at
     )
     VALUES (
-      ${dataset.datasetId}, ${dataset.sessionId}, ${dataset.threadId}, ${dataset.filename},
+      ${dataset.datasetId}, ${dataset.workspaceId}, ${dataset.createdByUserId}, ${dataset.visibility},
+      ${dataset.sessionId}, ${dataset.threadId}, ${dataset.filename},
       ${dataset.originalFilename}, ${dataset.fileId}, ${dataset.fileRelativePath},
       ${dataset.sizeBytes}, ${dataset.contentHash}, ${dataset.mediaType}, ${dataset.status},
       ${JSON.stringify(dataset.metadata)}::jsonb, ${new Date(dataset.createdAt)}, ${new Date(dataset.updatedAt)}
@@ -322,11 +304,12 @@ async function insertDataset(db: Database, dataset: MeteorologicalDatasetRecord)
 async function insertJob(db: Database, job: MeteorologicalJobRecord): Promise<void> {
   await db.execute(sql`
     INSERT INTO platform_meteorological_jobs (
-      job_id, dataset_id, session_id, thread_id, kind, status, message,
+      job_id, dataset_id, workspace_id, created_by_user_id, session_id, thread_id, kind, status, message,
       payload_json, created_at, updated_at, completed_at
     )
     VALUES (
-      ${job.jobId}, ${job.datasetId}, ${job.sessionId}, ${job.threadId}, ${job.kind},
+      ${job.jobId}, ${job.datasetId}, ${job.workspaceId}, ${job.createdByUserId},
+      ${job.sessionId}, ${job.threadId}, ${job.kind},
       ${job.status}, ${job.message}, ${JSON.stringify(job.payload)}::jsonb,
       ${new Date(job.createdAt)}, ${new Date(job.updatedAt)},
       ${job.completedAt ? new Date(job.completedAt) : null}
@@ -337,6 +320,9 @@ async function insertJob(db: Database, job: MeteorologicalJobRecord): Promise<vo
 function mapDatasetRow(row: Record<string, unknown>): MeteorologicalDatasetRecord {
   return {
     datasetId: String(row.dataset_id ?? ''),
+    workspaceId: typeof row.workspace_id === 'string' ? row.workspace_id : null,
+    createdByUserId: typeof row.created_by_user_id === 'string' ? row.created_by_user_id : null,
+    visibility: row.visibility === 'private' || row.visibility === 'public' ? row.visibility : 'workspace',
     sessionId: String(row.session_id ?? ''),
     threadId: typeof row.thread_id === 'string' ? row.thread_id : null,
     filename: String(row.filename ?? ''),
@@ -357,6 +343,8 @@ function mapJobRow(row: Record<string, unknown>): MeteorologicalJobRecord {
   return {
     jobId: String(row.job_id ?? ''),
     datasetId: String(row.dataset_id ?? ''),
+    workspaceId: typeof row.workspace_id === 'string' ? row.workspace_id : null,
+    createdByUserId: typeof row.created_by_user_id === 'string' ? row.created_by_user_id : null,
     sessionId: String(row.session_id ?? ''),
     threadId: typeof row.thread_id === 'string' ? row.thread_id : null,
     kind: String(row.kind ?? ''),

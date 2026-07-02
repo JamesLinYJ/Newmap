@@ -1,10 +1,9 @@
 """独立子进程：运行对比，输出 JSON 结果到 stdout"""
-import sys, os, json
+import sys, json
 from pathlib import Path
 from datetime import datetime
 
 PROJECT = Path(__file__).resolve().parent
-os.chdir(str(PROJECT))
 sys.path.insert(0, str(PROJECT))
 
 import numpy as np
@@ -16,7 +15,7 @@ def main():
     output_dir = Path(sys.argv[3])
     level_index = int(sys.argv[4])
 
-    data = np.load(npz_path)
+    data = np.load(npz_path, allow_pickle=False)
     target = datetime.strptime(target_time_str, "%Y%m%d%H%M%S")
 
     result = mc.run_comparison(

@@ -55,6 +55,7 @@ import { createAgentsTools, type AgentsExecutionContext } from './agentsToolBrid
 import { ToolExecutionCoordinator } from './toolExecutionCoordinator.js'
 import { runDeterministicNowcast, shouldRunDeterministicNowcast } from './deterministicNowcastRunner.js'
 import { agentsSdkVersion, runtimeConfigDigest, SDK_STATE_SCHEMA_VERSION } from './agentsRuntimeMetadata.js'
+import type { AuthContext } from '../security/types.js'
 
 const AGENT_TOOL_NAME = /^[a-zA-Z0-9_-]+$/u
 
@@ -111,6 +112,7 @@ export interface RunOptions {
   executionMode?: 'plan' | 'auto'
   reasoning?: boolean
   resume?: boolean
+  auth?: AuthContext | null
 }
 
 interface RuntimeAssembly {
@@ -196,6 +198,7 @@ export class OpenAIAgentsRuntime {
           modelName: null,
           inlineToolResultMaxChars: options.runtimeConfig.context.inlineToolResultMaxChars,
           runtimeConfig: options.runtimeConfig,
+          auth: options.auth ?? null,
           eventSink,
           itemSink,
           valueState,
@@ -255,7 +258,7 @@ export class OpenAIAgentsRuntime {
     return this.store.updateRunStatus(runId, 'cancelled')
   }
 
-  async resolveApproval(runId: string, approvalId: string, approved: boolean): Promise<AnalysisRun> {
+  async resolveApproval(runId: string, approvalId: string, approved: boolean, auth?: AuthContext | null): Promise<AnalysisRun> {
     const run = this.store.getRun(runId)
     if (!run.threadId) throw new Error(`运行 '${runId}' 缺少 threadId`)
     if (!run.runtimeConfigSnapshot) throw new Error(`运行 '${runId}' 缺少 runtimeConfigSnapshot`)
@@ -282,6 +285,7 @@ export class OpenAIAgentsRuntime {
       runtimeConfig: run.runtimeConfigSnapshot,
       reasoning: true,
       resume: true,
+      auth: auth ?? null,
     }
     const assembly = await this.assembleRuntime(options, run.threadId, turnId, eventSink, itemSink, false)
     const state = await this.restoreSdkState(assembly, options)
@@ -405,6 +409,7 @@ export class OpenAIAgentsRuntime {
       modelName: selectedModel,
       inlineToolResultMaxChars: options.runtimeConfig.context.inlineToolResultMaxChars,
       runtimeConfig: options.runtimeConfig,
+      auth: options.auth ?? null,
       eventSink,
       itemSink,
       valueState,
@@ -855,6 +860,7 @@ export class OpenAIAgentsRuntime {
     itemSink: ItemSink,
   ): Promise<void> {
     const args = parseArguments(item.arguments)
+    const sdkStatus = item.status ?? 'completed'
     await this.store.appendTranscript({
       threadId,
       runId,
@@ -864,7 +870,7 @@ export class OpenAIAgentsRuntime {
         callId: item.callId,
         name: item.name,
         arguments: args,
-        ledgerStatus: sdkNativeLedgerStatus(item.status),
+        ledgerStatus: sdkNativeLedgerStatus(sdkStatus),
         source: 'openai_agents_sandbox',
       },
     })
@@ -877,7 +883,7 @@ export class OpenAIAgentsRuntime {
     itemSink.completeItem(callItem.itemId, {
       name: item.name,
       callId: item.callId,
-      body: item.status === 'incomplete' ? 'SDK 沙箱工具执行未完成' : 'SDK 沙箱工具已执行',
+      body: sdkStatus === 'incomplete' ? 'SDK 沙箱工具执行未完成' : 'SDK 沙箱工具已执行',
       isError: item.status === 'incomplete',
       metadata: { source: 'openai_agents_sandbox' },
     })

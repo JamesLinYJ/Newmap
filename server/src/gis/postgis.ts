@@ -8,13 +8,66 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import { sql } from 'drizzle-orm';
+import type { Database } from '../db/connection.js';
+import type { LayerDescriptor, LayerPropertyDescriptor, ResourceVisibility } from '../schemas/types.js';
+import type { GeoJsonFeature, GeoJsonFeatureCollection, Geometry, Position } from './geojson.js';
+import { parseGeoJsonEntity, requireSingleFeature } from './geojson.js';
 import { makeId } from '../utils/ids.js';
+
+type BBox = [number, number, number, number];
+type QueryRow = Record<string, unknown>;
+
+interface StoredFeature {
+    geometry: Geometry;
+    properties: Record<string, unknown>;
+}
+
+interface LayerRecord {
+    descriptor: LayerDescriptor;
+    tableName: string;
+    storageKind: string | null;
+}
+
+interface ImportGeoJsonLayerInput {
+    collection: GeoJsonFeatureCollection;
+    layerKey?: string | null;
+    name: string;
+    sourceType: string;
+    description?: string | null;
+    tags?: string[];
+    category?: string | null;
+    status?: string | null;
+    sourceFilename?: string | null;
+    sessionId?: string | null;
+    threadId?: string | null;
+    workspaceId?: string | null;
+    createdByUserId?: string | null;
+    visibility?: ResourceVisibility;
+    readonly?: boolean;
+}
+
+interface LayerMetadataPatch {
+    name?: string;
+    description?: string;
+    tags?: string[];
+    category?: string;
+    status?: string;
+    analysisCapabilities?: string[];
+    sourceConfigSummary?: string | null;
+}
+
+interface PropertySchemaAccumulator {
+    dataType: string;
+    populatedCount: number;
+    sampleValues: Set<string>;
+}
+
 export class PostGisRepository {
-    db;
-    constructor(db) {
+    db: Database;
+    constructor(db: Database) {
         this.db = db;
     }
-    async status() {
+    async status(): Promise<{ available: boolean; error: string | null }> {
         try {
             await this.db.execute(sql `SELECT 1`);
             return { available: true, error: null };
@@ -23,7 +76,7 @@ export class PostGisRepository {
             return { available: false, error: error instanceof Error ? error.message : String(error) };
         }
     }
-    async listLayers(sessionId, threadId) {
+    async listLayers(sessionId?: string | null, threadId?: string | null): Promise<LayerDescriptor[]> {
         const result = await this.db.execute(sql `
       SELECT layer_key, name, source_type, geometry_type, srid, table_name,
              description, feature_count, tags, metadata_json, created_at, updated_at
@@ -49,11 +102,41 @@ export class PostGisRepository {
     `);
         return result.rows.map(row => mapRowToLayerRecord(row).descriptor);
     }
-    async getLayer(layerKey) {
+    async listVisibleLayers(workspaceId: string, sessionId?: string | null, threadId?: string | null): Promise<LayerDescriptor[]> {
+        const result = await this.db.execute(sql `
+      SELECT layer_key, name, source_type, geometry_type, srid, table_name,
+             description, feature_count, tags, metadata_json, created_at, updated_at
+      FROM layers_metadata
+      WHERE (
+        source_type = 'system'
+        OR metadata_json->>'workspaceId' = ${workspaceId}
+        OR metadata_json->>'workspace_id' = ${workspaceId}
+      )
+      ${sessionId ? sql `
+        AND (
+          metadata_json->>'sessionId' = ${sessionId}
+          OR metadata_json->>'session_id' = ${sessionId}
+          OR metadata_json->>'sessionId' IS NULL
+          OR metadata_json->>'session_id' IS NULL
+        )
+      ` : sql ``}
+      ${threadId ? sql `
+        AND (
+          metadata_json->>'threadId' = ${threadId}
+          OR metadata_json->>'thread_id' = ${threadId}
+          OR metadata_json->>'threadId' IS NULL
+          OR metadata_json->>'thread_id' IS NULL
+        )
+      ` : sql ``}
+      ORDER BY updated_at DESC
+    `);
+        return result.rows.map(row => mapRowToLayerRecord(row).descriptor);
+    }
+    async getLayer(layerKey: string): Promise<LayerDescriptor | null> {
         const record = await this.getLayerRecord(layerKey);
         return record?.descriptor ?? null;
     }
-    async geocode(query) {
+    async geocode(query: string): Promise<Array<{ label: string; longitude: number; latitude: number }>> {
         const result = await this.db.execute(sql `
       SELECT name, metadata_json
       FROM layers_metadata
@@ -72,7 +155,7 @@ export class PostGisRepository {
         })
             .filter(candidate => Number.isFinite(candidate.longitude) && Number.isFinite(candidate.latitude));
     }
-    async queryFeatures(layerKey, bbox, limit = 100) {
+    async queryFeatures(layerKey: string, bbox?: BBox, limit = 100): Promise<StoredFeature[]> {
         const layer = await this.getLayerRecord(layerKey);
         if (!layer)
             throw new Error(`图层 '${layerKey}' 不存在`);
@@ -111,7 +194,7 @@ export class PostGisRepository {
     `);
         return result.rows.map(mapRowToFeature);
     }
-    async featureCount(layerKey) {
+    async featureCount(layerKey: string): Promise<number> {
         const layer = await this.getLayerRecord(layerKey);
         if (!layer)
             throw new Error(`图层 '${layerKey}' 不存在`);
@@ -119,7 +202,7 @@ export class PostGisRepository {
         const result = await this.db.execute(sql `SELECT COUNT(*) as cnt FROM ${table}`);
         return Number(result.rows[0]?.cnt ?? 0);
     }
-    async importGeoJsonLayer(input) {
+    async importGeoJsonLayer(input: ImportGeoJsonLayerInput): Promise<LayerDescriptor> {
         const features = normalizeFeatures(input.collection);
         if (!features.length)
             throw new Error('GeoJSON 至少需要一个带 geometry 的 feature');
@@ -178,7 +261,7 @@ export class PostGisRepository {
             throw new Error(`图层 '${layerKey}' 导入后无法读取`);
         return layer;
     }
-    async updateLayerMetadata(layerKey, patch) {
+    async updateLayerMetadata(layerKey: string, patch: LayerMetadataPatch): Promise<LayerDescriptor> {
         const record = await this.getLayerRecord(layerKey);
         const layer = record?.descriptor ?? null;
         if (!layer)
@@ -204,7 +287,7 @@ export class PostGisRepository {
             throw new Error(`图层 '${layerKey}' 更新后无法读取`);
         return updated;
     }
-    async deleteLayer(layerKey) {
+    async deleteLayer(layerKey: string): Promise<boolean> {
         const record = await this.getLayerRecord(layerKey);
         if (!record)
             return false;
@@ -215,7 +298,7 @@ export class PostGisRepository {
         }
         return true;
     }
-    async getLayerRecord(layerKey) {
+    async getLayerRecord(layerKey: string): Promise<LayerRecord | null> {
         const result = await this.db.execute(sql `
       SELECT layer_key, name, source_type, geometry_type, srid, table_name,
              description, feature_count, tags, metadata_json, created_at, updated_at
@@ -227,13 +310,14 @@ export class PostGisRepository {
         return mapRowToLayerRecord(result.rows[0]);
     }
 }
-function mapRowToFeature(row) {
+function mapRowToFeature(row: QueryRow): StoredFeature {
+    const geometryEntity = parseGeoJsonEntity(row.geometry, 'PostGIS geometry');
     return {
-        geometry: row.geometry,
+        geometry: requireSingleFeature(geometryEntity, 'PostGIS geometry').geometry,
         properties: isRecord(row.properties) ? row.properties : {},
     };
 }
-function mapRowToLayerRecord(row) {
+function mapRowToLayerRecord(row: QueryRow): LayerRecord {
     const metadata = isRecord(row.metadata_json) ? row.metadata_json : {};
     const descriptor = {
         layerKey: String(row.layer_key ?? ''),
@@ -243,57 +327,61 @@ function mapRowToLayerRecord(row) {
         srid: Number(row.srid ?? 4326),
         description: String(row.description ?? ''),
         featureCount: row.feature_count != null ? Number(row.feature_count) : null,
-        bounds: Array.isArray(metadata.bounds) ? metadata.bounds : null,
+        bounds: parseBounds(metadata.bounds),
         propertySchema: Array.isArray(metadata.propertySchema)
-            ? metadata.propertySchema
+            ? metadata.propertySchema.filter(isLayerPropertyDescriptor)
             : [],
         category: String(metadata.category ?? 'general'),
         status: String(metadata.status ?? 'active'),
-        tags: Array.isArray(row.tags) ? row.tags : [],
+        tags: toStringArray(row.tags),
         analysisCapabilities: Array.isArray(metadata.analysisCapabilities)
-            ? metadata.analysisCapabilities
+            ? toStringArray(metadata.analysisCapabilities)
             : [],
         sourceConfigSummary: typeof metadata.sourceConfigSummary === 'string' ? metadata.sourceConfigSummary : null,
         sessionId: typeof metadata.sessionId === 'string' ? metadata.sessionId : typeof metadata.session_id === 'string' ? metadata.session_id : null,
         threadId: typeof metadata.threadId === 'string' ? metadata.threadId : typeof metadata.thread_id === 'string' ? metadata.thread_id : null,
+        workspaceId: typeof metadata.workspaceId === 'string' ? metadata.workspaceId : typeof metadata.workspace_id === 'string' ? metadata.workspace_id : null,
+        createdByUserId: typeof metadata.createdByUserId === 'string' ? metadata.createdByUserId : typeof metadata.created_by_user_id === 'string' ? metadata.created_by_user_id : null,
+        visibility: isResourceVisibility(metadata.visibility) ? metadata.visibility : 'workspace',
+        readonly: metadata.readonly === true || row.source_type === 'system',
         createdAt: formatTimestamp(row.created_at),
         updatedAt: formatTimestamp(row.updated_at),
-    };
+    } satisfies LayerDescriptor;
     return {
         descriptor,
         tableName: String(row.table_name ?? ''),
         storageKind: typeof metadata.storageKind === 'string' ? metadata.storageKind : null,
     };
 }
-function quoteQualifiedIdentifier(value) {
+function quoteQualifiedIdentifier(value: string): string {
     const parts = value.split('.');
     if (!parts.length || parts.some(part => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(part))) {
         throw new Error(`非法表名: ${value}`);
     }
     return parts.map(part => `"${part.replaceAll('"', '""')}"`).join('.');
 }
-function quoteIdentifier(value) {
+function quoteIdentifier(value: string): string {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(value)) {
         throw new Error(`非法标识符: ${value}`);
     }
     return `"${value.replaceAll('"', '""')}"`;
 }
-function sanitizeIdentifier(value) {
+function sanitizeIdentifier(value: string): string {
     const normalized = value.trim().replace(/[^A-Za-z0-9_]+/gu, '_');
     if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(normalized))
         return normalized;
     return `layer_${normalized || makeId('layer').replace(/^layer_/, '')}`;
 }
-function normalizeFeatures(collection) {
+function normalizeFeatures(collection: GeoJsonFeatureCollection): GeoJsonFeature[] {
     if (!collection || collection.type !== 'FeatureCollection' || !Array.isArray(collection.features)) {
         throw new Error('GeoJSON 必须是 FeatureCollection');
     }
     return collection.features.filter((feature) => feature?.type === 'Feature' && isGeometry(feature.geometry));
 }
-function isGeometry(value) {
+function isGeometry(value: unknown): value is Geometry {
     return isRecord(value) && typeof value.type === 'string' && 'coordinates' in value;
 }
-function buildLayerMetadata(input, features) {
+function buildLayerMetadata(input: ImportGeoJsonLayerInput, features: GeoJsonFeature[]): Record<string, unknown> {
     const geometryTypes = [...new Set(features.map(feature => feature.geometry.type))];
     const bounds = computeBounds(features);
     return {
@@ -308,10 +396,14 @@ function buildLayerMetadata(input, features) {
         sessionId: input.sessionId ?? null,
         threadId: input.threadId ?? null,
         sourceFilename: input.sourceFilename ?? null,
+        workspaceId: input.workspaceId ?? null,
+        createdByUserId: input.createdByUserId ?? null,
+        visibility: input.visibility ?? 'workspace',
+        readonly: input.readonly === true || input.sourceType === 'system',
     };
 }
-function buildPropertySchema(features) {
-    const stats = new Map();
+function buildPropertySchema(features: GeoJsonFeature[]): LayerPropertyDescriptor[] {
+    const stats = new Map<string, PropertySchemaAccumulator>();
     for (const feature of features) {
         const properties = isRecord(feature.properties) ? feature.properties : {};
         for (const [name, value] of Object.entries(properties)) {
@@ -333,15 +425,15 @@ function buildPropertySchema(features) {
         sampleValues: [...entry.sampleValues],
     }));
 }
-function inferDataType(value) {
+function inferDataType(value: unknown): string {
     if (value === null || value === undefined)
         return 'null';
     if (Array.isArray(value))
         return 'array';
     return typeof value;
 }
-function computeBounds(features) {
-    const coords = [];
+function computeBounds(features: GeoJsonFeature[]): BBox | null {
+    const coords: Position[] = [];
     for (const feature of features)
         collectCoordinates(feature.geometry, coords);
     if (!coords.length)
@@ -350,7 +442,7 @@ function computeBounds(features) {
     const ys = coords.map(coord => coord[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
-function collectCoordinates(geometry, out) {
+function collectCoordinates(geometry: Geometry, out: Position[]): void {
     if (geometry.type === 'GeometryCollection') {
         for (const child of geometry.geometries)
             collectCoordinates(child, out);
@@ -358,7 +450,7 @@ function collectCoordinates(geometry, out) {
     }
     collectPositionArray(geometry.coordinates, out);
 }
-function collectPositionArray(value, out) {
+function collectPositionArray(value: unknown, out: Position[]): void {
     if (!Array.isArray(value))
         return;
     if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
@@ -368,13 +460,38 @@ function collectPositionArray(value, out) {
     for (const child of value)
         collectPositionArray(child, out);
 }
-function formatTimestamp(value) {
+function formatTimestamp(value: unknown): string | null {
     if (value instanceof Date)
         return value.toISOString();
     if (typeof value === 'string')
         return value;
     return null;
 }
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseBounds(value: unknown): BBox | null {
+    if (!Array.isArray(value) || value.length !== 4)
+        return null;
+    const bounds = value.map(Number);
+    return bounds.every(item => Number.isFinite(item))
+        ? [bounds[0], bounds[1], bounds[2], bounds[3]]
+        : null;
+}
+
+function toStringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter(item => typeof item === 'string') : [];
+}
+
+function isLayerPropertyDescriptor(value: unknown): value is LayerPropertyDescriptor {
+    return isRecord(value)
+        && typeof value.name === 'string'
+        && typeof value.dataType === 'string'
+        && (value.populatedCount === undefined || typeof value.populatedCount === 'number')
+        && (value.sampleValues === undefined || Array.isArray(value.sampleValues));
+}
+
+function isResourceVisibility(value: unknown): value is ResourceVisibility {
+    return value === 'private' || value === 'workspace' || value === 'public';
 }

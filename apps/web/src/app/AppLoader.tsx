@@ -10,7 +10,7 @@
 
 import { lazy, Suspense } from 'react'
 
-const AppShell = lazy(() => import('./AppShell.tsx'))
+const AppShell = lazy(() => import('./AppShell'))
 
 export function AppLoader() {
   return (

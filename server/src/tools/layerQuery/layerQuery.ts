@@ -8,8 +8,14 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import { makeId } from '../../utils/ids.js';
+import type { ToolDef } from '../../framework/types.js';
+import type { PostGisRepository } from '../../gis/postgis.js';
+import type { GeoJsonFeatureCollection } from '../../gis/geojson.js';
 import { QUERY_LAYER_PROMPT } from '../spatial/prompts.js';
-export function createLayerQueryTool(postgis) {
+
+type BBox = [number, number, number, number];
+
+export function createLayerQueryTool(postgis: PostGisRepository): ToolDef {
     return {
         name: 'query_layer',
         label: '查询图层',
@@ -29,14 +35,14 @@ export function createLayerQueryTool(postgis) {
             },
             required: ['layerKey'],
         },
-        async handler(args, ctx) {
+        async handler(args) {
             const layerKey = String(args.layerKey);
-            const bbox = Array.isArray(args.bbox) ? args.bbox.map(Number) : undefined;
+            const bbox = parseBbox(args.bbox);
             const limit = typeof args.limit === 'number' ? args.limit : 100;
             const selectedProperties = Array.isArray(args.properties) ? new Set(args.properties.map(String)) : null;
             const rows = await postgis.queryFeatures(layerKey, bbox, limit);
             const totalCount = await postgis.featureCount(layerKey);
-            const featureCollection = {
+            const featureCollection: GeoJsonFeatureCollection = {
                 type: 'FeatureCollection',
                 features: rows.map(row => ({
                     type: 'Feature',
@@ -56,4 +62,15 @@ export function createLayerQueryTool(postgis) {
             };
         },
     };
+}
+
+function parseBbox(value: unknown): BBox | undefined {
+    if (value === undefined)
+        return undefined;
+    if (!Array.isArray(value) || value.length !== 4)
+        throw new Error('bbox 必须是 [minX, minY, maxX, maxY]');
+    const bbox = value.map(Number);
+    if (!bbox.every(item => Number.isFinite(item)))
+        throw new Error('bbox 必须只包含有限数字');
+    return [bbox[0], bbox[1], bbox[2], bbox[3]];
 }

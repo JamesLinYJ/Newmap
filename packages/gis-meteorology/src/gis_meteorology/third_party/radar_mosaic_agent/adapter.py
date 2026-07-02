@@ -181,7 +181,7 @@ def render_radar_mosaic(
         shutil.copy2(generated_pngs[0], output_png)
         shutil.copy2(generated_npzs[0], output_npz)
 
-    payload = np.load(output_npz, allow_pickle=True)
+    payload = np.load(output_npz, allow_pickle=False)
     display_key = "display_ref" if "display_ref" in payload.files else "mosaic_ref"
     if display_key not in payload.files:
         raise RuntimeError(f"天气雷达组网拼图 NPZ 缺少结果字段: {payload.files}")
@@ -269,7 +269,7 @@ def compare_radar_mosaic_reference(
     """Compare a generated mosaic NPZ with an NC reference product."""
 
     mc = _mosaic_comparison_module()
-    data = np.load(mosaic_npz, allow_pickle=True)
+    data = np.load(mosaic_npz, allow_pickle=False)
     required = {"grid_lon", "grid_lat"}
     if not required.issubset(data.files):
         raise ValueError(f"天气雷达组网拼图 NPZ 缺少字段: {', '.join(sorted(required - set(data.files)))}")

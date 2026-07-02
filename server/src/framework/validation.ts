@@ -8,9 +8,10 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import { ensureToolSchemas, stableJson } from './schema.js'
+import type { ToolDef, ToolManifest, ToolManifestEntry, ToolProvider } from './types.js'
 
 // Provider 暴露前校验是工具目录的硬边界，坏定义不能进入 Agent 或 DebugPage。
-export function validateToolDefinition(tool) {
+export function validateToolDefinition(tool: ToolDef): void {
     requireText(tool.name, 'tool.name');
     requireText(tool.label, `${tool.name}.label`);
     requireText(tool.description, `${tool.name}.description`);
@@ -25,7 +26,7 @@ export function validateToolDefinition(tool) {
     }
     validateJsonSchema(jsonSchema, `${tool.name}.jsonSchema`);
 }
-export function validateToolProvider(provider) {
+export function validateToolProvider(provider: ToolProvider): void {
     validateManifest(provider.manifest);
     const tools = provider.tools();
     for (const tool of tools) ensureToolSchemas(tool);
@@ -40,6 +41,7 @@ export function validateToolProvider(provider) {
             throw new Error(`工具 "${tool.name}" 未在 Provider manifest 中声明`);
         }
         const entry = provider.manifest.tools.find(candidate => candidate.name === tool.name);
+        if (!entry) throw new Error(`工具 "${tool.name}" 未在 Provider manifest 中声明`);
         if (entry.isReadOnly !== tool.isReadOnly || entry.isDestructive !== tool.isDestructive) {
             throw new Error(`工具 "${tool.name}" 的读写/破坏性属性与 manifest 不一致`);
         }
@@ -50,23 +52,23 @@ export function validateToolProvider(provider) {
             throw new Error(`Provider "${provider.manifest.id}" 的工具 "${entry.name}" 缺少运行时实现`);
     }
 }
-function validateManifestParity(manifestTool, runtimeTool) {
+function validateManifestParity(manifestTool: ToolManifestEntry, runtimeTool: ToolDef): void {
     // Manifest 是 UI、Agent 与运行时共享的公开契约；运行时实现不能悄悄扩展参数或改写描述。
-    const fields = ['label', 'description', 'group', 'tags', 'jsonSchema'];
+    const fields: Array<keyof ToolManifestEntry> = ['label', 'description', 'group', 'tags', 'jsonSchema'];
     for (const field of fields) {
         if (stableJson(manifestTool[field]) !== stableJson(runtimeTool[field])) {
             throw new Error(`工具 "${runtimeTool.name}" 的 ${field} 与 manifest 不一致`);
         }
     }
 }
-function validateManifest(manifest) {
+function validateManifest(manifest: ToolManifest): void {
     requireText(manifest.id, 'manifest.id');
     requireText(manifest.name, `${manifest.id}.name`);
     requireText(manifest.version, `${manifest.id}.version`);
     if (!Array.isArray(manifest.tools) || manifest.tools.length === 0) {
         throw new Error(`Provider "${manifest.id}" 未声明工具`);
     }
-    const names = new Set();
+    const names = new Set<string>();
     for (const tool of manifest.tools) {
         requireText(tool.name, `${manifest.id}.tool.name`);
         if (names.has(tool.name))
@@ -78,7 +80,7 @@ function validateManifest(manifest) {
         validateJsonSchema(tool.jsonSchema, `${manifest.id}.${tool.name}.jsonSchema`);
     }
 }
-function validateJsonSchema(schema, field) {
+function validateJsonSchema(schema: Record<string, unknown>, field: string): void {
     const type = schema.type;
     if (typeof type !== 'string' || !['object', 'array', 'string', 'number', 'integer', 'boolean'].includes(type)) {
         throw new Error(`${field}.type 不受支持`);
@@ -102,10 +104,10 @@ function validateJsonSchema(schema, field) {
         validateJsonSchema(schema.items, `${field}.items`);
     }
 }
-function requireText(value, field) {
+function requireText(value: string | undefined, field: string): void {
     if (!value?.trim())
         throw new Error(`${field} 不能为空`);
 }
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

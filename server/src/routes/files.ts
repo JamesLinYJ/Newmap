@@ -11,18 +11,32 @@
 import { Hono } from 'hono'
 import { RuntimeFileStore, type FileLike } from '../store/fileStore.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
+import type { SecurityServices } from '../security/routes.js'
+import { requireAuth } from '../security/routes.js'
+import type { Env } from '../framework/env.js'
 
-export function fileRoutes(runtimeRoot: string, store: PostgresPlatformStore) {
+export function fileRoutes(runtimeRoot: string, store: PostgresPlatformStore, security: SecurityServices, env?: Env) {
   const files = new RuntimeFileStore(runtimeRoot)
 
   return new Hono()
     .post('/api/v1/files/upload', async (c) => {
       try {
+        enforceContentLength(c.req.header('content-length'), env?.MAX_FILE_UPLOAD_BYTES)
+        const auth = requireAuth(c)
         const form = await c.req.formData()
         const file = requireFile(form.get('file'))
         const threadId = formString(form, 'threadId')
         const requestId = formString(form, 'requestId')
         const sourceRelativePath = formString(form, 'sourceRelativePath') ?? formString(form, 'relativePath')
+        if (threadId) {
+          const thread = store.getThread(threadId)
+          await security.authorization.assertResourceWorkspace(auth, 'thread', 'update', {
+            workspaceId: thread.workspaceId,
+            createdByUserId: thread.createdByUserId,
+            visibility: thread.visibility,
+            resourceId: thread.id,
+          })
+        }
         const entry = await files.save(file, threadId, requestId, sourceRelativePath)
         if (threadId) await store.recordAttachment(threadId, entry)
         return c.json(entry)
@@ -30,6 +44,14 @@ export function fileRoutes(runtimeRoot: string, store: PostgresPlatformStore) {
         return c.json({ detail: formatError(error, '文件上传失败') }, 400)
       }
     })
+}
+
+function enforceContentLength(value: string | undefined, limit?: number): void {
+  if (!limit || !value) return
+  const parsed = Number(value)
+  if (Number.isFinite(parsed) && parsed > limit) {
+    throw new Error(`上传文件过大，限制为 ${Math.round(limit / 1024 / 1024)}MB。`)
+  }
 }
 
 function formatError(error: unknown, prefix: string): string {

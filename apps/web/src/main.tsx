@@ -15,8 +15,8 @@
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
-import { AppLoader } from './app/AppLoader.tsx'
-import { ErrorBoundary } from './shared/components/ErrorBoundary.tsx'
+import { AppLoader } from './app/AppLoader'
+import { ErrorBoundary } from './shared/components/ErrorBoundary'
 
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>

@@ -25,7 +25,9 @@ interface PendingRequest {
 }
 
 const REQUEST_TIMEOUT_MS = 45_000
-const RECONNECT_DELAY_MS = 1_200
+const RECONNECT_BASE_DELAY_MS = 1_200
+const RECONNECT_MAX_DELAY_MS = 30_000
+const RECONNECT_MAX_ATTEMPTS = 8
 
 class WebSocketControlClient {
   private socket: WebSocket | null = null
@@ -33,7 +35,9 @@ class WebSocketControlClient {
   private readonly pending = new Map<string, PendingRequest>()
   private readonly listeners = new Set<Listener>()
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectAttempts = 0
   private hasConnected = false
+  private csrfToken: string | null = null
 
   async send(type: WsControlCommand, payload: Record<string, unknown>): Promise<WsControlResponse> {
     await this.ensureOpen()
@@ -42,7 +46,8 @@ class WebSocketControlClient {
     }
 
     const id = `req_${crypto.randomUUID().replaceAll('-', '')}`
-    const request = JSON.stringify({ type, id, payload })
+    const securedPayload = this.csrfToken ? { ...payload, csrfToken: this.csrfToken } : payload
+    const request = JSON.stringify({ type, id, payload: securedPayload })
 
     return new Promise<WsControlResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -66,6 +71,10 @@ class WebSocketControlClient {
     return () => this.listeners.delete(listener)
   }
 
+  setCsrfToken(token: string | null): void {
+    this.csrfToken = token
+  }
+
   private async ensureOpen(): Promise<void> {
     if (this.socket?.readyState === WebSocket.OPEN) return
     if (this.connectPromise) return this.connectPromise
@@ -81,6 +90,7 @@ class WebSocketControlClient {
       const handleOpen = () => {
         cleanupInitial()
         this.hasConnected = true
+        this.reconnectAttempts = 0
         this.connectPromise = null
         this.emit({ type: 'connected', id: null, payload: { data: null } })
         resolve()
@@ -99,6 +109,10 @@ class WebSocketControlClient {
         if (this.socket === socket) this.socket = null
         this.rejectPending(`WebSocket 已断开：${event.reason || event.code}`)
         this.emit({ type: 'disconnected', id: null, payload: { data: { reason: event.reason || String(event.code) } } })
+        if (isAuthCloseCode(event.code)) {
+          this.hasConnected = false
+          return
+        }
         this.scheduleReconnect()
       })
     })
@@ -121,7 +135,11 @@ class WebSocketControlClient {
       if (!pending) return
       clearTimeout(pending.timer)
       this.pending.delete(message.id!)
-      pending.resolve(message as WsControlResponse)
+      const response = message as WsControlResponse
+      if (isFailedResponsePayload(response.payload) && isAuthFailure(response.payload.error.message)) {
+        this.emit({ type: 'disconnected', id: null, payload: { data: { reason: response.payload.error.message } } })
+      }
+      pending.resolve(response)
       return
     }
 
@@ -138,10 +156,24 @@ class WebSocketControlClient {
 
   private scheduleReconnect() {
     if (!this.hasConnected || this.reconnectTimer) return
+    if (this.reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+      this.emit({
+        type: 'disconnected',
+        id: null,
+        payload: { data: { reason: 'WebSocket 重连次数已达上限，请刷新或重新登录。' } },
+      })
+      return
+    }
+    const delay = Math.min(
+      RECONNECT_MAX_DELAY_MS,
+      RECONNECT_BASE_DELAY_MS * (2 ** this.reconnectAttempts),
+    )
+    const jitter = Math.floor(Math.random() * 250)
+    this.reconnectAttempts += 1
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       void this.ensureOpen().catch(() => this.scheduleReconnect())
-    }, RECONNECT_DELAY_MS)
+    }, delay + jitter)
   }
 
   private emit(message: WsClientMessage) {
@@ -174,4 +206,18 @@ function deriveApiBaseUrl(envBaseUrl?: string) {
     return ''
   }
   return explicit.replace(/\/+$/u, '')
+}
+
+function isAuthCloseCode(code: number): boolean {
+  return code === 1008 || code === 4001 || code === 4401
+}
+
+function isAuthFailure(message: string): boolean {
+  return /未登录|登录会话已失效|CSRF|Unauthorized|Forbidden/iu.test(message)
+}
+
+function isFailedResponsePayload(
+  payload: WsControlResponse['payload'],
+): payload is { ok: false; error: { code: string; message: string } } {
+  return payload.ok === false
 }

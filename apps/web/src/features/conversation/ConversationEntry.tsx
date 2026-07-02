@@ -293,7 +293,9 @@ function extractApprovalPlan(details: Record<string, unknown> | null | undefined
     ? rawPlan.goal.trim()
     : '待审批执行计划'
   const steps = Array.isArray(rawPlan.steps)
-    ? rawPlan.steps.map((step, index) => normalizeReviewPlanStep(step, index)).filter(Boolean)
+    ? rawPlan.steps
+      .map((step, index) => normalizeReviewPlanStep(step, index))
+      .filter((step): step is ReviewPlan['steps'][number] => Boolean(step))
     : []
   if (!steps.length) return null
   return { goal, steps }

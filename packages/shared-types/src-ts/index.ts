@@ -451,8 +451,64 @@ export const contextAssemblyReportSchema = z.object({
 
 // --- Session / Thread / Run ---
 
+export const platformRoleSchema = z.enum(['platform_admin', 'workspace_admin', 'analyst', 'viewer'])
+export const resourceVisibilitySchema = z.enum(['private', 'workspace', 'public']).default('workspace')
+
+export const platformUserSchema = z.object({
+  userId: z.string(),
+  subject: z.string(),
+  email: z.string(),
+  displayName: z.string(),
+  status: z.enum(['active', 'disabled']).default('active'),
+  lastLoginAt: z.string().nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+export const platformWorkspaceSchema = z.object({
+  workspaceId: z.string(),
+  name: z.string(),
+  description: z.string().default(''),
+  status: z.enum(['active', 'archived']).default('active'),
+  createdByUserId: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+export const platformMembershipSchema = z.object({
+  membershipId: z.string(),
+  workspaceId: z.string(),
+  userId: z.string(),
+  role: platformRoleSchema,
+  createdAt: z.string(),
+})
+
+export const authMeSchema = z.object({
+  user: platformUserSchema,
+  defaultWorkspace: platformWorkspaceSchema.nullable().default(null),
+  memberships: z.array(platformMembershipSchema).default([]),
+  platformRoles: z.array(platformRoleSchema).default([]),
+  csrfToken: z.string(),
+  permissions: z.array(z.string()).default([]),
+})
+
+export const auditEventSchema = z.object({
+  auditEventId: z.string(),
+  actorUserId: z.string().nullable().default(null),
+  workspaceId: z.string().nullable().default(null),
+  action: z.string(),
+  objectType: z.string(),
+  objectId: z.string().nullable().default(null),
+  outcome: z.enum(['allowed', 'denied', 'error']).default('allowed'),
+  metadata: z.record(z.string(), z.unknown()).prefault({}),
+  createdAt: z.string(),
+})
+
 export const sessionRecordSchema = z.object({
   id: z.string(),
+  workspaceId: z.string().nullable().default(null),
+  createdByUserId: z.string().nullable().default(null),
+  visibility: resourceVisibilitySchema,
   createdAt: z.string(),
   status: z.string().default('active'),
   shareToken: z.string(),
@@ -464,6 +520,9 @@ export const sessionRecordSchema = z.object({
 
 export const meteorologicalDatasetRecordSchema = z.object({
   datasetId: z.string(),
+  workspaceId: z.string().nullable().default(null),
+  createdByUserId: z.string().nullable().default(null),
+  visibility: resourceVisibilitySchema,
   sessionId: z.string(),
   threadId: z.string().nullable().default(null),
   filename: z.string(),
@@ -482,6 +541,8 @@ export const meteorologicalDatasetRecordSchema = z.object({
 export const meteorologicalJobRecordSchema = z.object({
   jobId: z.string(),
   datasetId: z.string(),
+  workspaceId: z.string().nullable().default(null),
+  createdByUserId: z.string().nullable().default(null),
   sessionId: z.string(),
   threadId: z.string().nullable().default(null),
   kind: z.string(),
@@ -496,6 +557,9 @@ export const meteorologicalJobRecordSchema = z.object({
 export const agentThreadRecordSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
+  workspaceId: z.string().nullable().default(null),
+  createdByUserId: z.string().nullable().default(null),
+  visibility: resourceVisibilitySchema,
   title: z.string(),
   status: z.string().default('active'),
   createdAt: z.string(),
@@ -515,6 +579,9 @@ export const analysisRunSchema = z.object({
   id: z.string(),
   threadId: z.string().nullable().default(null),
   sessionId: z.string(),
+  workspaceId: z.string().nullable().default(null),
+  createdByUserId: z.string().nullable().default(null),
+  visibility: resourceVisibilitySchema,
   userQuery: z.string(),
   modelProvider: z.string().nullable().default(null),
   modelName: z.string().nullable().default(null),
@@ -531,6 +598,9 @@ export const runSummarySchema = z.object({
   id: z.string(),
   threadId: z.string().nullable().default(null),
   sessionId: z.string(),
+  workspaceId: z.string().nullable().default(null),
+  createdByUserId: z.string().nullable().default(null),
+  visibility: resourceVisibilitySchema,
   userQuery: z.string(),
   modelProvider: z.string().nullable().default(null),
   modelName: z.string().nullable().default(null),
@@ -785,6 +855,10 @@ export const layerDescriptorSchema = z.object({
   sourceConfigSummary: z.string().nullable().default(null),
   sessionId: z.string().nullable().default(null),
   threadId: z.string().nullable().default(null),
+  workspaceId: z.string().nullable().default(null),
+  createdByUserId: z.string().nullable().default(null),
+  visibility: resourceVisibilitySchema,
+  readonly: z.boolean().default(false),
   createdAt: z.string().nullable().default(null),
   updatedAt: z.string().nullable().default(null),
 })
@@ -920,6 +994,13 @@ export type RunCheckpoint = z.infer<typeof runCheckpointSchema>
 export type CompactionRecord = z.infer<typeof compactionRecordSchema>
 export type ThreadMemoryDocument = z.infer<typeof threadMemoryDocumentSchema>
 export type ContextAssemblyReport = z.infer<typeof contextAssemblyReportSchema>
+export type PlatformRole = z.infer<typeof platformRoleSchema>
+export type ResourceVisibility = z.infer<typeof resourceVisibilitySchema>
+export type PlatformUser = z.infer<typeof platformUserSchema>
+export type PlatformWorkspace = z.infer<typeof platformWorkspaceSchema>
+export type PlatformMembership = z.infer<typeof platformMembershipSchema>
+export type AuthMe = z.infer<typeof authMeSchema>
+export type AuditEvent = z.infer<typeof auditEventSchema>
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
 export type MeteorologicalDatasetRecord = z.infer<typeof meteorologicalDatasetRecordSchema>
 export type MeteorologicalJobRecord = z.infer<typeof meteorologicalJobRecordSchema>
@@ -959,6 +1040,7 @@ export interface RunSummaryPage {
 }
 
 export interface WorkspaceBootstrapSnapshot {
+  auth: AuthMe
   session: SessionRecord
   threads: AgentThreadRecord[]
   providers: ModelProviderDescriptor[]

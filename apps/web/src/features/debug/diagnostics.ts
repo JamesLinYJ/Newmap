@@ -259,9 +259,24 @@ export function buildQuickLinks({
   selectedArtifactId?: string
 }) {
   return [
-    { label: '会话', href: currentSessionId ? `?session=${encodeURIComponent(currentSessionId)}` : '#', enabled: Boolean(currentSessionId) },
-    { label: '运行', href: currentRunId ? `?run=${encodeURIComponent(currentRunId)}` : '#', enabled: Boolean(currentRunId) },
-    { label: 'Artifact', href: selectedArtifactId ? `/api/v1/results/${encodeURIComponent(selectedArtifactId)}/metadata` : '#', enabled: Boolean(selectedArtifactId) },
+    {
+      label: '会话',
+      description: currentSessionId ? `session=${currentSessionId}` : '当前没有活动会话',
+      href: currentSessionId ? `?session=${encodeURIComponent(currentSessionId)}` : '#',
+      enabled: Boolean(currentSessionId),
+    },
+    {
+      label: '运行',
+      description: currentRunId ? `run=${currentRunId}` : '当前没有活动运行',
+      href: currentRunId ? `?run=${encodeURIComponent(currentRunId)}` : '#',
+      enabled: Boolean(currentRunId),
+    },
+    {
+      label: 'Artifact',
+      description: selectedArtifactId ? `artifact=${selectedArtifactId}` : '当前没有选中结果',
+      href: selectedArtifactId ? `/api/v1/results/${encodeURIComponent(selectedArtifactId)}/metadata` : '#',
+      enabled: Boolean(selectedArtifactId),
+    },
   ]
 }
 

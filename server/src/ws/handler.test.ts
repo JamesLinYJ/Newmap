@@ -33,6 +33,22 @@ import type { ToolProvider } from '../framework/types.js'
 import { defaultRuntimeConfig } from '../agent/defaultRuntimeConfig.js'
 import { OpenAIAgentsRuntime, type SandboxSessionFactory } from '../agent/runtime.js'
 import { createWsHandler } from './handler.js'
+import type { SecurityServices } from '../security/routes.js'
+import type { AuthContext } from '../security/types.js'
+
+const TEST_ORIGIN = 'http://127.0.0.1:5173'
+const TEST_CSRF = 'csrf_test'
+const TEST_AUTH: AuthContext = {
+  userId: 'user_test',
+  subject: 'auth_user_test',
+  email: 'tester@geoforge.local',
+  displayName: '测试用户',
+  authSessionId: 'session_test',
+  authSessionExpiresAt: '2099-01-01T00:00:00.000Z',
+  csrfToken: TEST_CSRF,
+  defaultWorkspaceId: 'workspace_test',
+  roles: [{ workspaceId: 'workspace_test', role: 'platform_admin' }],
+}
 
 const testSandboxSessionFactory: SandboxSessionFactory = async manifest => ({
   state: { manifest, workspaceReady: true },
@@ -69,6 +85,7 @@ describe('WebSocket run subscriptions', () => {
       modelRegistry: new ModelAdapterRegistry(testEnv()),
       postgis: {} as unknown as PostGisRepository,
       runtimeRoot: root,
+      security: testSecurity(),
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -108,6 +125,7 @@ describe('WebSocket run subscriptions', () => {
       modelRegistry: new ModelAdapterRegistry(testEnv()),
       postgis: {} as unknown as PostGisRepository,
       runtimeRoot: root,
+      security: testSecurity(),
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -200,6 +218,7 @@ describe('WebSocket run subscriptions', () => {
       postgis: {} as unknown as PostGisRepository,
       runtimeRoot: root,
       createSandboxSession: testSandboxSessionFactory,
+      security: testSecurity(),
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -281,6 +300,7 @@ describe('WebSocket run subscriptions', () => {
       postgis: {} as unknown as PostGisRepository,
       runtimeRoot: root,
       createSandboxSession: testSandboxSessionFactory,
+      security: testSecurity(),
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -328,6 +348,7 @@ describe('WebSocket run subscriptions', () => {
       modelRegistry: new ModelAdapterRegistry(testEnv()),
       postgis: {} as unknown as PostGisRepository,
       runtimeRoot: root,
+      security: testSecurity(),
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -382,6 +403,7 @@ describe('WebSocket run subscriptions', () => {
       modelRegistry: new ModelAdapterRegistry(testEnv()),
       postgis: {} as unknown as PostGisRepository,
       runtimeRoot: root,
+      security: testSecurity(),
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -450,6 +472,7 @@ describe('WebSocket run subscriptions', () => {
       postgis: {} as unknown as PostGisRepository,
       runtimeRoot: root,
       defaultRuntimeConfig: config,
+      security: testSecurity(),
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -505,7 +528,7 @@ describe('WebSocket run subscriptions', () => {
 
 function connect(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url)
+    const ws = new WebSocket(url, { headers: { Origin: TEST_ORIGIN } })
     ws.once('open', () => resolve(ws))
     ws.once('error', reject)
   })
@@ -529,7 +552,7 @@ function request(ws: WebSocket, type: string, payload: Record<string, unknown>, 
         resolve(parsed.payload)
       }
     })
-    ws.send(JSON.stringify({ type, id, payload }) + '\n')
+    ws.send(JSON.stringify({ type, id, payload: { csrfToken: TEST_CSRF, ...payload } }) + '\n')
   })
 }
 
@@ -793,6 +816,48 @@ function previewToolProvider(): ToolProvider {
 
 function noOpDb(): Database {
   return { execute: async () => ({ rows: [] }) } as unknown as Database
+}
+
+function testSecurity(): SecurityServices {
+  return {
+    auth: {
+      authenticateRequest: async () => TEST_AUTH,
+      isTrustedOrigin: (origin?: string | null) => origin === TEST_ORIGIN,
+      isAuthContextActive: async () => true,
+      requireCsrf: () => {},
+      toAuthMe: auth => ({
+        user: {
+          userId: auth.userId,
+          subject: auth.subject,
+          email: auth.email,
+          displayName: auth.displayName,
+          status: 'active',
+          lastLoginAt: null,
+          createdAt: '',
+          updatedAt: '',
+        },
+        defaultWorkspace: null,
+        memberships: auth.roles.map(role => ({
+          membershipId: `${role.workspaceId}:${role.role}`,
+          workspaceId: role.workspaceId,
+          userId: auth.userId,
+          role: role.role,
+          createdAt: '',
+        })),
+        platformRoles: auth.roles.map(role => role.role),
+        csrfToken: auth.csrfToken,
+        permissions: [],
+      }),
+    },
+    authorization: {
+      enforce: async () => {},
+      can: async () => true,
+      assertResourceWorkspace: async () => {},
+      audit: async () => {},
+      reload: async () => {},
+    },
+    db: noOpDb(),
+  } as unknown as SecurityServices
 }
 
 function testEnv(): Env {

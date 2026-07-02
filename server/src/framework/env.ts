@@ -10,11 +10,29 @@
 
 import { z } from 'zod'
 
+const booleanEnvSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return value
+}, z.boolean())
+
 const envSchema = z.object({
   API_PORT: z.coerce.number(),
   API_HOST: z.string(),
   DATABASE_URL: z.string(),
   RUNTIME_ROOT: z.string(),
+  APP_BASE_URL: z.string().url(),
+  WEB_BASE_URL: z.string().url().optional(),
+  BETTER_AUTH_URL: z.string().url(),
+  BETTER_AUTH_SECRET: z.string().min(32),
+  BETTER_AUTH_ALLOW_SIGN_UP: booleanEnvSchema.default(true),
+  BETTER_AUTH_REQUIRE_EMAIL_VERIFICATION: booleanEnvSchema.default(false),
+  BETTER_AUTH_MIN_PASSWORD_LENGTH: z.coerce.number().int().min(8).default(12),
+  CSRF_HEADER_NAME: z.string().min(1).default('x-geoforge-csrf'),
+  BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
+  TRUSTED_ORIGINS: z.string().default('http://127.0.0.1:5173,http://localhost:5173'),
   SEED_LAYERS_DIR: z.string().optional(),
   MAX_FILE_UPLOAD_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
   MAX_GEOJSON_UPLOAD_BYTES: z.coerce.number().int().positive().default(20 * 1024 * 1024),

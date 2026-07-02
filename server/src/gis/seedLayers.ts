@@ -15,9 +15,10 @@
 
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { Feature, FeatureCollection, GeoJsonProperties, Geometry } from 'geojson'
 import { z } from 'zod'
 import type { PostGisRepository } from './postgis.js'
+import type { GeoJsonFeatureCollection } from './geojson.js'
+import { parseGeoJsonEntity, toFeatureCollection } from './geojson.js'
 import type { LayerDescriptor } from '../schemas/types.js'
 
 const layerKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u, 'layer_key 必须是稳定 SQL 标识符')
@@ -96,41 +97,18 @@ function resolveSeedFile(seedDirectory: string, filename: string): string {
   return resolved
 }
 
-async function readSeedFeatureCollection(filePath: string): Promise<FeatureCollection<Geometry, GeoJsonProperties>> {
+async function readSeedFeatureCollection(filePath: string): Promise<GeoJsonFeatureCollection> {
   const raw = await readFile(filePath, 'utf8')
   return parseGeoJsonPayload(JSON.parse(raw), filePath)
 }
 
-function parseGeoJsonPayload(value: unknown, source: string): FeatureCollection<Geometry, GeoJsonProperties> {
-  if (isGeoJsonFeatureCollection(value)) return value
-  if (isGeoJsonFeature(value)) return { type: 'FeatureCollection', features: [value] }
-  if (isGeoJsonGeometry(value)) {
-    return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: value }] }
+function parseGeoJsonPayload(value: unknown, source: string): GeoJsonFeatureCollection {
+  try {
+    return toFeatureCollection(parseGeoJsonEntity(value, '系统图层 seed'))
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`系统图层 seed 不是有效 GeoJSON：${source}；${detail}`)
   }
-  throw new Error(`系统图层 seed 不是有效 GeoJSON：${source}`)
-}
-
-function isGeoJsonFeatureCollection(value: unknown): value is FeatureCollection<Geometry, GeoJsonProperties> {
-  return isRecord(value)
-    && value.type === 'FeatureCollection'
-    && Array.isArray(value.features)
-    && value.features.every(isGeoJsonFeature)
-}
-
-function isGeoJsonFeature(value: unknown): value is Feature<Geometry, GeoJsonProperties> {
-  return isRecord(value)
-    && value.type === 'Feature'
-    && isGeoJsonGeometry(value.geometry)
-    && (value.properties === null || value.properties === undefined || isRecord(value.properties))
-}
-
-function isGeoJsonGeometry(value: unknown): value is Geometry {
-  if (!isRecord(value) || typeof value.type !== 'string') return false
-  if (value.type === 'GeometryCollection') {
-    return Array.isArray(value.geometries) && value.geometries.every(isGeoJsonGeometry)
-  }
-  return ['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon'].includes(value.type)
-    && Array.isArray(value.coordinates)
 }
 
 function publicSeedSummary(layer: LayerDescriptor): SeedLayerImportSummary {
@@ -140,8 +118,4 @@ function publicSeedSummary(layer: LayerDescriptor): SeedLayerImportSummary {
     featureCount: layer.featureCount,
     sourceType: layer.sourceType,
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

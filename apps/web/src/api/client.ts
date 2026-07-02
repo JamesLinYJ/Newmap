@@ -16,6 +16,7 @@ import type {
   ConversationItem,
   AgentExecutionMode,
   AgentRuntimeConfig,
+  AuthMe,
   AnalysisRun,
   AgentThreadRecord,
   BasemapDescriptor,
@@ -40,6 +41,8 @@ import type {
   WorkspaceBootstrapSnapshot,
 } from '@geo-agent-platform/shared-types'
 import { wsClient } from '../ws/client'
+import { signOutWithBetterAuth } from './authClient'
+import { API_UNAVAILABLE_MESSAGE, formatApiError, isApiUnavailableMessage } from './errors'
 
 // API 地址解析
 //
@@ -57,12 +60,18 @@ const API_BASE_URL = deriveApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
 const API_BASE_LABEL = API_BASE_URL || '同源相对地址'
 
 export const apiBaseUrl = API_BASE_URL
+let currentAuth: AuthMe | null = null
+
+export function setAuthContext(auth: AuthMe | null) {
+  currentAuth = auth
+  wsClient.setCsrfToken(auth?.csrfToken ?? null)
+}
 
 // 错误消息格式化
 //
 // 把网络层异常和后端 detail 统一整理成前端可直接展示的中文提示。
-function formatApiErrorMessage(prefix: string, detail?: string) {
-  return detail?.trim() ? `${prefix}：${detail.trim()}` : prefix
+export function formatApiErrorMessage(prefix: string, detail?: string) {
+  return formatApiError(prefix, detail)
 }
 
 async function extractErrorDetail(response: Response): Promise<string> {
@@ -99,6 +108,7 @@ async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 30_0
     }
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
+      credentials: 'include',
       headers,
       signal: controller.signal,
     })
@@ -113,7 +123,7 @@ async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 30_0
   }
 
   if (!response.ok) {
-    throw new Error(await extractErrorDetail(response))
+    throw new Error(formatHttpError(response, await extractErrorDetail(response)))
   }
 
   return (await response.json()) as T
@@ -131,6 +141,8 @@ async function requestFormJson<T>(path: string, body: FormData, failurePrefix: s
     response = await fetch(`${API_BASE_URL}${path}`, {
       method: 'POST',
       body,
+      credentials: 'include',
+      headers: csrfHeaders(),
       signal: controller.signal,
     })
   } catch (error) {
@@ -144,10 +156,23 @@ async function requestFormJson<T>(path: string, body: FormData, failurePrefix: s
   }
 
   if (!response.ok) {
-    throw new Error(await extractErrorDetail(response))
+    throw new Error(formatHttpError(response, await extractErrorDetail(response)))
   }
 
   return (await response.json()) as T
+}
+
+function csrfHeaders(): Headers {
+  const headers = new Headers()
+  if (currentAuth?.csrfToken) headers.set('x-geoforge-csrf', currentAuth.csrfToken)
+  return headers
+}
+
+function formatHttpError(response: Response, detail: string): string {
+  if (response.status === 502 || response.status === 503 || isApiUnavailableMessage(detail)) {
+    return API_UNAVAILABLE_MESSAGE
+  }
+  return detail
 }
 
 // 业务控制命令统一走 /ws；响应必须是具有关联请求 ID 的成功/错误 envelope。
@@ -159,6 +184,69 @@ async function requestControl<T>(type: WsControlCommand, payload: Record<string,
     throw new Error(detail)
   }
   return message.payload.data as T
+}
+
+export async function logout() {
+  await signOutWithBetterAuth()
+  setAuthContext(null)
+}
+
+export async function getAuthMe() {
+  const auth = await requestJson<AuthMe>('/api/v1/auth/me')
+  setAuthContext(auth)
+  return auth
+}
+
+export function listAdminUsers() {
+  return requestJson<Array<Record<string, unknown>>>('/api/v1/admin/users')
+}
+
+export function updateAdminUser(userId: string, payload: Record<string, unknown>) {
+  return requestJson<Record<string, unknown>>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    headers: csrfHeaders(),
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listAdminWorkspaces() {
+  return requestJson<Array<Record<string, unknown>>>('/api/v1/admin/workspaces')
+}
+
+export function createAdminWorkspace(payload: { name: string; description?: string }) {
+  return requestJson<Record<string, unknown>>('/api/v1/admin/workspaces', {
+    method: 'POST',
+    headers: csrfHeaders(),
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listAdminMemberships(workspaceId?: string | null) {
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ''
+  return requestJson<Array<Record<string, unknown>>>(`/api/v1/admin/memberships${query}`)
+}
+
+export function createAdminMembership(payload: { workspaceId: string; userId: string; role: string }) {
+  return requestJson<Record<string, unknown>>('/api/v1/admin/memberships', {
+    method: 'POST',
+    headers: csrfHeaders(),
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteAdminMembership(membershipId: string) {
+  return requestJson<Record<string, unknown>>(`/api/v1/admin/memberships/${encodeURIComponent(membershipId)}`, {
+    method: 'DELETE',
+    headers: csrfHeaders(),
+  })
+}
+
+export function listAdminRoles() {
+  return requestJson<Array<Record<string, unknown>>>('/api/v1/admin/roles')
+}
+
+export function listAuditEvents() {
+  return requestJson<Array<Record<string, unknown>>>('/api/v1/admin/audit-events')
 }
 
 export function createSession() {

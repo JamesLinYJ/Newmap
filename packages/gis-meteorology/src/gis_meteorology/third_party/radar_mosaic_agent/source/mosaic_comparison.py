@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -69,21 +68,17 @@ def load_reference_grid(nc_path: Path, level_index: int = 0) -> dict[str, Any]:
     返回:
         dict with keys: dbz, lat, lon, height, level_index
     """
-    original_cwd = os.getcwd()
-    try:
-        nc_dir = str(nc_path.parent)
-        os.chdir(nc_dir)
-        import netCDF4 as nc
+    import netCDF4 as nc
 
-        ds = nc.Dataset(nc_path.name)
+    ds = nc.Dataset(str(nc_path))
+    try:
         ref_dbz = ds.variables["dbz"][level_index, :, :].data  # type: ignore[union-attr]
         ref_lat = ds.variables["lat"][:].data  # type: ignore[union-attr]
         ref_lon = ds.variables["lon"][:].data  # type: ignore[union-attr]
         ref_height = ds.variables["height"][:]  # type: ignore[union-attr]
         height_val = float(ref_height[level_index])
-        ds.close()
     finally:
-        os.chdir(original_cwd)
+        ds.close()
 
     # 确保数组是 C-contiguous 的 float64，interpolator 需要
     ref_lat = np.asarray(ref_lat, dtype=np.float64).copy()

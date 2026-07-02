@@ -12,6 +12,7 @@
 // manifest 从同一批 ToolDef 生成，避免 DebugPage、Agent SDK 与运行时定义漂移。
 
 import type { ToolDef, ToolManifest } from '../../framework/types.js'
+import { ensureToolSchemas } from '../../framework/schema.js'
 import { editFileTool } from './editFile/definition.js'
 import { globFilesTool } from './globFiles/definition.js'
 import { grepFilesTool } from './grepFiles/definition.js'
@@ -38,14 +39,17 @@ export const developerManifest: ToolManifest = {
   requires: {
     DEVELOPER_TOOL_ALLOWED_ROOTS: 'required',
   },
-  tools: developerTools.map(tool => ({
-    name: tool.name,
-    label: tool.label,
-    description: tool.description,
-    group: tool.group,
-    tags: tool.tags,
-    isReadOnly: tool.isReadOnly,
-    isDestructive: tool.isDestructive,
-    jsonSchema: tool.jsonSchema,
-  })),
+  tools: developerTools.map(tool => {
+    const { jsonSchema } = ensureToolSchemas(tool)
+    return {
+      name: tool.name,
+      label: tool.label,
+      description: tool.description,
+      group: tool.group,
+      tags: tool.tags,
+      isReadOnly: tool.isReadOnly,
+      isDestructive: tool.isDestructive,
+      jsonSchema,
+    }
+  }),
 }

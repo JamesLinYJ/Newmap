@@ -8,19 +8,20 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import proj4 from 'proj4';
+import type { Geometry } from './geojson.js';
 // UTM 局部米制 EPSG
-export function chooseLocalMetricEpsg(longitude, latitude) {
+export function chooseLocalMetricEpsg(longitude: number, latitude: number): number {
     const zone = Math.floor((longitude + 180) / 6) + 1;
     const north = latitude >= 0;
     return (north ? 32600 : 32700) + zone;
 }
 // 重投影单个几何
-export function transformGeometry(geometry, srcEpsg, dstEpsg) {
+export function transformGeometry<T extends Geometry>(geometry: T, srcEpsg: number, dstEpsg: number): T {
     if (srcEpsg === dstEpsg)
         return geometry;
     const fromProj = `EPSG:${srcEpsg}`;
     const toProj = `EPSG:${dstEpsg}`;
-    function convert(coords) {
+    function convert(coords: unknown): unknown {
         if (typeof coords === 'number')
             return coords;
         if (!Array.isArray(coords))
@@ -30,5 +31,6 @@ export function transformGeometry(geometry, srcEpsg, dstEpsg) {
         }
         return coords.map(convert);
     }
-    return { ...geometry, coordinates: convert(geometry.coordinates) };
+    if (!('coordinates' in geometry)) return geometry;
+    return { ...geometry, coordinates: convert(geometry.coordinates) } as T;
 }

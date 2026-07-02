@@ -8,8 +8,17 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 import { makeId } from '../../utils/ids.js';
+import type { ToolDef } from '../../framework/types.js';
 import { GEOCODE_PLACE_PROMPT } from './prompt.js';
-export const geocodePlaceTool = {
+
+interface NominatimCandidate {
+    display_name?: unknown;
+    lat?: unknown;
+    lon?: unknown;
+    boundingbox?: unknown;
+}
+
+export const geocodePlaceTool: ToolDef = {
     name: 'geocode_place',
     label: '地点地理编码',
     description: '根据地名查询经纬度和边界框。支持城市、区县、POI 等地点类型。',
@@ -26,9 +35,9 @@ export const geocodePlaceTool = {
         },
         required: ['query'],
     },
-    async handler(args, _runtime) {
-        const query = args.query;
-        const limit = args.limit ?? 5;
+    async handler(args) {
+        const query = requiredText(args.query, 'query');
+        const limit = boundedLimit(args.limit);
         const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=${limit}`;
         const response = await fetch(url, {
             headers: { 'User-Agent': 'geo-agent-platform/0.1' },
@@ -37,15 +46,15 @@ export const geocodePlaceTool = {
         if (!response.ok) {
             throw new Error(`地理编码查询失败: HTTP ${response.status}`);
         }
-        const data = (await response.json());
+        const data: unknown = await response.json();
         if (!Array.isArray(data)) {
             throw new Error('地理编码服务返回格式不是数组');
         }
-        const candidates = data.map((item) => ({
-            label: item.display_name ?? query,
-            latitude: parseFloat(String(item.lat)),
-            longitude: parseFloat(String(item.lon)),
-            boundingbox: item.boundingbox ?? [],
+        const candidates = data.map((item: unknown) => toCandidate(item, query)).map((item) => ({
+            label: item.displayName,
+            latitude: item.latitude,
+            longitude: item.longitude,
+            boundingbox: item.boundingbox,
             source: 'nominatim',
         }));
         return {
@@ -65,3 +74,34 @@ export const geocodePlaceTool = {
         };
     },
 };
+
+function requiredText(value: unknown, field: string): string {
+    if (typeof value !== 'string' || !value.trim())
+        throw new Error(`${field} 不能为空`);
+    return value.trim();
+}
+
+function boundedLimit(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isInteger(value))
+        return 5;
+    return Math.min(20, Math.max(1, value));
+}
+
+function toCandidate(value: unknown, fallbackLabel: string): {
+    displayName: string;
+    latitude: number;
+    longitude: number;
+    boundingbox: unknown[];
+} {
+    const item = isRecord(value) ? value as NominatimCandidate : {};
+    return {
+        displayName: typeof item.display_name === 'string' ? item.display_name : fallbackLabel,
+        latitude: parseFloat(String(item.lat)),
+        longitude: parseFloat(String(item.lon)),
+        boundingbox: Array.isArray(item.boundingbox) ? item.boundingbox : [],
+    };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

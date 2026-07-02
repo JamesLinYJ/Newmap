@@ -49,7 +49,7 @@ export function defaultRuntimeConfig(options: DefaultRuntimeConfigOptions = {}):
       historyRunLimit: 4, eventWindow: 24, toolCallWindow: 8,
       artifactWindow: 6, warningWindow: 6, promptMaxChars: 12000,
       contextEntryWindow: 18, memoryFileCharLimit: 4000,
-      memoryEnabled: true, memoryBaseDir: '~/.geoforge/projects',
+      memoryEnabled: true, memoryBaseDir: process.env.GEOFORGE_MEMORY_BASE_DIR?.trim() || '~/.geoforge/projects',
       privateMemoryDir: null,
       teamMemoryDir: null,
       memoryEntrypointName: 'MEMORY.md',

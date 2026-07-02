@@ -7,13 +7,15 @@
     "dev": "tsx watch src/main.ts",
     "build": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "test": "vitest run src",
-    "test:watch": "vitest src"
+    "test": "node scripts/run-vitest-with-env.mjs run src",
+    "test:watch": "node scripts/run-vitest-with-env.mjs src"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@openai/agents": "^0.11.8",
     "@turf/turf": "^7.2.0",
+    "better-auth": "^1.6.23",
+    "casbin": "^5.51.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.7.0",

@@ -16,7 +16,6 @@ import {
   readdir,
   rename,
   rm,
-  stat,
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
@@ -48,9 +47,6 @@ import {
 import { makeId, nowUtc } from '../utils/ids.js'
 
 const STORE_SCHEMA_VERSION = 2
-const LOCK_STALE_MS = 30_000
-const LOCK_RETRY_COUNT = 200
-const LOCK_RETRY_MS = 25
 const DEFAULT_TRASH_RETENTION_DAYS = 30
 
 interface ThreadFile {
@@ -640,6 +636,12 @@ export class FileConversationStore {
     return entries.sort((left, right) => right.deletedAt.localeCompare(left.deletedAt))
   }
 
+  async getTrashedThread(threadId: string): Promise<ThreadFile> {
+    const location = this.requireThreadLocation(threadId)
+    if (!location.trashed) throw new Error(`线程 '${threadId}' 不在回收站`)
+    return this.readThreadFile(location.directory)
+  }
+
   async restoreThread(threadId: string): Promise<ThreadFile> {
     const location = this.requireThreadLocation(threadId)
     if (!location.trashed) throw new Error(`线程 '${threadId}' 不在回收站`)
@@ -801,13 +803,17 @@ export class FileConversationStore {
   }
 
   private enqueueAppend(filePath: string, record: unknown): void {
-    const previous = this.writeQueues.get(filePath) ?? Promise.resolve()
+    const previous = this.writeQueues.get(filePath)?.catch(error => {
+      console.error(`[conversation-store] previous append failed for ${filePath}:`, error instanceof Error ? error.message : String(error))
+    }) ?? Promise.resolve()
     const next = previous.then(async () => {
       await mkdir(path.dirname(filePath), { recursive: true })
       await appendJsonLineDurable(filePath, record)
     })
     this.writeQueues.set(filePath, next)
-    void next.finally(() => {
+    void next.catch(error => {
+      console.error(`[conversation-store] append failed for ${filePath}:`, error instanceof Error ? error.message : String(error))
+    }).finally(() => {
       if (this.writeQueues.get(filePath) === next) this.writeQueues.delete(filePath)
     })
   }
@@ -839,11 +845,7 @@ export class FileConversationStore {
       } catch (error) {
         const isFinalPartialLine = index === lines.length - 1 && !text.endsWith('\n')
         if (isFinalPartialLine) break
-        throw new ConversationCorruptionError(
-          `${path.basename(filePath)} 第 ${index + 1} 行损坏：${error instanceof Error ? error.message : String(error)}`,
-          threadId,
-          filePath,
-        )
+        await recordJsonLineCorruption(filePath, threadId, index + 1, error)
       }
     }
     return records
@@ -894,13 +896,8 @@ export class FileConversationStore {
   private async withThreadLock<T>(threadId: string, work: () => Promise<T>): Promise<T> {
     const previous = this.threadQueues.get(threadId) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(async () => {
-      const location = this.requireThreadLocation(threadId)
-      const release = await acquireFileLease(path.join(location.directory, '.lock'))
-      try {
-        return await work()
-      } finally {
-        await release()
-      }
+      this.requireThreadLocation(threadId)
+      return work()
     })
     this.threadQueues.set(threadId, next)
     try {
@@ -921,29 +918,6 @@ export class FileConversationStore {
   }
 }
 
-async function acquireFileLease(lockPath: string): Promise<() => Promise<void>> {
-  await mkdir(path.dirname(lockPath), { recursive: true })
-  for (let attempt = 0; attempt < LOCK_RETRY_COUNT; attempt += 1) {
-    try {
-      const handle = await open(lockPath, 'wx')
-      await handle.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: nowUtc() }))
-      await handle.close()
-      return async () => rm(lockPath, { force: true })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      try {
-        const info = await stat(lockPath)
-        if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
-          await rm(lockPath, { force: true })
-          continue
-        }
-      } catch { /* another writer released the lease */ }
-      await delay(LOCK_RETRY_MS)
-    }
-  }
-  throw new Error(`等待 thread 文件锁超时：${lockPath}`)
-}
-
 async function atomicWriteJson(filePath: string, value: unknown): Promise<void> {
   await atomicWriteText(filePath, `${JSON.stringify(value, null, 2)}\n`)
 }
@@ -957,6 +931,21 @@ async function appendJsonLineDurable(filePath: string, value: unknown): Promise<
   } finally {
     await handle.close()
   }
+}
+
+async function recordJsonLineCorruption(
+  filePath: string,
+  threadId: string,
+  lineNumber: number,
+  error: unknown,
+): Promise<void> {
+  await appendJsonLineDurable(path.join(path.dirname(filePath), 'corruption.jsonl'), {
+    threadId,
+    file: path.basename(filePath),
+    lineNumber,
+    reason: error instanceof Error ? error.message : String(error),
+    detectedAt: nowUtc(),
+  })
 }
 
 async function atomicWriteText(filePath: string, value: string): Promise<void> {
@@ -1055,6 +1044,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds))
-}

@@ -116,7 +116,10 @@ function jsonSchemaToZod(schema: Record<string, unknown>, mode: 'runtime' | 'age
 function schemaToZod(schema: Record<string, unknown>, mode: 'runtime' | 'agents'): z.ZodType {
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
     const values = schema.enum.map(value => String(value))
-    return z.enum(values as [string, ...string[]]).describe(description(schema))
+    const first = values[0]
+    if (!first) throw new Error('enum 至少需要一个值')
+    const rest = values.slice(1)
+    return describeZod(z.enum([first, ...rest]), schema)
   }
   switch (schema.type) {
     case 'object':
@@ -126,27 +129,27 @@ function schemaToZod(schema: Record<string, unknown>, mode: 'runtime' | 'agents'
       let arraySchema = z.array(itemSchema)
       if (typeof schema.minItems === 'number') arraySchema = arraySchema.min(schema.minItems)
       if (typeof schema.maxItems === 'number') arraySchema = arraySchema.max(schema.maxItems)
-      return arraySchema.describe(description(schema))
+      return describeZod(arraySchema, schema)
     }
     case 'string': {
       let stringSchema = z.string()
       if (typeof schema.minLength === 'number') stringSchema = stringSchema.min(schema.minLength)
-      return stringSchema.describe(description(schema))
+      return describeZod(stringSchema, schema)
     }
     case 'number': {
       let numberSchema = z.number()
       if (typeof schema.minimum === 'number') numberSchema = numberSchema.min(schema.minimum)
       if (typeof schema.maximum === 'number') numberSchema = numberSchema.max(schema.maximum)
-      return numberSchema.describe(description(schema))
+      return describeZod(numberSchema, schema)
     }
     case 'integer': {
       let integerSchema = z.number().int()
       if (typeof schema.minimum === 'number') integerSchema = integerSchema.min(schema.minimum)
       if (typeof schema.maximum === 'number') integerSchema = integerSchema.max(schema.maximum)
-      return integerSchema.describe(description(schema))
+      return describeZod(integerSchema, schema)
     }
     case 'boolean':
-      return z.boolean().describe(description(schema))
+      return describeZod(z.boolean(), schema)
     default:
       throw new Error(`不支持的 JSON Schema type: ${String(schema.type)}`)
   }
@@ -169,6 +172,11 @@ function objectSchemaToZod(schema: Record<string, unknown>, mode: 'runtime' | 'a
 
 function description(schema: Record<string, unknown>): string | undefined {
   return typeof schema.description === 'string' && schema.description.trim() ? schema.description.trim() : undefined
+}
+
+function describeZod<T extends z.ZodType>(zodSchema: T, schema: Record<string, unknown>): T {
+  const text = description(schema)
+  return text ? zodSchema.describe(text) as T : zodSchema
 }
 
 function enrichSchema(value: unknown): unknown {

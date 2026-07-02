@@ -62,7 +62,7 @@ export function DecisionSheet({
     <m.div
       className="cc-decision-sheet"
       role="dialog"
-      aria-modal="false"
+      aria-modal="true"
       aria-labelledby={`${decision.decisionId}-title`}
       {...buildFadeUpMotion(reducedMotion, 0, 18)}
     >
@@ -139,7 +139,6 @@ export function DecisionSheet({
           if (isFreeText) onSubmit(decision.decisionId, null, freeText.trim())
           else onSubmit(decision.decisionId, selectedOptionId, null)
         }}>
-          <span>1</span>
           {submitLabel}
         </button>
         <span>Esc 关闭</span>

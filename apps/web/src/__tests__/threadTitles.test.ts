@@ -33,6 +33,9 @@ function thread(overrides: Partial<AgentThreadRecord>): AgentThreadRecord {
   return {
     id: overrides.id ?? 'thread_1',
     sessionId: overrides.sessionId ?? 'session_1',
+    workspaceId: overrides.workspaceId ?? null,
+    createdByUserId: overrides.createdByUserId ?? null,
+    visibility: overrides.visibility ?? 'workspace',
     title: overrides.title ?? '新对话',
     status: overrides.status ?? 'active',
     createdAt: overrides.createdAt ?? '2026-06-05T00:00:00Z',

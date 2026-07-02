@@ -66,7 +66,7 @@ function Write-Footer {
 
 function Write-Brand {
     Write-Host ''
-    Write-Rule 'GeoAgent Windows Dev Console'
+    Write-Rule 'GeoForge Windows Dev Console'
     Write-Host '  地理智能平台' -ForegroundColor $Colors.Text -NoNewline
     Write-Host '  /  PostGIS in Docker, applications on Windows host' -ForegroundColor $Colors.Muted
     Write-Host "  Workspace  $Root" -ForegroundColor $Colors.Muted
@@ -139,6 +139,15 @@ function Set-DefaultEnvironment {
     Set-ProcessDefault 'DATABASE_URL' "postgresql://geo_agent:geo_agent@127.0.0.1:$($env:POSTGIS_PORT)/geo_agent"
     Set-ProcessDefault 'WORKER_URL' "http://127.0.0.1:$($env:WORKER_PORT)"
     Set-ProcessDefault 'API_PROXY_TARGET' "http://127.0.0.1:$($env:API_PORT)"
+    Set-ProcessDefault 'APP_BASE_URL' "http://127.0.0.1:$($env:API_PORT)"
+    Set-ProcessDefault 'WEB_BASE_URL' "http://127.0.0.1:$($env:WEB_DEV_PORT)"
+    Set-ProcessDefault 'BETTER_AUTH_URL' $env:APP_BASE_URL
+    Set-ProcessDefault 'BETTER_AUTH_SECRET' 'development-only-better-auth-secret-change-before-production'
+    Set-ProcessDefault 'BETTER_AUTH_ALLOW_SIGN_UP' 'true'
+    Set-ProcessDefault 'BETTER_AUTH_REQUIRE_EMAIL_VERIFICATION' 'false'
+    Set-ProcessDefault 'BETTER_AUTH_MIN_PASSWORD_LENGTH' '12'
+    Set-ProcessDefault 'CSRF_HEADER_NAME' 'x-geoforge-csrf'
+    Set-ProcessDefault 'TRUSTED_ORIGINS' "http://127.0.0.1:$($env:WEB_DEV_PORT),http://localhost:$($env:WEB_DEV_PORT)"
     $devToolProviders = 'geo-platform-chart,geo-platform-geocode,geo-platform-plan,geo-platform-developer-tools,geo-platform-spatial,geo-platform-routing,geo-platform-meteorology'
     Set-ProcessDefault 'ENABLED_TOOL_PROVIDERS' $devToolProviders
     Ensure-ProcessCsvIncludes 'ENABLED_TOOL_PROVIDERS' $devToolProviders.Split(',')
@@ -384,7 +393,17 @@ function Get-AppServiceState {
     $managedPid = Get-ManagedPid $Name
     $portPid = Get-PortPid $definition.Port
     $healthy = Test-Http $definition.Url
-    $state = if ($healthy -and $managedPid) { 'RUNNING' } elseif ($healthy) { 'EXTERNAL' } elseif ($managedPid -or $portPid) { 'STARTING' } else { 'STOPPED' }
+    $state = if ($healthy -and $managedPid) {
+        'RUNNING'
+    } elseif ($healthy) {
+        'EXTERNAL'
+    } elseif ($managedPid -and -not $portPid) {
+        'FAILED'
+    } elseif ($managedPid -or $portPid) {
+        'STARTING'
+    } else {
+        'STOPPED'
+    }
     return [pscustomobject]@{
         Name = $Name
         Label = $definition.Label
@@ -394,6 +413,20 @@ function Get-AppServiceState {
         Pid = if ($managedPid) { $managedPid } else { $portPid }
         Managed = [bool]$managedPid
     }
+}
+
+function Clear-ManagedAppService {
+    param([string]$Name)
+    $managedProcessId = Get-ManagedPid $Name
+    if ($managedProcessId) {
+        $descendants = @(Get-DescendantProcessIds $managedProcessId)
+        [Array]::Reverse($descendants)
+        foreach ($childPid in $descendants) {
+            Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue
+        }
+        Stop-Process -Id $managedProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath (Join-Path $PidDir "$Name.pid") -Force -ErrorAction SilentlyContinue
 }
 
 function Start-AppService {
@@ -407,6 +440,10 @@ function Start-AppService {
     if ($state.State -eq 'EXTERNAL') {
         Write-Result "$($definition.Label) 已由外部进程运行 · PID $($state.Pid)" 'warn'
         return
+    }
+    if ($state.State -eq 'FAILED') {
+        Write-Result "$($definition.Label) 上次启动未通过健康检查，正在清理旧进程 · PID $($state.Pid)" 'warn'
+        Clear-ManagedAppService $Name
     }
     if ($state.State -eq 'STARTING') {
         throw "$($definition.Label) 端口 $($definition.Port) 已被占用，但健康检查失败。"
@@ -426,6 +463,7 @@ function Start-AppService {
     Set-Content -LiteralPath (Join-Path $PidDir "$Name.pid") -Value $process.Id
 
     if (-not (Wait-Http $Name $definition.Url)) {
+        Show-LogTail $Name 40
         throw "$($definition.Label) 启动失败，请查看 $stderr"
     }
     Write-Result "$($definition.Label) 已健康 · $($definition.Url)" 'ok'
@@ -515,6 +553,7 @@ function Write-ServiceRow {
         'RUNNING' { $Colors.Good }
         'EXTERNAL' { $Colors.Warn }
         'STARTING' { $Colors.Warn }
+        'FAILED' { $Colors.Bad }
         default { $Colors.Bad }
     }
     Write-Host ('  {0,-22} ' -f $Label) -ForegroundColor $Colors.Text -NoNewline
@@ -530,7 +569,9 @@ function Start-Stack {
         Start-AppService 'api'
         Start-AppService 'web'
     } else {
-        if ($Service -eq 'api') { Start-Postgis }
+        if ($Service -eq 'api') {
+            Start-Postgis
+        }
         Start-AppService $Service
     }
     Write-Footer
@@ -540,6 +581,7 @@ function Start-Stack {
         Write-Result '开发环境已就绪' 'ok'
         Write-Host "  Web       http://127.0.0.1:$($env:WEB_DEV_PORT)" -ForegroundColor $Colors.Accent
         Write-Host "  Debug     http://127.0.0.1:$($env:WEB_DEV_PORT)/debug" -ForegroundColor $Colors.Accent
+        Write-Host "  Auth      http://127.0.0.1:$($env:API_PORT)/api/auth/get-session" -ForegroundColor $Colors.Accent
     } else {
         Write-Result "$((Get-ServiceDefinition $Service).Label) 已就绪" 'ok'
     }

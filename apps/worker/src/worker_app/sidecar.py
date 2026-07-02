@@ -12,6 +12,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
 from contextlib import contextmanager
 import logging
 import os
@@ -19,10 +24,12 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import time
 from typing import Any, Iterator
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +45,119 @@ if GIS_METEOROLOGY_SOURCE.is_dir() and str(GIS_METEOROLOGY_SOURCE) not in sys.pa
 
 app = FastAPI(title="geo-agent-science-worker", version="0.2.0")
 RUNTIME_ROOT = Path(os.environ.get("RUNTIME_ROOT", "runtime")).resolve()
+WORKER_SHARED_SECRET = os.environ.get("WORKER_SHARED_SECRET")
+WORKER_MAX_BODY_BYTES = int(os.environ.get("WORKER_MAX_BODY_BYTES", str(16 * 1024 * 1024)))
+WORKER_MAX_CONCURRENCY = int(os.environ.get("WORKER_MAX_CONCURRENCY", "2"))
+WORKER_CLOCK_SKEW_SECONDS = int(os.environ.get("WORKER_CLOCK_SKEW_SECONDS", "30"))
+WORKER_TOOL_TIMEOUT_SECONDS = float(os.environ.get("WORKER_TOOL_TIMEOUT_SECONDS", "300"))
+_worker_semaphore = asyncio.Semaphore(WORKER_MAX_CONCURRENCY)
+_seen_nonces: dict[str, int] = {}
+
+
+@app.middleware("http")
+async def require_worker_secret(request: Request, call_next):
+    """工具接口必须由 Node API 携带短期签名调用；health 只暴露依赖状态。"""
+
+    if request.url.path == "/health":
+        return await call_next(request)
+    if not WORKER_SHARED_SECRET:
+        return JSONResponse({"detail": "WORKER_SHARED_SECRET 未配置"}, status_code=503)
+    body = await request.body()
+    if len(body) > WORKER_MAX_BODY_BYTES:
+        return JSONResponse({"detail": "Worker 请求体超过大小限制"}, status_code=413)
+    authorization = request.headers.get("authorization") or ""
+    tool_name = _tool_name_from_path(request.url.path)
+    auth_error = _verify_worker_authorization(authorization, WORKER_SHARED_SECRET, tool_name, body)
+    if auth_error is not None:
+        status_code, detail = auth_error
+        return JSONResponse({"detail": detail}, status_code=status_code)
+    await _replay_body(request, body)
+    async with _worker_semaphore:
+        return await call_next(request)
+
+
+async def _replay_body(request: Request, body: bytes) -> None:
+    """中间件验签必须读取 body；重放缓存体让 FastAPI 后续继续解析同一请求。"""
+
+    sent = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal sent
+        if sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request._receive = receive  # type: ignore[attr-defined]
+
+
+def _tool_name_from_path(path: str) -> str:
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2 and parts[-2] == "tools":
+        return parts[-1]
+    return ""
+
+
+def _verify_worker_authorization(
+    authorization: str,
+    secret: str,
+    tool_name: str,
+    body: bytes,
+) -> tuple[int, str] | None:
+    if not authorization:
+        return 401, "缺少 Worker 授权头"
+    prefix = "GeoForge-Worker "
+    if not authorization.startswith(prefix):
+        return 403, "Worker 授权格式无效"
+    token = authorization[len(prefix) :]
+    try:
+        encoded_payload, signature = token.split(".", 1)
+    except ValueError:
+        return 403, "Worker 授权 token 无效"
+    expected_signature = hmac.new(secret.encode("utf-8"), encoded_payload.encode("utf-8"), hashlib.sha256).digest()
+    actual_signature = _base64url_decode(signature)
+    if not hmac.compare_digest(actual_signature, expected_signature):
+        return 403, "Worker 授权签名无效"
+    try:
+        payload = json.loads(_base64url_decode(encoded_payload).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return 403, "Worker 授权 payload 无效"
+    if not isinstance(payload, dict) or payload.get("v") != 1:
+        return 403, "Worker 授权版本无效"
+    if payload.get("toolName") != tool_name or not tool_name:
+        return 403, "Worker 授权工具名不匹配"
+    now = int(time.time())
+    iat = _int_payload(payload.get("iat"))
+    exp = _int_payload(payload.get("exp"))
+    if iat is None or exp is None or iat > now + WORKER_CLOCK_SKEW_SECONDS or exp < now:
+        return 403, "Worker 授权已过期或时间无效"
+    body_hash = payload.get("bodyHash")
+    expected_body_hash = hashlib.sha256(body).hexdigest()
+    if not isinstance(body_hash, str) or not hmac.compare_digest(body_hash, expected_body_hash):
+        return 403, "Worker 请求体哈希不匹配"
+    nonce = payload.get("nonce")
+    if not isinstance(nonce, str) or len(nonce) < 16:
+        return 403, "Worker 授权 nonce 无效"
+    _purge_expired_nonces(now)
+    if nonce in _seen_nonces:
+        return 403, "Worker 授权 nonce 已使用"
+    _seen_nonces[nonce] = exp
+    return None
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * ((4 - len(value) % 4) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("utf-8"))
+
+
+def _int_payload(value: Any) -> int | None:
+    return value if isinstance(value, int) and value > 0 else None
+
+
+def _purge_expired_nonces(now: int) -> None:
+    expired = [nonce for nonce, exp in _seen_nonces.items() if exp < now]
+    for nonce in expired:
+        _seen_nonces.pop(nonce, None)
 
 
 class ToolRequest(BaseModel):
@@ -48,13 +168,18 @@ class ToolRequest(BaseModel):
 async def run_meteorology_tool(tool_name: str, request: ToolRequest) -> dict[str, Any]:
     """执行无状态科学计算；所有路径都必须是 runtime 根目录内的相对引用。"""
     try:
-        payload = execute_meteorology_tool(tool_name, request.args)
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(execute_meteorology_tool, tool_name, request.args),
+            timeout=WORKER_TOOL_TIMEOUT_SECONDS,
+        )
         return {"message": f"{tool_name} 执行完成", "payload": payload, "warnings": payload.get("warnings", [])}
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(400, str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(504, "Worker 工具执行超时") from exc
     except Exception as exc:
         logger.exception("%s failed", tool_name)
-        raise HTTPException(500, str(exc)) from exc
+        raise HTTPException(500, "Worker 工具执行失败，请查看 Worker 日志") from exc
 
 
 def execute_meteorology_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -539,6 +664,11 @@ def optional_number_list(args: dict[str, Any], key: str) -> list[float] | None:
 
 @app.get("/health")
 async def health():
+    if not WORKER_SHARED_SECRET:
+        return JSONResponse(
+            {"status": "degraded", "live": True, "ready": False, "detail": "WORKER_SHARED_SECRET 未配置"},
+            status_code=503,
+        )
     try:
         import gis_meteorology  # noqa: F401
         import geopandas  # noqa: F401
@@ -549,4 +679,10 @@ async def health():
         import scipy  # noqa: F401
     except ImportError as exc:
         raise HTTPException(503, f"gis_meteorology 不可用：{exc}") from exc
-    return {"status": "ok", "runtimeRoot": str(RUNTIME_ROOT), "gisMeteorologyAvailable": True}
+    return {
+        "status": "ok",
+        "live": True,
+        "ready": True,
+        "runtimeRoot": str(RUNTIME_ROOT),
+        "gisMeteorologyAvailable": True,
+    }

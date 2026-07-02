@@ -34,6 +34,11 @@ export interface ToolCatalogEntry {
   sortOrder: number
 }
 
+export interface ResourceOwner {
+  workspaceId: string
+  userId: string
+}
+
 export class PostgresPlatformStore {
   static readonly DEFAULT_SESSION_ID = '__default__'
 
@@ -90,9 +95,12 @@ export class PostgresPlatformStore {
     }
   }
 
-  async createSession(): Promise<SessionRecord> {
+  async createSession(owner?: ResourceOwner | null): Promise<SessionRecord> {
     const session: SessionRecord = {
       id: makeId('session'), createdAt: nowUtc(), status: 'active', shareToken: makeShareToken(),
+      workspaceId: owner?.workspaceId ?? null,
+      createdByUserId: owner?.userId ?? null,
+      visibility: 'workspace',
       latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null, latestMeteorologicalDatasetId: null,
     }
     this.sessions.set(session.id, session)
@@ -100,11 +108,31 @@ export class PostgresPlatformStore {
     return session
   }
 
+  async getOrCreateUserDefaultSession(owner: ResourceOwner): Promise<SessionRecord> {
+    const sessionId = `session_${owner.workspaceId}_${owner.userId}`.replace(/[^A-Za-z0-9_]+/gu, '_')
+    try { return this.getSession(sessionId) }
+    catch {
+      const session: SessionRecord = {
+        id: sessionId, createdAt: nowUtc(), status: 'active', shareToken: makeShareToken(),
+        workspaceId: owner.workspaceId,
+        createdByUserId: owner.userId,
+        visibility: 'workspace',
+        latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null, latestMeteorologicalDatasetId: null,
+      }
+      this.sessions.set(session.id, session)
+      await this.conversationStore.saveSession(session)
+      return session
+    }
+  }
+
   async getOrCreateDefaultSession(): Promise<SessionRecord> {
     try { return this.getSession(PostgresPlatformStore.DEFAULT_SESSION_ID) }
     catch {
       const session: SessionRecord = {
         id: PostgresPlatformStore.DEFAULT_SESSION_ID, createdAt: nowUtc(), status: 'active', shareToken: makeShareToken(),
+        workspaceId: null,
+        createdByUserId: null,
+        visibility: 'workspace',
         latestThreadId: null, latestRunId: null, latestUploadedLayerKey: null, latestMeteorologicalDatasetId: null,
       }
       this.sessions.set(session.id, session)
@@ -269,6 +297,7 @@ export class PostgresPlatformStore {
     threadId?: string | null
     datasetId?: string | null
     filename?: string | null
+    workspaceId?: string | null
   }): Promise<MeteorologicalDatasetRecord | null> {
     const explicitDatasetId = filters.datasetId?.trim()
     if (explicitDatasetId && explicitDatasetId !== 'latest_upload') {
@@ -278,7 +307,8 @@ export class PostgresPlatformStore {
         WHERE dataset_id = ${explicitDatasetId}
         LIMIT 1
       `)
-      return result.rows[0] ? mapMeteorologicalDatasetRow(result.rows[0] as Record<string, unknown>) : null
+      const record = result.rows[0] ? mapMeteorologicalDatasetRow(result.rows[0] as Record<string, unknown>) : null
+      return belongsToWorkspace(record, filters.workspaceId) ? record : null
     }
     const matches = await this.listMeteorologicalDatasets({
       sessionId: filters.sessionId,
@@ -286,7 +316,7 @@ export class PostgresPlatformStore {
       filename: filters.filename ?? null,
       limit: 1,
     })
-    return matches[0] ?? null
+    return matches.find(record => belongsToWorkspace(record, filters.workspaceId)) ?? null
   }
 
   async persistArtifact(artifact: ArtifactRef): Promise<void> {
@@ -302,15 +332,21 @@ export class PostgresPlatformStore {
     if (!relativePath) throw new Error(`Artifact "${artifact.artifactId}" 缺少 relativePath`)
     await this.db.execute(sql`
       INSERT INTO platform_artifacts (
-        artifact_id, run_id, artifact_type, name, uri, metadata_json, geojson_relative_path, created_at
+        artifact_id, run_id, workspace_id, created_by_user_id, visibility,
+        artifact_type, name, uri, metadata_json, geojson_relative_path, created_at
       )
       VALUES (
-        ${artifact.artifactId}, ${artifact.runId}, ${artifact.artifactType}, ${artifact.name},
+        ${artifact.artifactId}, ${artifact.runId}, ${this.runs.get(artifact.runId)?.workspaceId ?? null},
+        ${this.runs.get(artifact.runId)?.createdByUserId ?? null}, ${this.runs.get(artifact.runId)?.visibility ?? 'workspace'},
+        ${artifact.artifactType}, ${artifact.name},
         ${artifact.uri}, ${JSON.stringify(artifact.metadata)}::jsonb, ${relativePath}, ${new Date()}
       )
       ON CONFLICT (artifact_id)
       DO UPDATE SET name = EXCLUDED.name, uri = EXCLUDED.uri, metadata_json = EXCLUDED.metadata_json,
-                    geojson_relative_path = EXCLUDED.geojson_relative_path
+                    geojson_relative_path = EXCLUDED.geojson_relative_path,
+                    workspace_id = EXCLUDED.workspace_id,
+                    created_by_user_id = EXCLUDED.created_by_user_id,
+                    visibility = EXCLUDED.visibility
     `)
   }
 
@@ -327,6 +363,9 @@ export class PostgresPlatformStore {
     const now = nowUtc()
     const thread: AgentThreadRecord = {
       id: makeId('thread'), sessionId, title: title || '新对话',
+      workspaceId: session.workspaceId,
+      createdByUserId: session.createdByUserId,
+      visibility: session.visibility,
       status: 'active', createdAt: now, updatedAt: now, runCount: 0,
       latestRunId: null, latestUserQuery: null, latestAssistantSummary: null,
       latestRunStatus: null, latestArtifactId: null, latestArtifactName: null,
@@ -436,6 +475,9 @@ export class PostgresPlatformStore {
       id: makeId('run'),
       threadId: opts?.threadId ?? null,
       sessionId,
+      workspaceId: thread?.workspaceId ?? session.workspaceId,
+      createdByUserId: thread?.createdByUserId ?? session.createdByUserId,
+      visibility: thread?.visibility ?? session.visibility,
       userQuery: query,
       modelProvider: opts?.modelProvider ?? null,
       modelName: opts?.modelName ?? null,
@@ -705,6 +747,11 @@ export class PostgresPlatformStore {
     return this.conversationStore.listTrash(sessionId)
   }
 
+  async getTrashedThread(threadId: string): Promise<AgentThreadRecord> {
+    const trashed = await this.conversationStore.getTrashedThread(threadId)
+    return trashed.thread
+  }
+
   async restoreThread(threadId: string): Promise<AgentThreadRecord> {
     const restored = await this.conversationStore.restoreThread(threadId)
     restored.thread.status = 'active'
@@ -765,6 +812,9 @@ function mapToolCatalogRow(row: Record<string, unknown>): ToolCatalogEntry {
 function mapMeteorologicalDatasetRow(row: Record<string, unknown>): MeteorologicalDatasetRecord {
   return {
     datasetId: String(row.dataset_id ?? ''),
+    workspaceId: typeof row.workspace_id === 'string' ? row.workspace_id : null,
+    createdByUserId: typeof row.created_by_user_id === 'string' ? row.created_by_user_id : null,
+    visibility: row.visibility === 'private' || row.visibility === 'public' ? row.visibility : 'workspace',
     sessionId: String(row.session_id ?? ''),
     threadId: typeof row.thread_id === 'string' ? row.thread_id : null,
     filename: String(row.filename ?? ''),
@@ -822,6 +872,9 @@ function toRunSummary(run: AnalysisRun): RunSummary {
     id: run.id,
     threadId: run.threadId,
     sessionId: run.sessionId,
+    workspaceId: run.workspaceId,
+    createdByUserId: run.createdByUserId,
+    visibility: run.visibility,
     userQuery: run.userQuery,
     modelProvider: run.modelProvider,
     modelName: run.modelName,
@@ -832,6 +885,12 @@ function toRunSummary(run: AnalysisRun): RunSummary {
     latestArtifactId: latestArtifact?.artifactId ?? null,
     latestArtifactName: latestArtifact?.name ?? null,
   }
+}
+
+function belongsToWorkspace(record: MeteorologicalDatasetRecord | null, workspaceId?: string | null): record is MeteorologicalDatasetRecord {
+  if (!record) return false
+  if (!workspaceId) return true
+  return record.workspaceId === workspaceId
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

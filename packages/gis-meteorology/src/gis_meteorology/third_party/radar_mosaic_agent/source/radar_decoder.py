@@ -7,8 +7,6 @@
 import numpy as np
 import bz2
 import struct
-import warnings
-warnings.filterwarnings('ignore')
 
 
 def decodedata(dataindex, offset, scale, filedata, binlen, singlelen):
@@ -60,7 +58,8 @@ def decode_latlon(inputpath, filename):
         stalon: 站点经度
         levels: 仰角数组
     """
-    filedata = bz2.BZ2File(inputpath + filename, 'rb').read()
+    with bz2.BZ2File(inputpath + filename, 'rb') as file:
+        filedata = file.read()
     datalen = len(filedata)
 
     # 站点配置32-160
@@ -170,7 +169,8 @@ def decoderaw(inputpath, filename):
         stalon: 站点经度
     """
     try:
-        filedata = bz2.BZ2File(inputpath + filename, 'rb').read()
+        with bz2.BZ2File(inputpath + filename, 'rb') as file:
+            filedata = file.read()
     except (IOError, EOFError) as e:
         print(f"文件读取错误: {e}")
         return None, None, None, None, None, None, None, None, None, None, None, None

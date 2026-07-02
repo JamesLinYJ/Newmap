@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 import type { AgentRuntimeConfig, MeteorologicalDatasetRecord } from '../schemas/types.js'
+import type { AuthContext } from '../security/types.js'
 
 export interface ToolManifest {
     id: string;
@@ -46,6 +47,7 @@ export interface ToolContext {
     threadId: string | null;
     runtimeRoot?: string;
     runtimeConfig?: AgentRuntimeConfig;
+    auth?: AuthContext | null;
     state: Map<string, unknown>;
     resolveValueRef(refId: string): ValueRef;
     resolveMeteorologicalDataset?(input: {

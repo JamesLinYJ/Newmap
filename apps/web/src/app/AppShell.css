@@ -55,6 +55,169 @@
     @apply grid min-h-dvh place-items-center text-[15px] font-semibold text-slate-500;
   }
 
+  .dc-auth-screen {
+    @apply grid min-h-dvh place-items-center px-5 py-8;
+  }
+
+  .dc-auth-layout {
+    @apply grid w-full max-w-[660px] gap-7;
+  }
+
+  .dc-auth-panel {
+    @apply min-h-[508px] rounded-[32px] border border-white/70 bg-white/70 px-9 py-10 shadow-[0_26px_80px_rgb(15_23_42/0.14)] backdrop-blur-3xl;
+  }
+
+  .dc-auth-brand {
+    @apply mb-8 flex items-center gap-3 text-[23px] font-bold text-slate-700;
+  }
+
+  .dc-auth-brand__mark {
+    @apply grid size-10 place-items-center rounded-[14px] bg-slate-950 text-[18px] font-black text-white shadow-[0_10px_26px_rgb(15_23_42/0.18)];
+  }
+
+  .dc-auth-step__eyebrow {
+    @apply text-[13px] font-bold tracking-normal text-slate-500;
+  }
+
+  .dc-auth-step h1 {
+    @apply mt-4 text-[44px] font-bold leading-tight tracking-normal text-slate-950;
+  }
+
+  .dc-auth-step p {
+    @apply mt-5 max-w-[520px] text-[20px] leading-9 text-slate-600;
+  }
+
+  .dc-auth-card__form {
+    @apply mt-8 grid gap-5;
+  }
+
+  .dc-auth-field {
+    @apply grid gap-2 text-[15px] font-semibold text-slate-700;
+  }
+
+  .dc-auth-field input {
+    @apply min-h-[70px] rounded-[24px] border border-slate-200 bg-white/78 px-6 text-[22px] font-semibold text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-950 focus:bg-white focus:shadow-[0_0_0_5px_rgb(15_23_42/0.08)];
+  }
+
+  .dc-auth-field input[readonly] {
+    @apply bg-white/55 text-slate-600;
+  }
+
+  .dc-auth-help {
+    @apply -mt-1 text-[16px] text-slate-600;
+  }
+
+  .dc-auth-help button {
+    @apply ml-1 font-semibold text-[#0866c7] underline-offset-4 hover:underline;
+  }
+
+  .dc-auth-actions {
+    @apply mt-4 flex items-center justify-end gap-3;
+  }
+
+  .dc-auth-button {
+    @apply inline-flex min-h-[48px] min-w-[150px] items-center justify-center rounded-[18px] px-7 text-[16px] font-bold transition disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .dc-auth-button--primary {
+    @apply bg-[#0866c7] text-white shadow-[0_14px_32px_rgb(8_102_199/0.22)] hover:bg-[#075bb2];
+  }
+
+  .dc-auth-button--ghost {
+    @apply bg-slate-200/80 text-slate-800 hover:bg-slate-300/80;
+  }
+
+  .dc-auth-card__error {
+    @apply mt-6 rounded-[24px] border border-rose-200 bg-rose-50/82 px-5 py-4 text-[16px] font-semibold leading-7 text-rose-700;
+  }
+
+  .dc-auth-options {
+    @apply mt-8 grid gap-3;
+  }
+
+  .dc-auth-options button,
+  .dc-auth-options__note,
+  .dc-auth-options-bar {
+    @apply flex items-center gap-4 rounded-[24px] border border-white/70 bg-white/70 px-5 py-4 text-left shadow-[0_12px_32px_rgb(15_23_42/0.08)] backdrop-blur-2xl;
+  }
+
+  .dc-auth-options button {
+    @apply cursor-pointer transition hover:-translate-y-0.5 hover:bg-white;
+  }
+
+  .dc-auth-options strong {
+    @apply block text-[17px] text-slate-950;
+  }
+
+  .dc-auth-options small {
+    @apply mt-1 block text-[14px] leading-5 text-slate-500;
+  }
+
+  .dc-auth-options__note {
+    @apply text-[15px] leading-6 text-slate-600;
+  }
+
+  .dc-auth-options-bar {
+    @apply min-h-[74px] cursor-pointer rounded-[24px] text-[20px] font-semibold text-slate-800 transition hover:-translate-y-0.5 hover:bg-white/85;
+  }
+
+  .dc-security-page {
+    @apply min-h-dvh p-6;
+  }
+
+  .dc-security-shell {
+    @apply mx-auto flex max-w-[1180px] flex-col gap-5 rounded-[28px] border border-white/60 bg-white/55 p-6 shadow-[0_24px_70px_rgb(15_23_42/0.12)] backdrop-blur-2xl;
+  }
+
+  .dc-security-header {
+    @apply flex flex-wrap items-center justify-between gap-4;
+  }
+
+  .dc-security-header h1 {
+    @apply mt-2 text-[28px] font-semibold text-slate-950;
+  }
+
+  .dc-security-tabs {
+    @apply flex flex-wrap gap-2;
+  }
+
+  .dc-security-tabs button {
+    @apply rounded-2xl border border-slate-200 bg-white/70 px-4 py-2 text-sm font-semibold text-slate-600;
+  }
+
+  .dc-security-tabs button.is-active {
+    @apply border-slate-950 bg-slate-950 text-white;
+  }
+
+  .dc-security-form {
+    @apply grid gap-3 md:grid-cols-[1fr_1fr_auto_auto];
+  }
+
+  .dc-security-form input,
+  .dc-security-form select {
+    @apply min-h-11 rounded-2xl border border-slate-200 bg-white/75 px-4 text-sm text-slate-900 outline-none focus:border-slate-900;
+  }
+
+  .dc-security-table-wrap {
+    @apply overflow-auto rounded-2xl border border-slate-200 bg-white/70;
+  }
+
+  .dc-security-table {
+    @apply w-full min-w-[760px] border-collapse text-left text-sm;
+  }
+
+  .dc-security-table th {
+    @apply border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold text-slate-500;
+  }
+
+  .dc-security-table td {
+    @apply border-b border-slate-100 px-4 py-3 align-top text-slate-800;
+  }
+
+  .dc-security-table td button {
+    @apply rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700;
+  }
+
   .liquid-glass-defs {
     position: fixed;
     inset: 0 auto auto 0;
@@ -4044,6 +4207,56 @@
 }
 
 @media (max-width: 767px) {
+  .dc-auth-screen {
+    padding: 18px;
+  }
+
+  .dc-auth-layout {
+    gap: 16px;
+  }
+
+  .dc-auth-panel {
+    min-height: 0;
+    border-radius: 28px;
+    padding: 28px 22px;
+  }
+
+  .dc-auth-brand {
+    margin-bottom: 26px;
+    font-size: 20px;
+  }
+
+  .dc-auth-step h1 {
+    font-size: 34px;
+  }
+
+  .dc-auth-step p {
+    font-size: 17px;
+    line-height: 1.7;
+  }
+
+  .dc-auth-field input {
+    min-height: 60px;
+    border-radius: 20px;
+    padding-inline: 18px;
+    font-size: 18px;
+  }
+
+  .dc-auth-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .dc-auth-button {
+    width: 100%;
+  }
+
+  .dc-auth-options-bar {
+    min-height: 64px;
+    border-radius: 22px;
+    font-size: 18px;
+  }
+
   .nav-bar {
     inset-inline: 8px;
     top: 8px;

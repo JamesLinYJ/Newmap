@@ -8,13 +8,19 @@
 //   作者:       OpenAI Codex
 // --------------------------------------------------------------------------
 import { makeId } from '../../utils/ids.js';
+import type { ToolDef } from '../../framework/types.js';
+import type { Position } from '../../gis/geojson.js';
 import { ROUTE_PLANNER_PROMPT } from './prompt.js';
 const COSTING = {
     driving: 'auto',
     walking: 'pedestrian',
     cycling: 'bicycle',
-};
-export function createRoutePlannerTool(baseUrl, timeoutMs) {
+} as const;
+type RouteProfile = keyof typeof COSTING;
+type Waypoint = { lat: number; lon: number };
+type RouteParseResult = { coordinates: Position[]; distanceKm: number; timeSeconds: number };
+
+export function createRoutePlannerTool(baseUrl: string, timeoutMs: number): ToolDef {
     const endpoint = baseUrl.replace(/\/+$/u, '');
     return {
         name: 'route_planner',
@@ -104,7 +110,7 @@ export function createRoutePlannerTool(baseUrl, timeoutMs) {
         },
     };
 }
-function parseWaypoints(value) {
+function parseWaypoints(value: unknown): Waypoint[] {
     if (!Array.isArray(value) || value.length < 2 || value.length > 20)
         throw new Error('路径规划需要 2 到 20 个途经点');
     return value.map((item, index) => {
@@ -119,53 +125,60 @@ function parseWaypoints(value) {
         return { lat, lon };
     });
 }
-function parseProfile(value) {
+function parseProfile(value: unknown): RouteProfile {
     const profile = value === undefined ? 'driving' : String(value);
     if (profile !== 'driving' && profile !== 'walking' && profile !== 'cycling')
         throw new Error(`不支持的出行方式：${profile}`);
     return profile;
 }
-function parseValhallaResponse(raw) {
-    let value;
+function parseValhallaResponse(raw: string): RouteParseResult {
+    let value: unknown;
     try {
         value = JSON.parse(raw);
     }
     catch {
         throw new Error('Valhalla 返回了无法解析的 JSON');
     }
-    if (!isRecord(value) || !isRecord(value.trip) || !isRecord(value.trip.summary))
+    if (!isRecord(value))
         throw new Error('Valhalla 返回缺少 trip.summary');
-    const legs = Array.isArray(value.trip.legs) ? value.trip.legs : [];
-    const coordinates = legs.flatMap((leg, index) => {
+    const trip = value.trip;
+    if (!isRecord(trip))
+        throw new Error('Valhalla 返回缺少 trip.summary');
+    const summary = trip.summary;
+    if (!isRecord(summary))
+        throw new Error('Valhalla 返回缺少 trip.summary');
+    const legs = Array.isArray(trip.legs) ? trip.legs : [];
+    const coordinates = legs.flatMap((leg: unknown, index: number) => {
         if (!isRecord(leg))
             throw new Error(`Valhalla leg ${index} 非法`);
         return parseShape(leg.shape, index);
     });
     if (coordinates.length < 2)
         throw new Error('Valhalla 未返回可用路线几何');
-    const distanceKm = value.trip.summary.length;
-    const timeSeconds = value.trip.summary.time;
+    const distanceKm = summary.length;
+    const timeSeconds = summary.time;
     if (typeof distanceKm !== 'number' || !Number.isFinite(distanceKm))
         throw new Error('Valhalla 路线距离非法');
     if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds))
         throw new Error('Valhalla 路线时长非法');
     return { coordinates: removeAdjacentDuplicates(coordinates), distanceKm, timeSeconds };
 }
-function parseShape(value, legIndex) {
+function parseShape(value: unknown, legIndex: number): Position[] {
     if (typeof value === 'string' && value)
         return decodePolyline6(value);
     if (!isRecord(value) || value.type !== 'LineString' || !Array.isArray(value.coordinates)) {
         throw new Error(`Valhalla leg ${legIndex} 未返回 GeoJSON LineString`);
     }
-    return value.coordinates.map((coordinate, index) => {
+    return value.coordinates.map((coordinate: unknown, index: number) => {
         if (!Array.isArray(coordinate) || coordinate.length < 2 || coordinate.some(item => typeof item !== 'number' || !Number.isFinite(item))) {
             throw new Error(`Valhalla leg ${legIndex} 坐标 ${index} 非法`);
         }
-        return coordinate;
+        const [longitude, latitude, ...rest] = coordinate;
+        return [longitude, latitude, ...rest];
     });
 }
-function decodePolyline6(encoded) {
-    const coordinates = [];
+function decodePolyline6(encoded: string): Position[] {
+    const coordinates: Position[] = [];
     let index = 0;
     let latitude = 0;
     let longitude = 0;
@@ -180,11 +193,11 @@ function decodePolyline6(encoded) {
     }
     return coordinates;
 }
-function decodePolylineValue(encoded, startIndex) {
+function decodePolylineValue(encoded: string, startIndex: number): { delta: number; nextIndex: number } {
     let result = 0;
     let shift = 0;
     let index = startIndex;
-    let byte;
+    let byte: number;
     do {
         if (index >= encoded.length)
             throw new Error('Valhalla polyline 编码不完整');
@@ -194,16 +207,19 @@ function decodePolylineValue(encoded, startIndex) {
     } while (byte >= 0x20);
     return { delta: (result & 1) ? ~(result >> 1) : result >> 1, nextIndex: index };
 }
-function removeAdjacentDuplicates(coordinates) {
-    return coordinates.filter((coordinate, index) => index === 0 || coordinate[0] !== coordinates[index - 1][0] || coordinate[1] !== coordinates[index - 1][1]);
+function removeAdjacentDuplicates(coordinates: Position[]): Position[] {
+    return coordinates.filter((coordinate, index) => {
+        const previous = coordinates[index - 1];
+        return !previous || coordinate[0] !== previous[0] || coordinate[1] !== previous[1];
+    });
 }
-function formatDuration(minutes) {
+function formatDuration(minutes: number): string {
     if (minutes < 60)
         return `${minutes} 分钟`;
     const hours = Math.floor(minutes / 60);
     const remainder = minutes % 60;
     return remainder ? `${hours} 小时 ${remainder} 分钟` : `${hours} 小时`;
 }
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

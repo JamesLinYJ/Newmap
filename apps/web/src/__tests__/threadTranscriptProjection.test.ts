@@ -144,7 +144,7 @@ function entry(
   content: string,
 ): TranscriptEntry {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     seq,
     entryId,
     parentEntryId: seq > 1 ? `entry_${seq - 1}` : null,
@@ -167,7 +167,7 @@ function toolEntry(
   assistantContent: string,
 ): TranscriptEntry {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     seq,
     entryId,
     parentEntryId: seq > 1 ? `entry_${seq - 1}` : null,
@@ -189,7 +189,7 @@ function assistantContentCheckpoint(
   content: string,
 ): TranscriptEntry {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     seq,
     entryId,
     parentEntryId: seq > 1 ? `entry_${seq - 1}` : null,

@@ -164,19 +164,21 @@ export function useLayerManager({
     if (!groups.length) return layerNodes
 
     const groupedIds = new Set(groups.flatMap(group => group.memberIds))
-    const groupedNodes = groups
-      .map(group => ({
+    const groupedNodes = groups.flatMap(group => {
+      const children = group.expanded
+        ? layerNodes.filter(node => group.memberIds.includes(node.id))
+        : []
+      if (!children.length && !group.memberIds.some(id => layerIds.includes(id))) return []
+      return [{
         id: group.id,
         name: group.name,
         type: 'group' as const,
         visible: group.memberIds.some(id => layerNodes.find(node => node.id === id)?.visible),
         opacity: 1,
         expanded: group.expanded,
-        children: group.expanded
-          ? layerNodes.filter(node => group.memberIds.includes(node.id))
-          : [],
-      }))
-      .filter(group => group.children.length || group.memberIds.some(id => layerIds.includes(id)))
+        children,
+      }]
+    })
 
     return [
       ...groupedNodes,

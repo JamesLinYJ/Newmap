@@ -8,7 +8,8 @@
 //   作者:       JamesLinYJ
 // --------------------------------------------------------------------------
 
-import type { Server } from 'node:http'
+import type { Server, IncomingMessage } from 'node:http'
+import type { Duplex } from 'node:stream'
 import { WebSocketServer, WebSocket } from 'ws'
 import type { AgentRuntimeConfig, AnalysisRun, DecisionRequest } from '../schemas/types.js'
 import type { PostGisRepository } from '../gis/postgis.js'
@@ -39,6 +40,9 @@ import { buildSystemPrompt } from '../agent/prompts.js'
 import { ItemSink } from '../conversation/itemSink.js'
 import { getEnv } from '../framework/env.js'
 import { AzureSpeechService } from '../speech/azureSpeechService.js'
+import type { SecurityServices } from '../security/routes.js'
+import type { AuthContext } from '../security/types.js'
+import { assertDirectToolRunAllowed } from '../security/toolExecutionPolicy.js'
 
 interface WsDependencies {
   store: PostgresPlatformStore
@@ -48,7 +52,19 @@ interface WsDependencies {
   runtimeRoot: string
   defaultRuntimeConfig?: AgentRuntimeConfig
   createSandboxSession?: SandboxSessionFactory
+  security: SecurityServices
 }
+
+const MUTATING_COMMANDS = new Set([
+  'thread:create', 'thread:update', 'thread:delete', 'thread:fork', 'thread:compact',
+  'thread:memory:update', 'thread:memory:rebuild',
+  'thread:trash:restore', 'thread:trash:purge',
+  'run:start', 'run:cancel', 'run:resume', 'run:respond-decision',
+  'tool:run', 'tool-catalog:upsert', 'tool-catalog:delete',
+  'runtime-config:update',
+  'memory:write', 'memory:delete', 'memory:extract', 'memory:dream', 'memory:session:rebuild',
+  'file:delete', 'layer:update', 'layer:delete',
+])
 
 export function createWsHandler(server: Server, dependencies: WsDependencies) {
   const { store } = dependencies
@@ -56,9 +72,16 @@ export function createWsHandler(server: Server, dependencies: WsDependencies) {
     createSandboxSession: dependencies.createSandboxSession,
   })
   const files = new RuntimeFileStore(dependencies.runtimeRoot)
-  const wss = new WebSocketServer({ server, path: '/ws' })
+  const wss = new WebSocketServer({ noServer: true })
 
-  wss.on('connection', (ws) => {
+  server.on('upgrade', async (request, socket, head) => {
+    if (!isWsPath(request)) return
+    const auth = await authenticateWsRequest(request, socket, dependencies.security)
+    if (!auth) return
+    wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request, auth))
+  })
+
+  wss.on('connection', (ws, _request, authContext?: AuthContext) => {
     const subscriptions = new Map<string, () => void>()
     const keepalive = setInterval(() => send(ws, push('keepalive', {})), 30_000)
 
@@ -72,7 +95,9 @@ export function createWsHandler(server: Server, dependencies: WsDependencies) {
           continue
         }
         try {
-          const result = await handleMessage(msg, dependencies, runtime, files, ws, subscriptions)
+          assertWsCsrf(msg, authContext)
+          await authorizeWsMessage(msg, dependencies, authContext ?? null)
+          const result = await handleMessage(msg, dependencies, runtime, files, ws, subscriptions, authContext ?? null)
           send(ws, success(msg.id, result))
         } catch (error) {
           const code = error instanceof StoreNotFoundError ? 'not_found' : 'command_failed'
@@ -91,6 +116,271 @@ export function createWsHandler(server: Server, dependencies: WsDependencies) {
   return wss
 }
 
+function isWsPath(request: IncomingMessage): boolean {
+  try {
+    return new URL(request.url ?? '/', 'http://localhost').pathname === '/ws'
+  } catch {
+    return false
+  }
+}
+
+async function authenticateWsRequest(
+  request: IncomingMessage,
+  socket: Duplex,
+  security: SecurityServices,
+): Promise<AuthContext | null> {
+  const origin = request.headers.origin
+  if (!security.auth.isTrustedOrigin(origin)) {
+    rejectUpgrade(socket, 403, 'Forbidden origin')
+    return null
+  }
+  const auth = await security.auth.authenticateRequest(toRequest(request))
+  if (!auth) {
+    rejectUpgrade(socket, 401, 'Unauthorized')
+    return null
+  }
+  return auth
+}
+
+function toRequest(request: IncomingMessage): Request {
+  const headers = new Headers()
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item)
+    } else if (typeof value === 'string') {
+      headers.set(key, value)
+    }
+  }
+  return new Request(new URL(request.url ?? '/ws', 'http://127.0.0.1').toString(), { headers })
+}
+
+function rejectUpgrade(socket: Duplex, status: number, message: string): void {
+  socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+  socket.destroy()
+}
+
+function assertWsCsrf(msg: ClientMsg, auth: AuthContext | undefined): void {
+  if (!auth || !MUTATING_COMMANDS.has(msg.type)) return
+  const token = msg.payload.csrfToken
+  if (token !== auth.csrfToken) throw new Error('CSRF 校验失败。')
+}
+
+function requireWsAuth(auth: AuthContext | null): AuthContext {
+  if (!auth) throw new Error('WebSocket 命令需要登录。')
+  return auth
+}
+
+async function authorizeWsMessage(
+  msg: ClientMsg,
+  dependencies: WsDependencies,
+  auth: AuthContext | null,
+): Promise<void> {
+  const security = dependencies.security
+  if (!auth) throw new Error('WebSocket 命令需要登录。')
+  if (MUTATING_COMMANDS.has(msg.type) && !(await security.auth.isAuthContextActive(auth))) {
+    throw new Error('登录会话已失效，请重新登录。')
+  }
+  const payload = msg.payload
+  switch (msg.type) {
+    case 'workspace:bootstrap':
+    case 'session:get-default':
+      await security.authorization.enforce(auth, 'workspace', 'read', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'session:get':
+    case 'thread:list':
+    case 'thread:trash:list':
+    case 'run:list':
+      return authorizeSession(dependencies, auth, requiredString(payload, 'sessionId'), 'read')
+    case 'thread:create':
+      return authorizeSession(dependencies, auth, requiredString(payload, 'sessionId'), 'create', 'thread')
+    case 'thread:get':
+    case 'thread:history':
+    case 'thread:context':
+    case 'thread:memory:get':
+    case 'memory:session:get':
+    case 'thread:subscribe':
+      return authorizeThread(dependencies, auth, requiredString(payload, 'threadId'), 'read')
+    case 'thread:update':
+    case 'thread:compact':
+    case 'thread:memory:update':
+    case 'thread:memory:rebuild':
+    case 'memory:session:rebuild':
+      return authorizeThread(dependencies, auth, requiredString(payload, 'threadId'), 'update')
+    case 'thread:delete':
+      return authorizeThread(dependencies, auth, requiredString(payload, 'threadId'), 'delete')
+    case 'thread:trash:restore':
+      return authorizeTrashedThread(dependencies, auth, requiredString(payload, 'threadId'), 'update')
+    case 'thread:trash:purge':
+      return authorizeTrashedThread(dependencies, auth, requiredString(payload, 'threadId'), 'delete')
+    case 'thread:fork':
+      return authorizeThread(dependencies, auth, requiredString(payload, 'threadId'), 'read')
+    case 'run:start': {
+      const threadId = optionalString(payload.threadId)
+      if (threadId) return authorizeThread(dependencies, auth, threadId, 'create', 'run')
+      return authorizeSession(dependencies, auth, requiredString(payload, 'sessionId'), 'create', 'run')
+    }
+    case 'run:get':
+    case 'run:subscribe':
+      return authorizeRun(dependencies, auth, requiredString(payload, 'runId'), 'read')
+    case 'run:cancel':
+    case 'run:resume':
+      return authorizeRun(dependencies, auth, requiredString(payload, 'runId'), 'execute')
+    case 'run:respond-decision':
+      return authorizeRun(dependencies, auth, requiredString(payload, 'runId'), 'approve')
+    case 'tool:list':
+      await security.authorization.enforce(auth, 'tool', 'read', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'tool:run':
+      return assertDirectToolRunAllowed(auth, security.authorization, dependencies.toolRegistry, requiredString(payload, 'toolName'))
+    case 'tool-catalog:list':
+    case 'runtime-config:get':
+    case 'provider:list':
+    case 'system:get':
+      await security.authorization.enforce(auth, 'workspace', 'read', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'tool-catalog:upsert':
+    case 'tool-catalog:delete':
+    case 'runtime-config:update':
+      await security.authorization.enforce(auth, 'admin', 'admin', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'speech:authorization':
+      await security.authorization.enforce(auth, 'speech', 'execute', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'memory:list':
+    case 'memory:read':
+    case 'memory:search':
+    case 'memory:instructions:list':
+      await security.authorization.enforce(auth, 'memory', 'read', { workspaceId: auth.defaultWorkspaceId, userId: auth.userId })
+      return
+    case 'memory:write':
+      await security.authorization.enforce(auth, 'memory', 'create', { workspaceId: auth.defaultWorkspaceId, userId: auth.userId })
+      return
+    case 'memory:delete':
+      await security.authorization.enforce(auth, 'memory', 'delete', { workspaceId: auth.defaultWorkspaceId, userId: auth.userId })
+      return
+    case 'memory:extract':
+    case 'memory:dream':
+      await security.authorization.enforce(auth, 'memory', 'execute', { workspaceId: auth.defaultWorkspaceId, userId: auth.userId })
+      return
+    case 'file:list':
+      if (optionalString(payload.threadId)) return authorizeThread(dependencies, auth, requiredString(payload, 'threadId'), 'read')
+      await security.authorization.enforce(auth, 'thread', 'read', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'file:delete':
+      if (optionalString(payload.threadId)) return authorizeThread(dependencies, auth, requiredString(payload, 'threadId'), 'update')
+      await security.authorization.enforce(auth, 'thread', 'update', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'layer:list':
+      await security.authorization.enforce(auth, 'layer', 'read', { workspaceId: auth.defaultWorkspaceId })
+      return
+    case 'layer:update':
+      return authorizeLayer(dependencies, auth, requiredString(payload, 'layerKey'), 'update')
+    case 'layer:delete':
+      return authorizeLayer(dependencies, auth, requiredString(payload, 'layerKey'), 'delete')
+    case 'run:unsubscribe':
+    case 'thread:unsubscribe':
+      return
+  }
+}
+
+async function resolveBootstrapSession(
+  store: PostgresPlatformStore,
+  auth: AuthContext,
+  security: SecurityServices,
+  requestedSessionId: string | null,
+) {
+  if (!requestedSessionId || requestedSessionId === PostgresPlatformStore.DEFAULT_SESSION_ID) {
+    return store.getOrCreateUserDefaultSession({ workspaceId: auth.defaultWorkspaceId, userId: auth.userId })
+  }
+  const session = store.getSession(requestedSessionId)
+  await security.authorization.assertResourceWorkspace(auth, 'session', 'read', {
+    workspaceId: session.workspaceId,
+    createdByUserId: session.createdByUserId,
+    visibility: session.visibility,
+    resourceId: session.id,
+  })
+  return session
+}
+
+async function authorizeSession(
+  dependencies: WsDependencies,
+  auth: AuthContext,
+  sessionId: string,
+  action: 'read' | 'create' | 'update' | 'delete',
+  object: 'session' | 'thread' | 'run' = 'session',
+): Promise<void> {
+  const session = dependencies.store.getSession(sessionId)
+  await dependencies.security.authorization.assertResourceWorkspace(auth, object, action, {
+    workspaceId: session.workspaceId,
+    createdByUserId: session.createdByUserId,
+    visibility: session.visibility,
+    resourceId: session.id,
+  })
+}
+
+async function authorizeThread(
+  dependencies: WsDependencies,
+  auth: AuthContext,
+  threadId: string,
+  action: 'read' | 'create' | 'update' | 'delete',
+  object: 'thread' | 'run' = 'thread',
+): Promise<void> {
+  const thread = dependencies.store.getThread(threadId)
+  await dependencies.security.authorization.assertResourceWorkspace(auth, object, action, {
+    workspaceId: thread.workspaceId,
+    createdByUserId: thread.createdByUserId,
+    visibility: thread.visibility,
+    resourceId: thread.id,
+  })
+}
+
+async function authorizeTrashedThread(
+  dependencies: WsDependencies,
+  auth: AuthContext,
+  threadId: string,
+  action: 'update' | 'delete',
+): Promise<void> {
+  const thread = await dependencies.store.getTrashedThread(threadId)
+  await dependencies.security.authorization.assertResourceWorkspace(auth, 'thread', action, {
+    workspaceId: thread.workspaceId,
+    createdByUserId: thread.createdByUserId,
+    visibility: thread.visibility,
+    resourceId: thread.id,
+  })
+}
+
+async function authorizeRun(
+  dependencies: WsDependencies,
+  auth: AuthContext,
+  runId: string,
+  action: 'read' | 'execute' | 'approve',
+): Promise<void> {
+  const run = dependencies.store.getRun(runId)
+  await dependencies.security.authorization.assertResourceWorkspace(auth, 'run', action, {
+    workspaceId: run.workspaceId,
+    createdByUserId: run.createdByUserId,
+    visibility: run.visibility,
+    resourceId: run.id,
+  })
+}
+
+async function authorizeLayer(
+  dependencies: WsDependencies,
+  auth: AuthContext,
+  layerKey: string,
+  action: 'update' | 'delete',
+): Promise<void> {
+  const layer = await dependencies.postgis.getLayer(layerKey)
+  if (!layer) throw new StoreNotFoundError(`图层 '${layerKey}' 不存在`)
+  if (layer.readonly) throw new Error('系统图层为只读，不能修改。')
+  await dependencies.security.authorization.assertResourceWorkspace(auth, 'layer', action, {
+    workspaceId: layer.workspaceId,
+    createdByUserId: layer.createdByUserId,
+    visibility: layer.visibility,
+    resourceId: layer.layerKey,
+  })
+}
+
 async function handleMessage(
   msg: ClientMsg,
   dependencies: WsDependencies,
@@ -98,24 +388,25 @@ async function handleMessage(
   files: RuntimeFileStore,
   ws: WebSocket,
   subscriptions: Map<string, () => void>,
+  auth: AuthContext | null,
 ): Promise<unknown> {
   const { store, toolRegistry, modelRegistry, postgis } = dependencies
   const payload = msg.payload
+  const currentAuth = requireWsAuth(auth)
   switch (msg.type) {
     case 'workspace:bootstrap': {
       // 首屏只取稳定摘要；工具、配置、图层和完整运行快照由可见功能按需加载。
       const requestedSessionId = optionalString(payload.sessionId)
-      const session = requestedSessionId
-        ? store.getSession(requestedSessionId)
-        : await store.getOrCreateDefaultSession()
+      const session = await resolveBootstrapSession(store, currentAuth, dependencies.security, requestedSessionId)
       return {
         session,
         threads: store.listThreadsForSession(session.id),
         providers: modelRegistry.descriptors(),
+        auth: dependencies.security.auth.toAuthMe(currentAuth),
       }
     }
     case 'session:get-default':
-      return store.getOrCreateDefaultSession()
+      return store.getOrCreateUserDefaultSession({ workspaceId: currentAuth.defaultWorkspaceId, userId: currentAuth.userId })
     case 'session:get':
       return store.getSession(requiredString(payload, 'sessionId'))
     case 'thread:list':
@@ -336,6 +627,7 @@ async function handleMessage(
         runtimeConfig: config,
         executionMode: payload.executionMode === 'plan' ? 'plan' : 'auto',
         reasoning: payload.reasoning !== false,
+        auth: currentAuth,
       }).then(() => void sendSnapshot(ws, run.id, store))
       return run
     }
@@ -362,11 +654,12 @@ async function handleMessage(
         modelName: run.modelName,
         runtimeConfig: run.runtimeConfigSnapshot,
         resume: true,
+        auth: currentAuth,
       }).then(() => void sendSnapshot(ws, runId, store))
       return store.getRun(runId)
     }
     case 'run:respond-decision':
-      return respondDecision(payload, dependencies, runtime, ws, subscriptions)
+      return respondDecision(payload, dependencies, runtime, ws, subscriptions, currentAuth)
     case 'run:subscribe': {
       const runId = requiredString(payload, 'runId')
       subscribeToRun(ws, runId, store, subscriptions)
@@ -381,7 +674,7 @@ async function handleMessage(
     case 'tool:list':
       return toolRegistry.descriptors()
     case 'tool:run':
-      return executeTool(payload, store, toolRegistry, modelRegistry, dependencies.defaultRuntimeConfig)
+      return executeTool(payload, store, toolRegistry, modelRegistry, dependencies.defaultRuntimeConfig, dependencies.security, currentAuth)
     case 'tool-catalog:list':
       return store.listToolCatalogEntries()
     case 'tool-catalog:upsert':
@@ -430,7 +723,7 @@ async function handleMessage(
       return { deleted: true, id: fileId }
     }
     case 'layer:list':
-      return postgis.listLayers(optionalString(payload.sessionId), optionalString(payload.threadId))
+      return postgis.listVisibleLayers(currentAuth.defaultWorkspaceId, optionalString(payload.sessionId), optionalString(payload.threadId))
     case 'layer:update':
       return postgis.updateLayerMetadata(
         requiredString(payload, 'layerKey'),
@@ -450,15 +743,19 @@ async function executeTool(
   store: PostgresPlatformStore,
   registry: ToolRegistry,
   modelRegistry: ModelAdapterRegistry,
-  runtimeConfigDefaults?: AgentRuntimeConfig,
+  runtimeConfigDefaults: AgentRuntimeConfig | undefined,
+  security: SecurityServices,
+  auth: AuthContext,
 ) {
+  const toolName = requiredString(payload, 'toolName')
+  await assertDirectToolRunAllowed(auth, security.authorization, registry, toolName)
   let runId = optionalString(payload.runId)
   let directRun = false
   if (!runId) {
     const sessionId = requiredString(payload, 'sessionId')
     let threadId = optionalString(payload.threadId)
-    if (!threadId) threadId = (await store.createThread(sessionId, `工具：${requiredString(payload, 'toolName')}`)).id
-    const created = await store.createRun(sessionId, `执行工具 ${requiredString(payload, 'toolName')}`, {
+    if (!threadId) threadId = (await store.createThread(sessionId, `工具：${toolName}`)).id
+    const created = await store.createRun(sessionId, `执行工具 ${toolName}`, {
       threadId,
       modelProvider: modelRegistry.defaultProvider || null,
       runtimeConfigSnapshot: await resolveRuntimeConfig(store, runtimeConfigDefaults),
@@ -475,11 +772,13 @@ async function executeTool(
     threadId: run.threadId,
     runtimeRoot: store.runtimeRoot,
     runtimeConfig: run.runtimeConfigSnapshot ?? await resolveRuntimeConfig(store, runtimeConfigDefaults),
+    auth,
     state: values,
     resolveValueRef: refId => resolveRuntimeValueRef(values, refId),
     resolveMeteorologicalDataset: input => store.resolveMeteorologicalDataset({
       sessionId: run.sessionId,
       threadId: run.threadId,
+      workspaceId: run.workspaceId,
       datasetId: input.datasetId ?? null,
       filename: input.filename ?? null,
     }),
@@ -499,7 +798,6 @@ async function executeTool(
       })
     },
   }
-  const toolName = requiredString(payload, 'toolName')
   const args = requiredRecord(payload, 'args')
   const callId = makeId('call')
   const itemSink = new ItemSink(item => store.appendItem(item), runId, run.threadId)
@@ -598,6 +896,7 @@ async function respondDecision(
   runtime: OpenAIAgentsRuntime,
   ws: WebSocket,
   subscriptions: Map<string, () => void>,
+  auth: AuthContext,
 ): Promise<AnalysisRun> {
   const { store } = dependencies
   const runId = requiredString(payload, 'runId')
@@ -610,7 +909,7 @@ async function respondDecision(
   if (decision.kind === 'approval') {
     const approved = selectedApprovalValue(decision, optionalString(payload.optionId))
     const approvalId = typeof decision.payload.approvalId === 'string' ? decision.payload.approvalId : decisionId
-    return runtime.resolveApproval(runId, approvalId, approved)
+    return runtime.resolveApproval(runId, approvalId, approved, auth)
   }
 
   if (decision.kind === 'clarification') {
@@ -642,6 +941,7 @@ async function respondDecision(
       runtimeConfig: config,
       executionMode: run.state.planMode ? 'plan' : 'auto',
       reasoning: true,
+      auth,
     }).then(() => void sendSnapshot(ws, nextRun.id, store))
     return nextRun
   }

@@ -5,13 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "npm run typecheck && vite build",
     "lint": "eslint src --ext .ts,.tsx",
     "test": "vitest run src",
     "test:watch": "vitest src"
   },
   "dependencies": {
     "@geo-agent-platform/shared-types": "file:../../packages/shared-types",
+    "better-auth": "^1.6.23",
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.546.0",
     "maplibre-gl": "^5.11.0",

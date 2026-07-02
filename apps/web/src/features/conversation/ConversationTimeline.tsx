@@ -361,5 +361,7 @@ function taskStatusIcon(status: string) {
 
 function formatReferenceKind(kind: DataReferenceSummary['kind']) {
   if (kind === 'artifact') return '结果'
+  if (kind === 'meteorology') return '气象数据'
+  if (kind === 'file') return '文件'
   return '图层'
 }

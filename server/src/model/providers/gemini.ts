@@ -20,9 +20,10 @@ export function createGeminiAdapter(opts: GeminiOptions): ModelAdapter {
         parts: [{ text: m.content }],
       }))
 
-      const url = `${baseUrl}/models/${model}:generateContent?key=${opts.apiKey}`
+      const url = `${baseUrl}/models/${model}:generateContent`
       const res = await fetch(url, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': opts.apiKey },
         body: JSON.stringify({ contents, generationConfig: { temperature } }),
         signal: AbortSignal.timeout(30_000),
       })

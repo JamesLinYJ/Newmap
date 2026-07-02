@@ -886,9 +886,9 @@ export function DebugPage({
               <div className="artifact-list">
                 {artifacts.length ? (
                   artifacts.map((artifact) => (
-                    <button
+                    <m.button
                       key={artifact.artifactId}
-                    className={`artifact-list__item${
+                      className={`artifact-list__item${
                         artifact.artifactId === selectedArtifact?.artifactId ? ' artifact-list__item--active' : ''
                       }`}
                       type="button"
@@ -900,7 +900,7 @@ export function DebugPage({
                         <p>{artifact.artifactId}</p>
                       </div>
                       <StatusPill label={artifact.artifactType} tone="accent" />
-                    </button>
+                    </m.button>
                   ))
                 ) : (
                   <p className="panel__empty">还没有生成结果对象。</p>

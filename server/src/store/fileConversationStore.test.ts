@@ -13,7 +13,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Database } from '../db/connection.js'
-import { ConversationCorruptionError } from './fileConversationStore.js'
 import { PostgresPlatformStore } from './platformStore.js'
 
 describe('FileConversationStore', () => {
@@ -73,7 +72,7 @@ describe('FileConversationStore', () => {
     }
   })
 
-  it('ignores a partial final line but quarantines interior corruption', async () => {
+  it('ignores a partial final line and records recoverable interior corruption', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'geo-conversation-corrupt-'))
     try {
       const store = await createStore(root)
@@ -88,8 +87,10 @@ describe('FileConversationStore', () => {
       const valid = (await readFile(transcriptPath, 'utf8')).split('\n')[0]
       await rm(transcriptPath, { force: true })
       await appendFile(transcriptPath, `${valid}\nnot-json\n`, 'utf8')
-      await expect(store.activeTranscript(thread.id)).rejects.toBeInstanceOf(ConversationCorruptionError)
-      expect((await store.getThreadManifest(thread.id)).quarantined).toBe(true)
+      expect(await store.activeTranscript(thread.id)).toHaveLength(1)
+      expect((await store.getThreadManifest(thread.id)).quarantined).toBe(false)
+      const ledger = await readFile(path.join(root, 'sessions', session.id, 'threads', thread.id, 'corruption.jsonl'), 'utf8')
+      expect(ledger).toContain('"lineNumber":2')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

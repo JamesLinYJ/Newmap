@@ -174,7 +174,8 @@ def _elevations(values: Any, expected: int) -> list[float]:
 
 def _read_header(path: Path) -> dict[str, float | int | None]:
     try:
-        filedata = bz2.BZ2File(path, "rb").read(160)
+        with bz2.BZ2File(path, "rb") as file:
+            filedata = file.read(160)
         if len(filedata) < 106:
             return {"height_m": None, "radar_type": None}
         return {

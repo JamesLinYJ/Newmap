@@ -12,6 +12,7 @@ import type { ToolRegistry } from '../framework/registry.js'
 import type { ToolContext, ToolResult, ValueRef } from '../framework/types.js'
 import type { ModelAdapter } from '../model/registry.js'
 import type { PostgresPlatformStore } from '../store/platformStore.js'
+import type { AuthContext } from '../security/types.js'
 import { persistToolExecutionResult, resolveRuntimeValueRef } from '../tools/resultPersistence.js'
 import { makeId } from '../utils/ids.js'
 import { ItemSink } from '../conversation/itemSink.js'
@@ -28,6 +29,7 @@ interface CoordinatorOptions {
   modelName?: string | null
   inlineToolResultMaxChars: number
   runtimeConfig?: import('../schemas/types.js').AgentRuntimeConfig
+  auth?: AuthContext | null
   eventSink: RunEventSink
   itemSink: ItemSink
   valueState: Map<string, unknown>
@@ -160,11 +162,13 @@ export class ToolExecutionCoordinator {
       threadId: this.options.threadId,
       runtimeRoot: this.options.store.runtimeRoot,
       runtimeConfig: this.options.runtimeConfig,
+      auth: this.options.auth ?? null,
       state: this.options.valueState,
       resolveValueRef: refId => resolveRuntimeValueRef(this.options.valueState, refId),
       resolveMeteorologicalDataset: input => this.options.store.resolveMeteorologicalDataset({
         sessionId: this.options.sessionId,
         threadId: this.options.threadId,
+        workspaceId: run.workspaceId,
         datasetId: input.datasetId ?? null,
         filename: input.filename ?? null,
       }),
