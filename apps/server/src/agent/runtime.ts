@@ -311,7 +311,7 @@ export class OpenAIAgentsRuntime {
     signal?: AbortSignal,
   ): Promise<AnalysisRun> {
     const run = this.store.getRun(runId)
-    if (!run.threadId) throw new Error(`运行 '${runId}' 缺少 threadId`)
+    const threadId = requireThreadId(run.threadId)
     if (!run.runtimeConfigSnapshot) throw new Error(`运行 '${runId}' 缺少 runtimeConfigSnapshot`)
     const approval = run.state.approvals.find(candidate => candidate.approvalId === approvalId)
     if (!approval) throw new Error(`审批 '${approvalId}' 不存在`)
@@ -319,12 +319,12 @@ export class OpenAIAgentsRuntime {
     if (approval.status !== expectedStatus || approval.payload.consumed === true) {
       throw new Error(`审批 '${approvalId}' 未处于可续跑的 ${expectedStatus} 状态`)
     }
-    const eventSink = new RunEventSink(event => this.store.appendEvent(runId, event), runId, run.threadId)
-    const itemSink = new ItemSink(item => this.store.appendItem(item), runId, run.threadId)
+    const eventSink = new RunEventSink(event => this.store.appendEvent(runId, event), runId, threadId)
+    const itemSink = new ItemSink(item => this.store.appendItem(item), runId, threadId)
     const turnId = requireString(approval.payload.turnId, '审批 payload.turnId')
     const options: RunOptions = {
       runId,
-      threadId: run.threadId,
+      threadId,
       sessionId: run.sessionId,
       query: run.userQuery,
       provider: requireString(run.modelProvider, '运行 modelProvider'),
@@ -355,7 +355,7 @@ export class OpenAIAgentsRuntime {
           await this.refreshAuthorization(options)
           const assembly = await this.assemblyFactory.create(
             options,
-            run.threadId,
+            threadId,
             turnId,
             eventSink,
             itemSink,
@@ -390,7 +390,7 @@ export class OpenAIAgentsRuntime {
       if (result === 'waiting_approval') return this.store.getRun(runId)
       if (result === 'clarification_needed') return this.store.getRun(runId)
       await finalizer.complete()
-      await this.maybeExtractLongTermMemories(options, run.threadId, eventSink)
+      await this.maybeExtractLongTermMemories(options, threadId, eventSink)
       return this.store.getRun(runId)
     } catch (error) {
       const current = this.store.getRun(runId)
