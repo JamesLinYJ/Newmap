@@ -19,6 +19,7 @@ import { WebSocket } from 'ws'
 import type { AnalysisRun, DecisionRequest } from '../schemas/types.js'
 import type { AuthContext } from '../security/types.js'
 import type { RunTaskManager } from '../agent/runTaskManager.js'
+import { scopeMemoryContextConfig } from '../memory/paths.js'
 import { nowUtc } from '../utils/ids.js'
 import type { WsDependencies } from './dependencies.js'
 import { optionalString, requiredRunProvider, requiredString } from './payload.js'
@@ -61,7 +62,7 @@ export async function respondDecision(
         ? { ...run.state.clarification, selectedOptionId: optionId ?? 'free_text' }
         : run.state.clarification,
     })
-    const config = run.runtimeConfigSnapshot ?? await resolveRuntimeConfig(store.runtimeConfiguration, dependencies.defaultRuntimeConfig)
+    const config = run.runtimeConfigSnapshot ?? await scopedRuntimeConfigForAuth(dependencies, auth)
     const provider = requiredRunProvider(run.modelProvider)
     dependencies.usageStats.assertWorkspaceCanStartModelRun(auth)
     const nextRun = await store.createRun(run.sessionId, answer, {
@@ -96,6 +97,24 @@ export async function respondDecision(
   }
 
   throw new Error(`决策 '${decisionId}' 不能通过 run:respond-decision 提交`)
+}
+
+async function scopedRuntimeConfigForAuth(dependencies: WsDependencies, auth: AuthContext) {
+  const resolved = await resolveRuntimeConfig(
+    dependencies.store.runtimeConfiguration,
+    dependencies.defaultRuntimeConfig,
+  )
+  return {
+    ...resolved,
+    developer: {
+      ...resolved.developer,
+      enabled: resolved.developer.enabled && auth.roles.some(binding => binding.role === 'platform_admin'),
+    },
+    context: scopeMemoryContextConfig(dependencies.store.runtimeRoot, resolved.context, {
+      workspaceId: auth.defaultWorkspaceId,
+      userId: auth.userId,
+    }),
+  }
 }
 
 function selectedApprovalValue(decision: DecisionRequest, optionId: string | null): boolean {
