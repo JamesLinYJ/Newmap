@@ -74,8 +74,13 @@ export class StartRunService {
       this.dependencies.store.runtimeConfiguration,
       this.dependencies.defaultRuntimeConfig,
     )
+    const isPlatformAdmin = input.auth.roles.some(binding => binding.role === 'platform_admin')
     const runtimeConfig: AgentRuntimeConfig = {
       ...resolvedRuntimeConfig,
+      developer: {
+        ...resolvedRuntimeConfig.developer,
+        enabled: resolvedRuntimeConfig.developer.enabled && isPlatformAdmin,
+      },
       context: scopeMemoryContextConfig(
         this.dependencies.store.runtimeRoot,
         resolvedRuntimeConfig.context,
