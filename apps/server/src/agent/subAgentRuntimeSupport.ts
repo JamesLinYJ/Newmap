@@ -37,7 +37,7 @@ import type { ToolExecutionCoordinator } from './toolExecutionCoordinator.js'
 import type { RunEventSink } from './turnRunner.js'
 import type { RunToolConcurrencyGate } from './runToolConcurrencyGate.js'
 import type { SubAgentControlPlane } from './subAgentControlPlane.js'
-import { nowUtc } from '../utils/ids.js'
+import { makeId, nowUtc } from '../utils/ids.js'
 
 export interface SubAgentRuntimeDependencies {
   selectedModel: string
@@ -243,13 +243,16 @@ export class SubAgentStateController {
     }
     const runningHandoff = runningHandoffs[0]
     if (runningHandoff) {
+      if (!runningHandoff.activeCallId) {
+        throw new Error(`Handoff Agent '${runningHandoff.agentId}' 的持久化运行状态缺少 activeCallId`)
+      }
       this.dependencies.coordinator.restoreHandoffOwnership(runningHandoff.agentId)
       const config = handoffConfigs.get(runningHandoff.agentId)
       if (!config) throw new Error(`Handoff Agent '${runningHandoff.agentId}' 缺少运行配置`)
       this.dependencies.subAgentControls.begin({
         runId: this.dependencies.runId,
         agentId: runningHandoff.agentId,
-        callId: runningHandoff.activeCallId ?? `handoff:${runningHandoff.agentId}`,
+        callId: runningHandoff.activeCallId,
         delegationMode: 'handoff',
         timeoutMs: config.timeoutMs,
       })
@@ -287,6 +290,7 @@ export class SubAgentStateController {
     }))
     this.dependencies.eventSink.emit('subagent.updated', `${config.name} 正在执行`, {
       agentId: config.agentId,
+      callId,
       status: 'running',
       stepId,
     })
@@ -347,6 +351,7 @@ export class SubAgentStateController {
     }))
     this.dependencies.eventSink.emit('subagent.updated', `${config.name} 已完成`, {
       agentId: config.agentId,
+      callId,
       status: 'completed',
       stepId,
     })
@@ -374,13 +379,14 @@ export class SubAgentStateController {
     }))
     this.dependencies.eventSink.emit('subagent.updated', `${config.name} 执行失败`, {
       agentId: config.agentId,
+      callId,
       status: 'failed',
       stepId,
     })
   }
 
   async startHandoff(config: RuntimeSubAgentConfig): Promise<void> {
-    const callId = `handoff:${config.agentId}`
+    const callId = makeId('handoff')
     this.dependencies.subAgentControls.begin({
       runId: this.dependencies.runId,
       agentId: config.agentId,
@@ -406,12 +412,14 @@ export class SubAgentStateController {
     }))
     this.dependencies.eventSink.emit('subagent.updated', `${config.name} 已接管当前对话`, {
       agentId: config.agentId,
+      callId,
       status: 'running',
       delegationMode: 'handoff',
     })
   }
 
   async completeHandoff(config: RuntimeSubAgentConfig, summary: string): Promise<void> {
+    const callId = this.requireActiveCallId(config.agentId)
     this.dependencies.coordinator.finishHandoff(config.agentId)
     const completedAt = nowUtc()
     await this.update(config.agentId, current => ({
@@ -430,16 +438,18 @@ export class SubAgentStateController {
     this.dependencies.subAgentControls.finish(
       this.dependencies.runId,
       config.agentId,
-      `handoff:${config.agentId}`,
+      callId,
     )
     this.dependencies.eventSink.emit('subagent.updated', `${config.name} 已完成接管任务`, {
       agentId: config.agentId,
+      callId,
       status: 'completed',
       delegationMode: 'handoff',
     })
   }
 
   async failHandoff(config: RuntimeSubAgentConfig, message: string): Promise<void> {
+    const callId = this.requireActiveCallId(config.agentId)
     this.dependencies.coordinator.finishHandoff(config.agentId)
     const completedAt = nowUtc()
     await this.update(config.agentId, current => ({
@@ -457,10 +467,11 @@ export class SubAgentStateController {
     this.dependencies.subAgentControls.finish(
       this.dependencies.runId,
       config.agentId,
-      `handoff:${config.agentId}`,
+      callId,
     )
     this.dependencies.eventSink.emit('subagent.updated', `${config.name} 接管后失败`, {
       agentId: config.agentId,
+      callId,
       status: 'failed',
       delegationMode: 'handoff',
     })
@@ -488,6 +499,7 @@ export class SubAgentStateController {
     }))
     this.dependencies.eventSink.emit('subagent.updated', `${config.name} 已取消`, {
       agentId: config.agentId,
+      callId,
       status: 'cancelled',
       stepId,
     })
@@ -499,6 +511,15 @@ export class SubAgentStateController {
       config.agentId,
       currentStep,
     )
+  }
+
+  private requireActiveCallId(agentId: string): string {
+    const subAgent = this.dependencies.store.getRun(this.dependencies.runId).state.subAgents
+      .find(candidate => candidate.agentId === agentId)
+    if (!subAgent?.activeCallId) {
+      throw new Error(`子 Agent '${agentId}' 的运行状态缺少 activeCallId`)
+    }
+    return subAgent.activeCallId
   }
 
   private update(agentId: string, operation: (state: SubAgentState) => SubAgentState): Promise<void> {

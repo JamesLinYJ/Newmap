@@ -7,7 +7,7 @@
 //   日期:       2026年08月04日
 // --------------------------------------------------------------------------
 
-import type { AgentState } from '@geo-agent-platform/shared-types'
+import type { AgentState, SubAgentState } from '@geo-agent-platform/shared-types'
 import { describe, expect, it } from 'vitest'
 
 import type { ToolDef } from '../framework/types.js'
@@ -46,6 +46,32 @@ describe('ToolExecutionPolicy', () => {
     externalAgentCalls.set('call_1', 'spatial_analyst')
     expect(policy.isToolEnabledForSubAgent('spatial_analyst', 'inspect_dataset')).toBe(true)
     expect(policy.isToolEnabledForSubAgent('other_agent', 'inspect_dataset')).toBe(false)
+  })
+
+  it('revokes handoff tool admission as soon as cancellation is accepted', () => {
+    const readOnly = tool('inspect_dataset', { isReadOnly: true, isDestructive: false })
+    const owner = {
+      agentId: 'weather_handoff',
+      status: 'pending',
+      activeCallId: null,
+    } as SubAgentState
+    const state = fakeState({ subAgents: [owner] })
+    const policy = createPolicy({
+      state: () => state,
+      tools: { [readOnly.name]: readOnly },
+    })
+
+    policy.activateHandoff(owner.agentId)
+    owner.status = 'running'
+    owner.activeCallId = 'handoff:weather_handoff'
+    expect(policy.isToolEnabledForHandoff(owner.agentId, readOnly.name)).toBe(true)
+    expect(() => policy.assertHandoffToolExecutionAllowed(owner.agentId, readOnly.name)).not.toThrow()
+
+    owner.status = 'cancelling'
+    expect(policy.isToolEnabledForHandoff(owner.agentId, readOnly.name)).toBe(false)
+    expect(() => policy.assertHandoffToolExecutionAllowed(owner.agentId, readOnly.name))
+      .toThrow('subagent_cancelled')
+    expect(() => policy.assertPlanModeAllows(readOnly.name)).toThrow('subagent_cancelled')
   })
 })
 

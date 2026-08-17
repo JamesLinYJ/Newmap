@@ -71,9 +71,11 @@ export class ToolExecutionPolicy {
 
   isHandoffEnabled(agentId: string): boolean {
     const state = this.dependencies.state()
-    return !state.planMode
-      && state.agentWorkflow === null
-      && (this.activeHandoffAgentId === null || this.activeHandoffAgentId === agentId)
+    if (state.planMode || state.agentWorkflow !== null) return false
+    if (this.activeHandoffAgentId === null) return true
+    if (this.activeHandoffAgentId !== agentId) return false
+    const owner = state.subAgents.find(candidate => candidate.agentId === agentId)
+    return owner?.status === 'running' && Boolean(owner.activeCallId)
   }
 
   activateHandoff(agentId: string): void {
@@ -86,7 +88,11 @@ export class ToolExecutionPolicy {
   restoreHandoffOwnership(agentId: string): void {
     const state = this.dependencies.state()
     const owner = state.subAgents.find(candidate => candidate.agentId === agentId)
-    if (state.planMode || state.agentWorkflow !== null || !owner || owner.status !== 'running') {
+    if (state.planMode
+      || state.agentWorkflow !== null
+      || !owner
+      || owner.status !== 'running'
+      || !owner.activeCallId) {
       throw new Error(`Handoff 子智能体 '${agentId}' 没有可恢复的对话所有权`)
     }
     if (this.activeHandoffAgentId && this.activeHandoffAgentId !== agentId) {
@@ -104,11 +110,26 @@ export class ToolExecutionPolicy {
   }
 
   isToolEnabledForHandoff(agentId: string, toolName: string): boolean {
+    const state = this.dependencies.state()
+    const owner = state.subAgents.find(candidate => candidate.agentId === agentId)
     const tool = this.dependencies.registry.get(toolName)
     return this.activeHandoffAgentId === agentId
+      && owner?.status === 'running'
+      && Boolean(owner.activeCallId)
       && Boolean(tool)
       && this.isDeveloperToolAllowed(tool?.providerId)
       && this.isHandoffEnabled(agentId)
+  }
+
+  assertHandoffToolExecutionAllowed(agentId: string, toolName: string): void {
+    const state = this.dependencies.state()
+    const owner = state.subAgents.find(candidate => candidate.agentId === agentId)
+    if (owner?.status === 'cancelling' || owner?.status === 'cancelled') {
+      throw new Error(`subagent_cancelled: Handoff 子智能体 '${agentId}' 已接受取消请求，禁止启动新的工具 '${toolName}'。`)
+    }
+    if (!this.isToolEnabledForHandoff(agentId, toolName)) {
+      throw new Error(`Handoff 子智能体 '${agentId}' 当前无权执行工具 '${toolName}'。`)
+    }
   }
 
   isToolEnabledForSubAgent(agentId: string, toolName: string): boolean {
@@ -120,6 +141,9 @@ export class ToolExecutionPolicy {
   }
 
   assertPlanModeAllows(toolName: string): void {
+    if (this.activeHandoffAgentId) {
+      this.assertHandoffToolExecutionAllowed(this.activeHandoffAgentId, toolName)
+    }
     const state = this.dependencies.state()
     if (!state.planMode) return
     const tool = this.dependencies.registry.get(toolName)

@@ -72,6 +72,7 @@ export interface AgentRuntimeStore {
   ): Promise<RunSteeringRecord[]>
   readAgentsSdkState(runId: string): Promise<string>
   appendEvent(runId: string, event: RunEvent): Promise<void>
+  listEvents(runId: string): Promise<RunEvent[]>
   appendItem(update: ConversationItemStoreUpdate): Promise<void>
   projectPersistedItems(items: readonly ConversationItem[]): Promise<void>
   listItems(runId: string): Promise<ConversationItem[]>

@@ -13,12 +13,17 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { PlatformPersistenceFacade } from '../store/platformPersistenceFacade.js'
 import { createTestPersistenceFacade } from '../../test-support/persistenceFacadeHarness.js'
 import { RuntimeFileStore } from '../store/fileStore.js'
 import { defaultRuntimeConfig } from './defaultRuntimeConfig.js'
-import { assembleThreadContext, compactThreadIfNeeded, rebuildThreadMemory } from './contextManager.js'
+import {
+  assembleThreadContext,
+  compactThreadIfNeeded,
+  ContextBudgetExceededError,
+  rebuildThreadMemory,
+} from './contextManager.js'
 
 async function removeTempRoot(root: string): Promise<void> {
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
@@ -127,6 +132,118 @@ describe('thread context management', () => {
       expect(assembled.messages.some(message => message.role === 'tool' && message.content === fullResult)).toBe(true)
 
       expect(await store.activeTranscript(thread.id)).toHaveLength(3)
+    } finally {
+      await removeTempRoot(root)
+    }
+  })
+
+  it('does not hydrate an object that cannot fit the transcript byte budget', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-context-hard-ref-'))
+    try {
+      const store = await createStore(root)
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '对象预算')
+      const run = await store.createRun(session.id, '检查历史事实', { threadId: thread.id })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'message',
+        payload: { role: 'user', content: '检查历史事实' },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'tool_call',
+        payload: { callId: 'call_oversized_ref', name: 'inspect_dataset', arguments: {} },
+      })
+      const fullResult = JSON.stringify({ body: '敏感大结果'.repeat(20_000) })
+      const contentRef = await store.putConversationObject(fullResult, 'application/json')
+      await store.appendTranscript({
+        threadId: thread.id,
+        runId: run.id,
+        kind: 'tool_result',
+        payload: {
+          callId: 'call_oversized_ref',
+          name: 'inspect_dataset',
+          summary: '大结果的有界摘要',
+          content: null,
+          contentRef,
+        },
+      })
+      const readObject = vi.spyOn(store, 'readConversationObject')
+      const config = {
+        ...defaultRuntimeConfig().context,
+        contextWindowTokens: 240,
+        hardLimitRatio: 0.5,
+        preserveRecentTurns: 1,
+      }
+
+      const assembled = await assembleThreadContext(store, thread.id, config, '系统提示')
+
+      expect(readObject).not.toHaveBeenCalled()
+      expect(JSON.stringify(assembled.messages)).not.toContain(fullResult)
+      expect(assembled.report.estimatedTokens).toBeLessThanOrEqual(120)
+      expect(assembled.report.hardLimitReached).toBe(true)
+    } finally {
+      await removeTempRoot(root)
+    }
+  })
+
+  it('never returns oversized preserved history after the final exact budget pass', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-context-hard-inline-'))
+    try {
+      const store = await createStore(root)
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '最终预算')
+      await store.appendTranscript({
+        threadId: thread.id,
+        kind: 'message',
+        payload: { role: 'user', content: `超大历史问题：${'甲'.repeat(20_000)}` },
+      })
+      await store.appendTranscript({
+        threadId: thread.id,
+        kind: 'message',
+        payload: { role: 'assistant', content: `超大历史回答：${'乙'.repeat(20_000)}` },
+      })
+      const config = {
+        ...defaultRuntimeConfig().context,
+        contextWindowTokens: 200,
+        hardLimitRatio: 0.5,
+        preserveRecentTurns: 1,
+      }
+
+      const assembled = await assembleThreadContext(store, thread.id, config, '系统提示')
+
+      expect(assembled.report.estimatedTokens).toBeLessThanOrEqual(100)
+      expect(assembled.report.omittedEntryCount).toBe(2)
+      expect(assembled.messages).toEqual([{ role: 'system', content: '系统提示' }])
+    } finally {
+      await removeTempRoot(root)
+    }
+  })
+
+  it('fails before model execution when mandatory context alone exceeds the hard budget', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'geo-context-hard-mandatory-'))
+    try {
+      const store = await createStore(root)
+      const session = await store.createSession()
+      const thread = await store.createThread(session.id, '强制区超限')
+      const config = {
+        ...defaultRuntimeConfig().context,
+        contextWindowTokens: 100,
+        hardLimitRatio: 0.5,
+      }
+
+      await expect(assembleThreadContext(
+        store,
+        thread.id,
+        config,
+        `不可裁剪的系统规则：${'规则'.repeat(2_000)}`,
+      )).rejects.toEqual(expect.objectContaining({
+        name: 'ContextBudgetExceededError',
+        code: 'context_budget_exceeded',
+        section: 'mandatory_context',
+      } satisfies Partial<ContextBudgetExceededError>))
     } finally {
       await removeTempRoot(root)
     }

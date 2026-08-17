@@ -24,6 +24,14 @@ import { estimateTextTokens } from './tokenEstimate.js'
 
 const USER_NOTES_START = '<!-- user-notes:start -->'
 const USER_NOTES_END = '<!-- user-notes:end -->'
+const MAX_CONTEXT_REFERENCE_HYDRATION_BYTES = 2 * 1024 * 1024
+const CONTEXT_REFERENCE_BYTES_PER_TOKEN = 2
+const MIN_BOUNDED_CONTEXT_CHARS = 96
+const BOUNDED_CONTEXT_MARKER = '\n…[历史上下文已按硬预算截断]'
+const EXPLICIT_RESOURCE_ID_PATTERN = /\b(?:artifact|file|ref|layer)_[A-Za-z0-9_-]{1,180}\b/giu
+const RESOURCE_REUSE_NEGATION_PATTERN = /(?:(?:不要|不再|无需|禁止|别|勿).{0,16}(?:使用|沿用|复用|参考|基于).{0,20}(?:之前|先前|上次|刚才|已有|历史|旧)|(?:不沿用|不复用|重新开始|从头开始|全新开始)|\b(?:do not|don't|without)\s+(?:use|reuse).{0,32}(?:previous|prior|old)|\b(?:start over|from scratch)\b)/iu
+const CHINESE_RESOURCE_REUSE_PATTERN = /(?:(?:继续|沿用|复用|接着|基于|参考|使用|查看|打开|分析|处理).{0,20}(?:上次|刚才|之前|先前|已有|已上传|历史|旧的|这个|该|上述|前面的).{0,20}(?:文件|图层|结果|产物|引用|报告|数据集?|资源)|(?:上次|刚才|之前|先前|已有|已上传|历史|旧的|这个|该|上述|前面的).{0,20}(?:文件|图层|结果|产物|引用|报告|数据集?|资源).{0,20}(?:继续|沿用|复用|接着|基于|参考|使用|查看|打开|分析|处理))/u
+const ENGLISH_RESOURCE_REUSE_PATTERN = /(?:(?:continue|reuse|use|build on|refer to|inspect|open|analyse|analyze).{0,32}(?:previous|prior|last|earlier|uploaded|existing|this|that).{0,32}(?:file|layer|result|artifact|report|dataset|resource)|(?:previous|prior|last|earlier|uploaded|existing|this|that).{0,32}(?:file|layer|result|artifact|report|dataset|resource).{0,32}(?:continue|reuse|use|build on|refer to|inspect|open|analyse|analyze))/iu
 
 const THREAD_MEMORY_TEMPLATE = `# 会话标题
 _用 5-10 个词概括本线程。_
@@ -69,11 +77,40 @@ export interface AssembledThreadContext {
   memory: ThreadMemoryDocument
 }
 
+export class ContextBudgetExceededError extends Error {
+  readonly code = 'context_budget_exceeded'
+
+  constructor(
+    readonly threadId: string,
+    readonly hardBudget: number,
+    readonly requiredTokens: number,
+    readonly section: 'mandatory_context',
+  ) {
+    super(`线程 '${threadId}' 的强制上下文需要 ${requiredTokens} tokens，超过硬限制 ${hardBudget} tokens。`)
+    this.name = 'ContextBudgetExceededError'
+  }
+}
+
 export type ContextSummarizer = (prompt: string) => Promise<string>
 
 export interface ThreadContextAssemblyOptions {
   excludeRunId?: string
   artifactResources?: readonly VisibleArtifactResource[]
+}
+
+interface TranscriptSelection {
+  entries: TranscriptEntry[]
+  bounded: boolean
+}
+
+interface HydratedContentSelection {
+  entries: TranscriptEntry[]
+  skippedReferenceCount: number
+}
+
+interface ResourceReuseIntent {
+  requested: boolean
+  explicitIds: ReadonlySet<string>
 }
 
 // assembleThreadContext
@@ -91,9 +128,8 @@ export async function assembleThreadContext(
     store.getThreadManifest(threadId),
     store.getThreadMemory(threadId),
   ])
-  const chain = await hydrateContentReferences(store, rawChain)
-  const latestSummaryIndex = findLastIndex(chain, entry => entry.kind === 'compact_summary')
-  const visibleChain = latestSummaryIndex >= 0 ? chain.slice(latestSummaryIndex) : chain
+  const latestSummaryIndex = findLastIndex(rawChain, entry => entry.kind === 'compact_summary')
+  const visibleChain = latestSummaryIndex >= 0 ? rawChain.slice(latestSummaryIndex) : rawChain
   const resourceMessage = await buildThreadResourceMessage(
     store,
     threadId,
@@ -104,8 +140,7 @@ export async function assembleThreadContext(
   const historyChain = options.excludeRunId
     ? visibleChain.filter(entry => entry.runId !== options.excludeRunId)
     : visibleChain
-  let transcriptMessages = transcriptEntriesToChatMessages(historyChain)
-  let includedEntries = historyChain.filter(isModelVisibleEntry)
+  const visibleHistoryEntries = historyChain.filter(isModelVisibleEntry)
   const systemMessage: ConversationChatMessage = { role: 'system', content: systemPrompt }
   const memoryMessages: ConversationChatMessage[] = memory.content.trim()
     ? [{ role: 'system', content: `<thread-memory>\n${memory.content}\n</thread-memory>` }]
@@ -116,13 +151,60 @@ export async function assembleThreadContext(
   const systemTokens = estimateMessages([systemMessage])
   const memoryTokens = estimateMessages(memoryMessages)
   const resourceTokens = estimateMessages(resourceMessages)
-  let transcriptTokens = estimateMessages(transcriptMessages)
+  const mandatoryTokens = systemTokens + memoryTokens + resourceTokens
   const hardBudget = Math.floor(config.contextWindowTokens * config.hardLimitRatio)
-  if (systemTokens + memoryTokens + resourceTokens + transcriptTokens > hardBudget) {
-    const trimmed = preserveRecentTurns(historyChain, config.preserveRecentTurns)
-    transcriptMessages = transcriptEntriesToChatMessages(trimmed)
-    includedEntries = trimmed.filter(isModelVisibleEntry)
+  if (mandatoryTokens > hardBudget) {
+    throw new ContextBudgetExceededError(
+      threadId,
+      hardBudget,
+      mandatoryTokens,
+      'mandatory_context',
+    )
+  }
+
+  const transcriptBudget = Math.max(0, hardBudget - mandatoryTokens)
+  const selection = trimTranscriptEntriesBeforeHydration(
+    historyChain,
+    transcriptBudget,
+    config.preserveRecentTurns,
+  )
+  let includedEntries = selection.entries
+  let contextWasBounded = selection.bounded
+  const hydrationBudgetBytes = Math.min(
+    MAX_CONTEXT_REFERENCE_HYDRATION_BYTES,
+    transcriptBudget * CONTEXT_REFERENCE_BYTES_PER_TOKEN,
+  )
+  const hydration = await hydrateContentReferences(
+    store,
+    includedEntries,
+    hydrationBudgetBytes,
+  )
+  includedEntries = hydration.entries
+  contextWasBounded ||= hydration.skippedReferenceCount > 0
+  let transcriptMessages = transcriptEntriesToChatMessages(includedEntries)
+  let transcriptTokens = estimateMessages(transcriptMessages)
+
+  // 元数据预算只决定是否值得读取对象；完整 JSON/UTF-8 投影后仍以精确估算
+  // 为准。优先截断历史正文，保留摘要与调用结构；没有可截断正文时才移除
+  // 最老的完整上下文单元，直到返回值满足硬边界。
+  while (transcriptTokens > transcriptBudget && includedEntries.length) {
+    const bounded = boundOldestContextText(includedEntries)
+    if (bounded.changed) {
+      includedEntries = bounded.entries
+      contextWasBounded = true
+    } else {
+      includedEntries = dropOldestContextUnit(includedEntries)
+    }
+    transcriptMessages = transcriptEntriesToChatMessages(includedEntries)
     transcriptTokens = estimateMessages(transcriptMessages)
+  }
+  if (transcriptTokens > transcriptBudget) {
+    throw new ContextBudgetExceededError(
+      threadId,
+      hardBudget,
+      mandatoryTokens + transcriptTokens,
+      'mandatory_context',
+    )
   }
 
   const messages: ConversationChatMessage[] = [
@@ -131,20 +213,23 @@ export async function assembleThreadContext(
     ...resourceMessages,
     ...transcriptMessages,
   ]
-  const estimatedTokens = systemTokens + memoryTokens + transcriptTokens + resourceTokens
+  const estimatedTokens = mandatoryTokens + transcriptTokens
   const usageRatio = estimatedTokens / config.contextWindowTokens
-  const includedIds = new Set(includedEntries.map(entry => entry.entryId))
-  const visibleHistoryEntries = historyChain.filter(isModelVisibleEntry)
+  const includedIds = new Set(includedEntries.filter(isModelVisibleEntry).map(entry => entry.entryId))
+  const omittedEntryCount = visibleHistoryEntries.filter(entry => !includedIds.has(entry.entryId)).length
+  const hardLimitReached = contextWasBounded
+    || omittedEntryCount > 0
+    || usageRatio >= config.hardLimitRatio
   const report: ContextAssemblyReport = {
     threadId,
     activeLeafEntryId: manifest.activeLeafEntryId,
     contextWindowTokens: config.contextWindowTokens,
     estimatedTokens,
     usageRatio,
-    compactionRecommended: usageRatio >= config.compactRatio,
-    hardLimitReached: usageRatio >= config.hardLimitRatio,
+    compactionRecommended: hardLimitReached || usageRatio >= config.compactRatio,
+    hardLimitReached,
     includedEntryIds: [...includedIds],
-    omittedEntryCount: visibleHistoryEntries.filter(entry => !includedIds.has(entry.entryId)).length,
+    omittedEntryCount,
     latestCompactionId: manifest.latestCompactionId,
     sections: [
       { name: 'system', estimatedTokens: systemTokens },
@@ -299,14 +384,141 @@ export function buildManualMemoryContent(generatedContent: string, pinnedContent
 async function hydrateContentReferences(
   store: ThreadContextStore,
   entries: TranscriptEntry[],
-): Promise<TranscriptEntry[]> {
-  return Promise.all(entries.map(async entry => {
-    if (entry.kind !== 'tool_result' || stringField(entry.payload.content)) return entry
+  maximumBytes: number,
+): Promise<HydratedContentSelection> {
+  const hydrated: TranscriptEntry[] = []
+  let remainingBytes = Math.max(0, Math.floor(maximumBytes))
+  let skippedReferenceCount = 0
+  for (const entry of entries) {
+    if (entry.kind !== 'tool_result' || stringField(entry.payload.content)) {
+      hydrated.push(entry)
+      continue
+    }
     const reference = parseContentRef(entry.payload.contentRef)
-    if (!reference) return entry
+    if (!reference) {
+      hydrated.push(entry)
+      continue
+    }
+    if (reference.sizeBytes <= 0
+      || reference.sizeBytes > remainingBytes
+      || reference.sizeBytes > MAX_CONTEXT_REFERENCE_HYDRATION_BYTES) {
+      skippedReferenceCount += 1
+      hydrated.push(entry)
+      continue
+    }
     const bytes = await store.readConversationObject(reference)
-    return { ...entry, payload: { ...entry.payload, content: Buffer.from(bytes).toString('utf8') } }
-  }))
+    if (bytes.byteLength > remainingBytes || bytes.byteLength > MAX_CONTEXT_REFERENCE_HYDRATION_BYTES) {
+      skippedReferenceCount += 1
+      hydrated.push(entry)
+      continue
+    }
+    remainingBytes -= bytes.byteLength
+    hydrated.push({
+      ...entry,
+      payload: { ...entry.payload, content: Buffer.from(bytes).toString('utf8') },
+    })
+  }
+  return { entries: hydrated, skippedReferenceCount }
+}
+
+function trimTranscriptEntriesBeforeHydration(
+  entries: TranscriptEntry[],
+  tokenBudget: number,
+  preserveRecentTurnCount: number,
+): TranscriptSelection {
+  if (tokenBudget <= 0) return { entries: [], bounded: entries.some(isModelVisibleEntry) }
+  let selected = [...entries]
+  let bounded = false
+  if (estimateMessages(transcriptEntriesToChatMessages(selected)) > tokenBudget) {
+    selected = preserveRecentTurns(selected, preserveRecentTurnCount)
+  }
+  while (selected.length
+    && estimateMessages(transcriptEntriesToChatMessages(selected)) > tokenBudget) {
+    const next = boundOldestContextText(selected)
+    if (next.changed) {
+      selected = next.entries
+      bounded = true
+    } else {
+      selected = dropOldestContextUnit(selected)
+    }
+  }
+  return { entries: selected, bounded }
+}
+
+function boundOldestContextText(
+  entries: TranscriptEntry[],
+): { entries: TranscriptEntry[]; changed: boolean } {
+  // 压缩摘要是经过模型归纳的高价值边界，最后再截断；先收紧普通历史正文。
+  const indexes = [
+    ...entries.map((entry, index) => ({ entry, index }))
+      .filter(item => item.entry.kind !== 'compact_summary')
+      .map(item => item.index),
+    ...entries.map((entry, index) => ({ entry, index }))
+      .filter(item => item.entry.kind === 'compact_summary')
+      .map(item => item.index),
+  ]
+  for (const index of indexes) {
+    const entry = entries[index]
+    if (!entry) continue
+    const bounded = boundEntryText(entry)
+    if (!bounded) continue
+    return {
+      entries: entries.map((candidate, candidateIndex) => (
+        candidateIndex === index ? bounded : candidate
+      )),
+      changed: true,
+    }
+  }
+  return { entries, changed: false }
+}
+
+function boundEntryText(entry: TranscriptEntry): TranscriptEntry | null {
+  const field = entry.kind === 'message' || entry.kind === 'compact_summary'
+    ? 'content'
+    : entry.kind === 'tool_result'
+      ? (typeof entry.payload.content === 'string' ? 'content' : 'summary')
+      : isAssistantContentCheckpoint(entry)
+        ? 'content'
+        : null
+  if (!field) return null
+  const value = entry.payload[field]
+  if (typeof value !== 'string' || value.length <= MIN_BOUNDED_CONTEXT_CHARS) return null
+  const nextLength = Math.max(
+    MIN_BOUNDED_CONTEXT_CHARS,
+    Math.floor((value.length - BOUNDED_CONTEXT_MARKER.length) / 2),
+  )
+  const boundedValue = `${value.slice(0, nextLength)}${BOUNDED_CONTEXT_MARKER}`
+  if (boundedValue.length >= value.length) return null
+  return { ...entry, payload: { ...entry.payload, [field]: boundedValue } }
+}
+
+function dropOldestContextUnit(entries: TranscriptEntry[]): TranscriptEntry[] {
+  const firstVisibleIndex = entries.findIndex(isModelVisibleEntry)
+  if (firstVisibleIndex < 0) return []
+
+  const firstUserIndex = entries.findIndex(entry => (
+    entry.kind === 'message' && entry.payload.role === 'user'
+  ))
+  if (firstUserIndex >= 0) {
+    const nextUserOffset = entries.slice(firstUserIndex + 1).findIndex(entry => (
+      entry.kind === 'message' && entry.payload.role === 'user'
+    ))
+    const end = nextUserOffset >= 0
+      ? firstUserIndex + 1 + nextUserOffset
+      : entries.length
+    return [...entries.slice(0, firstUserIndex), ...entries.slice(end)]
+  }
+
+  const firstVisible = entries[firstVisibleIndex]
+  if (!firstVisible) return []
+  if (firstVisible.kind === 'compact_summary') {
+    return entries.filter((_, index) => index !== firstVisibleIndex)
+  }
+  const callId = stringField(firstVisible.payload.callId)
+  return entries.filter((entry, index) => (
+    index !== firstVisibleIndex
+    && (!callId || stringField(entry.payload.callId) !== callId)
+  ))
 }
 
 // 资源索引只在用户明确要求继续或复用时进入模型上下文，避免把历史事实静默注入新任务。
@@ -319,9 +531,10 @@ async function buildThreadResourceMessage(
 ): Promise<string | null> {
   const currentUserEntry = findLastEntry(entries, entry => entry.kind === 'message' && entry.payload.role === 'user')
   const query = stringField(currentUserEntry?.payload.content) ?? ''
-  if (!/(继续|沿用|复用|之前|刚才|上次|已有|已上传|文件|图层|结果|产物|引用|报告)/u.test(query)) return null
+  const reuse = resolveResourceReuseIntent(query)
+  if (!reuse.requested) return null
 
-  const files = await store.fileLifecycle.list(threadId)
+  const allFiles = await store.fileLifecycle.list(threadId)
   const allRuns = store.listRunsForThread(threadId)
   const currentRun = currentRunId
     ? allRuns.find(run => run.id === currentRunId)
@@ -332,16 +545,51 @@ async function buildThreadResourceMessage(
         && Date.parse(run.createdAt) <= Date.parse(currentRun.createdAt)
       ))
     : allRuns
-  const valueRefs = runs.flatMap(run => run.state.toolValueRefs).slice(-40)
-  if (!files.length && !artifactResources.length && !valueRefs.length) return null
+  const allValueRefs = runs.flatMap(run => run.state.toolValueRefs).slice(-40)
+  const files = selectRequestedResources(allFiles, item => item.id, reuse.explicitIds).slice(-24)
+  const artifacts = selectRequestedResources(
+    artifactResources,
+    item => item.artifactId,
+    reuse.explicitIds,
+  ).slice(-24)
+  const valueRefs = selectRequestedResources(
+    allValueRefs,
+    item => item.refId,
+    reuse.explicitIds,
+  )
+  if (!files.length && !artifacts.length && !valueRefs.length) return null
   return [
     '<thread-resources>',
     '以下是当前线程已经过平台所有权校验的资源索引。不得根据名称推测内容；只有 availability=available 且带 sandboxPath 的 Artifact 才能从沙箱读取。',
-    ...files.slice(-24).map(file => `file: id=${file.id}; name=${file.name}; sha256=${file.contentHash}`),
-    ...artifactResources.slice(-24).map(formatArtifactResource),
+    ...files.map(file => `file: id=${file.id}; name=${file.name}; sha256=${file.contentHash}`),
+    ...artifacts.map(formatArtifactResource),
     ...valueRefs.map(reference => `valueRef: refId=${reference.refId}; kind=${reference.kind}; label=${reference.label}`),
     '</thread-resources>',
   ].join('\n')
+}
+
+function resolveResourceReuseIntent(query: string): ResourceReuseIntent {
+  if (!query || RESOURCE_REUSE_NEGATION_PATTERN.test(query)) {
+    return { requested: false, explicitIds: new Set() }
+  }
+  const explicitIds = new Set(
+    [...query.matchAll(EXPLICIT_RESOURCE_ID_PATTERN)].map(match => match[0]?.toLowerCase()).filter(Boolean) as string[],
+  )
+  return {
+    requested: explicitIds.size > 0
+      || CHINESE_RESOURCE_REUSE_PATTERN.test(query)
+      || ENGLISH_RESOURCE_REUSE_PATTERN.test(query),
+    explicitIds,
+  }
+}
+
+function selectRequestedResources<T>(
+  values: readonly T[],
+  id: (value: T) => string,
+  explicitIds: ReadonlySet<string>,
+): T[] {
+  if (!explicitIds.size) return [...values]
+  return values.filter(value => explicitIds.has(id(value).toLowerCase()))
 }
 
 function formatArtifactResource(resource: VisibleArtifactResource): string {
