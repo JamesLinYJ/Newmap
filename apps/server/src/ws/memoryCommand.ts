@@ -25,8 +25,8 @@ import {
   searchMemories,
   writeMemory,
 } from '../memory/service.js'
-import { scopeMemoryContextConfig } from '../memory/paths.js'
 import { memoryScopeSchema, memoryTypeSchema } from '../memory/schemas.js'
+import { scopeRuntimeConfigToPrincipal } from '../security/runtimePrincipalScope.js'
 import type { AuthContext } from '../security/types.js'
 import type { ClientMsg } from './protocol.js'
 import type { WsDependencies } from './dependencies.js'
@@ -139,16 +139,11 @@ export async function handleMemoryCommand(
     ? { service: dependencies.modelCompletions, workspaceId: auth.defaultWorkspaceId }
     : undefined
 
-  const resolveScopedConfig = async () => {
-    const config = await resolveRuntimeConfig(store.runtimeConfiguration, dependencies.defaultRuntimeConfig)
-    return {
-      ...config,
-      context: scopeMemoryContextConfig(store.runtimeRoot, config.context, {
-        workspaceId: auth.defaultWorkspaceId,
-        userId: auth.userId,
-      }),
-    }
-  }
+  const resolveScopedConfig = async () => scopeRuntimeConfigToPrincipal(
+    store.runtimeRoot,
+    await resolveRuntimeConfig(store.runtimeConfiguration, dependencies.defaultRuntimeConfig),
+    auth,
+  )
 
   switch (command) {
     case 'thread:memory:get':
