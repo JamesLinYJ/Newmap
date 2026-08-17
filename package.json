@@ -53,7 +53,10 @@
     "reset:conversations": "node scripts/reset-conversation-store.mjs --confirm"
   },
   "dependencies": {
+    "@better-auth/core": "1.6.29",
+    "@better-auth/electron": "1.6.29",
     "@openai/agents": "0.15.0",
+    "better-auth": "1.6.29",
     "openai": "7.4.0"
   },
   "devDependencies": {
