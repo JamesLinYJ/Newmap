@@ -25,6 +25,36 @@ export async function applyRepositoryGovernance(input) {
   const request = createGitHubRequest({ apiBaseUrl, apiVersion, token })
   const repositoryPath = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`
 
+  // Required checks must never be enforced before their repository features are
+  // available. Vulnerability alerts enable the dependency graph used by GitHub's
+  // Dependency Review action; secret scanning/push protection are similarly
+  // established before the branch policy is activated.
+  await request(`${repositoryPath}/vulnerability-alerts`, {
+    method: 'PUT',
+    expected: [204],
+  })
+  await request(`${repositoryPath}/automated-security-fixes`, {
+    method: 'PUT',
+    expected: [204],
+  })
+  await request(repositoryPath, {
+    method: 'PATCH',
+    body: {
+      security_and_analysis: {
+        secret_scanning: { status: 'enabled' },
+        secret_scanning_push_protection: { status: 'enabled' },
+      },
+    },
+    expected: [200],
+  })
+
+  const [vulnerabilityAlerts, automatedFixes, repositoryState] = await Promise.all([
+    request(`${repositoryPath}/vulnerability-alerts`, { expected: [204] }),
+    request(`${repositoryPath}/automated-security-fixes`, { expected: [204] }),
+    request(repositoryPath, { expected: [200] }),
+  ])
+  assertSecurityAnalysisEnabled(repositoryState.body)
+
   const existingRulesets = await request(`${repositoryPath}/rulesets`, { expected: [200] })
   if (!Array.isArray(existingRulesets.body)) throw new Error('GitHub rulesets 响应不是数组。')
   const matches = existingRulesets.body.filter(candidate => (
@@ -51,33 +81,8 @@ export async function applyRepositoryGovernance(input) {
     rulesetId = positiveInteger(created.body?.id, 'created ruleset id')
   }
 
-  await request(`${repositoryPath}/vulnerability-alerts`, {
-    method: 'PUT',
-    expected: [204],
-  })
-  await request(`${repositoryPath}/automated-security-fixes`, {
-    method: 'PUT',
-    expected: [204],
-  })
-  await request(repositoryPath, {
-    method: 'PATCH',
-    body: {
-      security_and_analysis: {
-        secret_scanning: { status: 'enabled' },
-        secret_scanning_push_protection: { status: 'enabled' },
-      },
-    },
-    expected: [200],
-  })
-
-  const [verifiedRuleset, vulnerabilityAlerts, automatedFixes, repositoryState] = await Promise.all([
-    request(`${repositoryPath}/rulesets/${rulesetId}`, { expected: [200] }),
-    request(`${repositoryPath}/vulnerability-alerts`, { expected: [204] }),
-    request(`${repositoryPath}/automated-security-fixes`, { expected: [204] }),
-    request(repositoryPath, { expected: [200] }),
-  ])
+  const verifiedRuleset = await request(`${repositoryPath}/rulesets/${rulesetId}`, { expected: [200] })
   assertRulesetEquivalent(verifiedRuleset.body, ruleset)
-  assertSecurityAnalysisEnabled(repositoryState.body)
 
   return {
     repository: `${repository.owner}/${repository.name}`,
