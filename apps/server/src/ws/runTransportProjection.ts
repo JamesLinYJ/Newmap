@@ -52,6 +52,9 @@ export function projectRunForTransport(run: AnalysisRun): AnalysisRun {
   const state = run.state
   return {
     ...run,
+    // runtimeConfigSnapshot is an internal recovery fact and may contain MCP
+    // headers/env credentials. It must never cross the ordinary client transport.
+    runtimeConfigSnapshot: null,
     state: {
       ...state,
       agentWorkflow: state.agentWorkflow
