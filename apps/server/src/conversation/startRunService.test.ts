@@ -11,12 +11,24 @@ import type { AnalysisRun } from '@geo-agent-platform/shared-types/platform'
 import { describe, expect, it, vi } from 'vitest'
 
 import { defaultRuntimeConfig } from '../agent/defaultRuntimeConfig.js'
+import { scopeMemoryContextConfig } from '../memory/paths.js'
 import type { AuthContext } from '../security/types.js'
 import { StartRunService } from './startRunService.js'
 
+const RUNTIME_ROOT = '/runtime'
+
 describe('StartRunService', () => {
-  it('resolves a thread session, snapshots runtime config, and starts one detached task', async () => {
+  it('resolves a thread session, snapshots principal-scoped runtime config, and starts one detached task', async () => {
     const runtimeConfig = defaultRuntimeConfig()
+    const auth = testAuth()
+    const expectedRuntimeConfig = {
+      ...runtimeConfig,
+      developer: { ...runtimeConfig.developer, enabled: false },
+      context: scopeMemoryContextConfig(RUNTIME_ROOT, runtimeConfig.context, {
+        workspaceId: auth.defaultWorkspaceId,
+        userId: auth.userId,
+      }),
+    }
     const run = fakeRun({ threadId: 'thread_existing', modelProvider: 'deepseek' })
     const order: string[] = []
     const startDetached = vi.fn(() => order.push('startDetached'))
@@ -27,6 +39,7 @@ describe('StartRunService', () => {
     const beforeLaunch = vi.fn(() => order.push('beforeLaunch'))
     const service = new StartRunService({
       store: {
+        runtimeRoot: RUNTIME_ROOT,
         runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(runtimeConfig) },
         getThread: vi.fn(() => ({ sessionId: 'session_from_thread' } as never)),
         createThread: vi.fn(),
@@ -39,7 +52,7 @@ describe('StartRunService', () => {
     })
 
     const result = await service.start({
-      auth: testAuth(),
+      auth,
       query: '查询杭州天气',
       threadId: 'thread_existing',
       provider: null,
@@ -54,7 +67,7 @@ describe('StartRunService', () => {
       modelName: null,
       runProfile: 'standard',
       goal: null,
-      runtimeConfigSnapshot: runtimeConfig,
+      runtimeConfigSnapshot: expectedRuntimeConfig,
       contextReferences: [],
     })
     expect(startDetached).toHaveBeenCalledWith(expect.objectContaining({
@@ -63,10 +76,50 @@ describe('StartRunService', () => {
       threadId: 'thread_existing',
       provider: 'deepseek',
       runProfile: 'standard',
-      runtimeConfig,
+      runtimeConfig: expectedRuntimeConfig,
     }), undefined)
     expect(beforeLaunch).toHaveBeenCalledWith(run)
     expect(order).toEqual(['createRun', 'beforeLaunch', 'startDetached'])
+  })
+
+  it('removes developer filesystem capability from non-admin runs and preserves it for platform admins', async () => {
+    const runtimeConfig = {
+      ...defaultRuntimeConfig(),
+      developer: { enabled: true, allowedRoots: ['/srv/project'] },
+    }
+    const snapshots: AnalysisRun['runtimeConfigSnapshot'][] = []
+    const service = new StartRunService({
+      store: {
+        runtimeRoot: RUNTIME_ROOT,
+        runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(runtimeConfig) },
+        getThread: vi.fn(() => ({ sessionId: 'session_1' } as never)),
+        createThread: vi.fn(),
+        createRun: vi.fn(async (_sessionId, _query, options) => {
+          snapshots.push(options.runtimeConfigSnapshot ?? null)
+          return fakeRun({ threadId: 'thread_1', modelProvider: 'deepseek' })
+        }),
+      },
+      usageStats: { assertWorkspaceCanStartModelRun: vi.fn() },
+      modelRegistry: { defaultProvider: 'deepseek' },
+      runTasks: { startDetached: vi.fn() },
+      fileLifecycle: { list: vi.fn().mockResolvedValue([]) },
+    })
+
+    await service.start({
+      auth: testAuth(),
+      query: '普通分析',
+      threadId: 'thread_1',
+      beforeLaunch: vi.fn(),
+    })
+    await service.start({
+      auth: testAuth('platform_admin'),
+      query: '管理员开发任务',
+      threadId: 'thread_1',
+      beforeLaunch: vi.fn(),
+    })
+
+    expect(snapshots[0]?.developer.enabled).toBe(false)
+    expect(snapshots[1]?.developer).toEqual(runtimeConfig.developer)
   })
 
   it('persists and launches the geospatial Compose profile without creating another runner path', async () => {
@@ -76,6 +129,7 @@ describe('StartRunService', () => {
     const startDetached = vi.fn()
     const service = new StartRunService({
       store: {
+        runtimeRoot: RUNTIME_ROOT,
         runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(runtimeConfig) },
         getThread: vi.fn(() => ({ sessionId: 'session_compose' } as never)),
         createThread: vi.fn(),
@@ -113,6 +167,7 @@ describe('StartRunService', () => {
     const startDetached = vi.fn()
     const service = new StartRunService({
       store: {
+        runtimeRoot: RUNTIME_ROOT,
         runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(runtimeConfig) },
         getThread: vi.fn(() => ({ sessionId: 'session_goal' } as never)),
         createThread: vi.fn(),
@@ -148,6 +203,7 @@ describe('StartRunService', () => {
     const assertWorkspaceCanStartModelRun = vi.fn()
     const service = new StartRunService({
       store: {
+        runtimeRoot: RUNTIME_ROOT,
         runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(defaultRuntimeConfig()) },
         getThread: vi.fn(() => ({ sessionId: 'session_goal' } as never)),
         createThread: vi.fn(),
@@ -183,6 +239,7 @@ describe('StartRunService', () => {
     const startDetached = vi.fn()
     const service = new StartRunService({
       store: {
+        runtimeRoot: RUNTIME_ROOT,
         runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(runtimeConfig) },
         getThread: vi.fn(() => ({ sessionId: 'session_map' } as never)),
         createThread: vi.fn(),
@@ -245,6 +302,7 @@ describe('StartRunService', () => {
     const createRun = vi.fn()
     const service = new StartRunService({
       store: {
+        runtimeRoot: RUNTIME_ROOT,
         runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(defaultRuntimeConfig()) },
         getThread: vi.fn(() => ({ sessionId: 'session_1' } as never)),
         createThread: vi.fn(),
@@ -276,6 +334,7 @@ describe('StartRunService', () => {
     const createRun = vi.fn()
     const service = new StartRunService({
       store: {
+        runtimeRoot: RUNTIME_ROOT,
         runtimeConfiguration: { getRuntimeConfig: vi.fn().mockResolvedValue(null) },
         getThread: vi.fn(),
         createThread: vi.fn(),
@@ -318,7 +377,7 @@ function fakeRun(overrides: Partial<AnalysisRun>): AnalysisRun {
   }
 }
 
-function testAuth(): AuthContext {
+function testAuth(role: AuthContext['roles'][number]['role'] = 'analyst'): AuthContext {
   return {
     userId: 'user_1',
     subject: 'user_1',
@@ -328,6 +387,6 @@ function testAuth(): AuthContext {
     authSessionExpiresAt: null,
     csrfToken: 'csrf_1',
     defaultWorkspaceId: 'workspace_1',
-    roles: [{ workspaceId: 'workspace_1', role: 'analyst' }],
+    roles: [{ workspaceId: 'workspace_1', role }],
   }
 }
