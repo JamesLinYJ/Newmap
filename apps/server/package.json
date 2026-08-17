@@ -31,7 +31,7 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "geotiff": "3.0.5",
-    "hono": "^4.13.1",
+    "hono": "^4.13.2",
     "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
     "mustache": "^4.2.0",
     "openai": "7.4.0",
