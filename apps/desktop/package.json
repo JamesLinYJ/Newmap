@@ -42,7 +42,7 @@
     "@electron-forge/maker-rpm": "7.11.2",
     "@electron-forge/maker-squirrel": "7.11.2",
     "@electron-forge/plugin-fuses": "7.11.2",
-    "@electron/fuses": "1.8.0",
+    "@electron/fuses": "2.1.3",
     "@electron/windows-sign": "2.0.6",
     "@geo-agent-platform/conversation-presentation": "file:../../packages/conversation-presentation",
     "@geo-agent-platform/operations-supervisor": "file:../../packages/operations-supervisor",
