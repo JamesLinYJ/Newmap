@@ -17,13 +17,13 @@ import {
 } from '../schemas/types.js'
 import type { PlatformPersistenceFacade } from '../store/platformPersistenceFacade.js'
 import type { AuthContext } from '../security/types.js'
+import { scopeRuntimeConfigToPrincipal } from '../security/runtimePrincipalScope.js'
 import type { UsageStatsService } from '../usage/usageStatsService.js'
 import type { ModelAdapterRegistry } from '../model/registry.js'
 import type { RunTaskCompletionTarget, RunTaskManager } from '../agent/runTaskManager.js'
 import type { RunOptions } from '../agent/runtime.js'
 import { resolveRuntimeConfig } from '../runtime/runtimeConfig.js'
 import type { FileLifecyclePort } from '../store/fileLifecycleService.js'
-import { scopeMemoryContextConfig } from '../memory/paths.js'
 
 export interface StartRunInput {
   auth: AuthContext
@@ -74,22 +74,11 @@ export class StartRunService {
       this.dependencies.store.runtimeConfiguration,
       this.dependencies.defaultRuntimeConfig,
     )
-    const isPlatformAdmin = input.auth.roles.some(binding => binding.role === 'platform_admin')
-    const runtimeConfig: AgentRuntimeConfig = {
-      ...resolvedRuntimeConfig,
-      developer: {
-        ...resolvedRuntimeConfig.developer,
-        enabled: resolvedRuntimeConfig.developer.enabled && isPlatformAdmin,
-      },
-      context: scopeMemoryContextConfig(
-        this.dependencies.store.runtimeRoot,
-        resolvedRuntimeConfig.context,
-        {
-          workspaceId: input.auth.defaultWorkspaceId,
-          userId: input.auth.userId,
-        },
-      ),
-    }
+    const runtimeConfig = scopeRuntimeConfigToPrincipal(
+      this.dependencies.store.runtimeRoot,
+      resolvedRuntimeConfig,
+      input.auth,
+    )
     const selectedProvider = input.provider
       ?? input.modelProvider
       ?? this.dependencies.modelRegistry.defaultProvider
