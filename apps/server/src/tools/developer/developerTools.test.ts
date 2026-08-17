@@ -71,6 +71,12 @@ describe('geo-platform-developer-tools', () => {
     })).rejects.toThrow('DEVELOPER_TOOL_ALLOWED_ROOTS')
   })
 
+  it('requires a platform-admin principal even when developer mode and roots are enabled', async () => {
+    const context = runtime('analyst')
+    await expect(readFileTool.handler({ file_path: path.join(root, 'source.ts') }, context))
+      .rejects.toThrow('仅允许平台管理员')
+  })
+
   it('reads, edits, and writes only inside configured roots', async () => {
     const target = path.join(root, 'server', 'src', 'meteorology-note.txt')
     await writeFileTool.handler({
@@ -194,7 +200,7 @@ describe('geo-platform-developer-tools', () => {
   })
 })
 
-function runtime(): ToolContext {
+function runtime(role: 'platform_admin' | 'analyst' = 'platform_admin'): ToolContext {
   const allowedRoot = process.env.DEVELOPER_TOOL_ALLOWED_ROOTS ?? ''
   return {
     runId: 'run_1',
@@ -206,6 +212,17 @@ function runtime(): ToolContext {
         allowedRoots: [allowedRoot],
       },
     } as ToolContext['runtimeConfig'],
+    auth: {
+      userId: 'user_test',
+      subject: 'auth_user_test',
+      email: 'developer@example.test',
+      displayName: 'Developer Test',
+      authSessionId: 'session_test',
+      authSessionExpiresAt: null,
+      csrfToken: 'csrf_test',
+      defaultWorkspaceId: 'workspace_test',
+      roles: [{ workspaceId: 'workspace_test', role }],
+    },
     state: new Map(),
     resolveValueRef: () => {
       throw new Error('未知 valueRef')
