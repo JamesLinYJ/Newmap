@@ -19,6 +19,7 @@ import type { ModelAdapterRegistry } from '../model/registry.js'
 import { recordModelCompletionUsage, type ModelCompletionService } from '../model/modelResultCache.js'
 import { runSdkStructuredOutput } from '../model/sdkStructuredOutput.js'
 import type { AgentRuntimeConfig } from '../schemas/types.js'
+import { scopeRuntimeConfigToPrincipal } from '../security/runtimePrincipalScope.js'
 import type { AuthContext } from '../security/types.js'
 import type { PersistentToolStore } from '../store/runtimePorts.js'
 import type { RuntimeConfigStore } from '../store/postgres/runtimeConfigStore.js'
@@ -49,13 +50,18 @@ export async function executePersistedTool(
   const objectiveRevision = run.state.objectiveRevision
   const values = new Map(run.state.toolValueRefs.map(ref => [ref.refId, ref]))
   const pendingLogWrites: Promise<void>[] = []
+  const globalOrSnapshottedConfig = run.runtimeConfigSnapshot
+    ?? await resolveRuntimeConfig(deps.runtimeConfiguration, deps.defaultRuntimeConfig)
+  const runtimeConfig = run.runtimeConfigSnapshot
+    ? globalOrSnapshottedConfig
+    : scopeRuntimeConfigToPrincipal(deps.store.runtimeRoot, globalOrSnapshottedConfig, input.auth)
   const context: ToolContext = {
     runId: run.id,
     sessionId: run.sessionId,
     threadId: run.threadId,
     signal: input.signal ?? new AbortController().signal,
     runtimeRoot: deps.store.runtimeRoot,
-    runtimeConfig: run.runtimeConfigSnapshot ?? await resolveRuntimeConfig(deps.runtimeConfiguration, deps.defaultRuntimeConfig),
+    runtimeConfig,
     auth: input.auth,
     state: values,
     resolveValueRef: refId => resolveRuntimeValueRef(values, refId),
