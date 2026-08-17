@@ -48,6 +48,7 @@ import { RuntimeAssemblyFactory } from './runtimeAssembly.js'
 import { GoalJudge, type GoalJudgePort } from './goalJudge.js'
 import { SubAgentControlPlane, type SubAgentControlInput } from './subAgentControlPlane.js'
 import { authorizedAttachmentSummaries } from './multimodalInput.js'
+import { withToolAuthorizationLease } from './runToolConcurrencyGate.js'
 
 export type { SandboxClientFactory } from './runtimeSandbox.js'
 export type { RunOptions } from './runtimeTypes.js'
@@ -56,6 +57,7 @@ export interface OpenAIAgentsRuntimeOptions {
   createSandboxClient?: SandboxClientFactory
   agentTracing?: LocalAgentTracing
   goalJudge?: GoalJudgePort
+  authorizationLease?: (auth: AuthContext, run: AnalysisRun) => Promise<AuthContext>
 }
 
 // OpenAIAgentsRuntime
@@ -119,6 +121,7 @@ export class OpenAIAgentsRuntime {
     let detachTracing = (): void => {}
     try {
       detachTracing = this.runtimeOptions.agentTracing?.attachRun(options.runId) ?? (() => {})
+      await this.refreshAuthorization(options)
       await this.store.updateRunStatus(options.runId, 'running')
       if (!options.resume && (options.executionMode === 'plan' || options.runProfile === 'geospatial_compose')) {
         await this.store.updateRunState(options.runId, {
@@ -149,23 +152,29 @@ export class OpenAIAgentsRuntime {
       }
 
       await this.steering.open(options.runId, { recoverLeased: options.resume === true })
-      const assembly = await this.assemblyFactory.create(options, threadId, turnId, eventSink, itemSink, abort.signal)
-      const resumeState = options.resume
-        ? await this.checkpoints.restore({
-          runId: options.runId,
-          agent: assembly.agent,
-          context: assembly.context,
-          sdkVersion: assembly.sdkVersion,
-          configDigest: assembly.configDigest,
-        })
-        : null
-      const completed = await this.sdkExecutor.execute(
-        options,
-        assembly,
-        resumeState,
-        abort.signal,
-        eventSink,
-        itemSink,
+      const completed = await withToolAuthorizationLease(
+        () => this.refreshAuthorization(options),
+        async () => {
+          await this.refreshAuthorization(options)
+          const assembly = await this.assemblyFactory.create(options, threadId, turnId, eventSink, itemSink, abort.signal)
+          const resumeState = options.resume
+            ? await this.checkpoints.restore({
+              runId: options.runId,
+              agent: assembly.agent,
+              context: assembly.context,
+              sdkVersion: assembly.sdkVersion,
+              configDigest: assembly.configDigest,
+            })
+            : null
+          return this.sdkExecutor.execute(
+            options,
+            assembly,
+            resumeState,
+            abort.signal,
+            eventSink,
+            itemSink,
+          )
+        },
       )
       if (completed === 'waiting_approval') return this.store.getRun(options.runId)
       if (completed === 'clarification_needed') return this.store.getRun(options.runId)
@@ -337,31 +346,37 @@ export class OpenAIAgentsRuntime {
     const finalizer = new TurnFinalizer(eventSink, itemSink, status => this.store.completeRun(runId, status))
     try {
       detachTracing = this.runtimeOptions.agentTracing?.attachRun(runId) ?? (() => {})
+      await this.refreshAuthorization(options)
       await this.store.updateRunStatus(runId, 'running')
       await this.steering.open(runId, { recoverLeased: true })
-      const assembly = await this.assemblyFactory.create(
-        options,
-        run.threadId,
-        turnId,
-        eventSink,
-        itemSink,
-        abort.signal,
-        false,
+      const result = await withToolAuthorizationLease(
+        () => this.refreshAuthorization(options),
+        async () => {
+          await this.refreshAuthorization(options)
+          const assembly = await this.assemblyFactory.create(
+            options,
+            run.threadId,
+            turnId,
+            eventSink,
+            itemSink,
+            abort.signal,
+            false,
+          )
+          const state = await this.checkpoints.restore({
+            runId: options.runId,
+            agent: assembly.agent,
+            context: assembly.context,
+            sdkVersion: assembly.sdkVersion,
+            configDigest: assembly.configDigest,
+          })
+          const callId = requireString(approval.payload.callId, '审批 payload.callId')
+          const interruption = state.getInterruptions().find(item => functionCallId(item) === callId)
+          if (!interruption) throw new Error(`SDK 状态中不存在待审批调用 '${callId}'`)
+          if (approved) state.approve(interruption)
+          else state.reject(interruption, { message: approvalRejectionMessage(approval.action) })
+          return this.sdkExecutor.execute(options, assembly, state, abort.signal, eventSink, itemSink)
+        },
       )
-      const state = await this.checkpoints.restore({
-        runId: options.runId,
-        agent: assembly.agent,
-        context: assembly.context,
-        sdkVersion: assembly.sdkVersion,
-        configDigest: assembly.configDigest,
-      })
-      const callId = requireString(approval.payload.callId, '审批 payload.callId')
-      const interruption = state.getInterruptions().find(item => functionCallId(item) === callId)
-      if (!interruption) throw new Error(`SDK 状态中不存在待审批调用 '${callId}'`)
-      if (approved) state.approve(interruption)
-      else state.reject(interruption, { message: approvalRejectionMessage(approval.action) })
-
-      const result = await this.sdkExecutor.execute(options, assembly, state, abort.signal, eventSink, itemSink)
       // SDK 执行器可能在拒绝后立即产生一条新的审批。必须以刚落盘的
       // run state 为事实源，只消费当前审批，不能用恢复前的 approvals 快照
       // 覆盖新审批，否则前端会拿到一个在 approvals 中已经消失的 decisionId。
@@ -415,6 +430,14 @@ export class OpenAIAgentsRuntime {
     const receipt = await this.acceptApprovalDecision(runId, approvalId, approved)
     if (!receipt.accepted) return receipt.run
     return this.continueApprovalDecision(runId, approvalId, approved, auth)
+  }
+
+  private async refreshAuthorization(options: RunOptions): Promise<void> {
+    const auth = options.auth
+    if (!auth) return
+    const lease = this.runtimeOptions.authorizationLease
+    if (!lease) throw new Error('Agent 运行缺少持续授权租约。')
+    options.auth = await lease(auth, this.store.getRun(options.runId))
   }
 
   private async maybeExtractLongTermMemories(options: RunOptions, threadId: string, eventSink: RunEventSink): Promise<void> {
