@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AuthContext } from '../security/types.js'
 import { ToolRegistry } from './registry.js'
-import type { ToolContext, ToolProvider } from './types.js'
+import type { ToolContext, ToolHandler, ToolProvider } from './types.js'
 
 const currentAuth: AuthContext = {
   userId: 'user_1',
@@ -29,7 +29,7 @@ const currentAuth: AuthContext = {
 
 describe('ToolRegistry execution authorization', () => {
   it('refreshes the actor immediately before the handler executes', async () => {
-    const handler = vi.fn(async () => result())
+    const handler = vi.fn<ToolHandler>(async () => result())
     const authorize = vi.fn(async () => currentAuth)
     const registry = new ToolRegistry()
     registry.register(provider(handler))
@@ -48,7 +48,7 @@ describe('ToolRegistry execution authorization', () => {
   })
 
   it('does not enter a tool handler after authorization is revoked', async () => {
-    const handler = vi.fn(async () => result())
+    const handler = vi.fn<ToolHandler>(async () => result())
     const registry = new ToolRegistry()
     registry.register(provider(handler))
     registry.setExecutionAuthorizer(async () => {
@@ -71,13 +71,7 @@ describe('ToolRegistry execution authorization', () => {
   })
 })
 
-function provider(handler: ToolProvider['tools'] extends () => infer Tools
-  ? Tools extends Array<infer Tool>
-    ? Tool extends { handler: infer Handler }
-      ? Handler
-      : never
-    : never
-  : never): ToolProvider {
+function provider(handler: ToolHandler): ToolProvider {
   const definition = {
     name: 'authorized_example',
     label: '授权测试工具',
