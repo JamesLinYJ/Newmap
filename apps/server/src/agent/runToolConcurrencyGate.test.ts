@@ -10,7 +10,7 @@
 // --------------------------------------------------------------------------
 
 import { describe, expect, it } from 'vitest'
-import { RunToolConcurrencyGate, toolExecutionLane } from './runToolConcurrencyGate.js'
+import { RunToolConcurrencyGate, toolExecutionLane, withToolAuthorizationLease } from './runToolConcurrencyGate.js'
 
 describe('RunToolConcurrencyGate', () => {
   it('allows explicitly safe read-only calls to overlap', async () => {
@@ -43,6 +43,34 @@ describe('RunToolConcurrencyGate', () => {
     await Promise.all([execute(), execute(), execute()])
 
     expect(maxActive).toBe(1)
+  })
+
+  it('revalidates authorization after a queued tool acquires its execution lease', async () => {
+    const gate = new RunToolConcurrencyGate()
+    let authorized = true
+    let checks = 0
+    let releaseFirst!: () => void
+    const firstStarted = new Promise<void>(resolve => {
+      void withToolAuthorizationLease(async () => {
+        checks += 1
+        if (!authorized) throw new Error('authorization_revoked')
+      }, () => gate.run('exclusive', async () => {
+        resolve()
+        await new Promise<void>(release => { releaseFirst = release })
+      }))
+    })
+    await firstStarted
+
+    const second = withToolAuthorizationLease(async () => {
+      checks += 1
+      if (!authorized) throw new Error('authorization_revoked')
+    }, () => gate.run('shared', async () => 'should-not-run'))
+
+    authorized = false
+    releaseFirst()
+
+    await expect(second).rejects.toThrow('authorization_revoked')
+    expect(checks).toBe(2)
   })
 
   it('requires every safety property before assigning the shared lane', () => {
