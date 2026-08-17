@@ -6,17 +6,13 @@
 
 import { cp, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const REMOTE_CLIENT_MARKER_FILENAME = 'REMOTE-SERVICE-CLIENT.txt'
-
-export const REMOTE_CLIENT_MARKER = [
-  'Geo Agent Platform portable remote-service client',
-  '',
-  'This portable package does not install or start the local managed runtime.',
-  'On first launch, configure the HTTPS endpoint of a compatible Geo Agent Platform service.',
-  'Loopback HTTP is permitted only for a service already running on this computer.',
-  '',
-].join('\n')
+const remoteClientMarkerSource = fileURLToPath(new URL(
+  `./${REMOTE_CLIENT_MARKER_FILENAME}`,
+  import.meta.url,
+))
 
 /**
  * Stage one portable client directory without mutating Electron Forge output.
@@ -24,8 +20,9 @@ export const REMOTE_CLIENT_MARKER = [
  * portable formats must remove it so first launch cannot enter the systemd-only
  * local-runtime path on a machine where no service unit was installed.
  *
- * Windows/macOS receive their remote-client marker before code signing through
- * packagerConfig.extraResource. This function must not add files after signing.
+ * Windows/macOS receive the same canonical marker before code signing through
+ * packagerConfig.extraResource. Linux copies that exact source file here. The
+ * marker therefore has one fact source across all platforms.
  */
 export async function stagePortableClientDirectory(
   sourceDirectory,
@@ -51,7 +48,7 @@ export async function stagePortableClientDirectory(
     await removeManagedRuntime(destination)
     await writeFile(
       path.join(destination, REMOTE_CLIENT_MARKER_FILENAME),
-      REMOTE_CLIENT_MARKER,
+      await canonicalRemoteClientMarker(),
       'utf8',
     )
   }
@@ -67,8 +64,9 @@ export async function assertPortableClientPayload(directory, targetPlatform) {
     throw new Error(`便携客户端载荷必须且只能包含一个远程服务说明标记，实际为 ${markers.length} 个。`)
   }
   const markerContent = await readFile(markers[0], 'utf8')
-  if (!markerContent.includes('does not install or start the local managed runtime')) {
-    throw new Error('便携客户端远程服务说明标记内容无效。')
+  const canonicalMarker = await canonicalRemoteClientMarker()
+  if (normalizeText(markerContent) !== normalizeText(canonicalMarker)) {
+    throw new Error('便携客户端远程服务说明标记内容与发布契约不一致。')
   }
   if (platform === 'linux') {
     const bundledRuntime = await lstat(managedRuntimePath(root)).catch(() => null)
@@ -79,6 +77,10 @@ export async function assertPortableClientPayload(directory, targetPlatform) {
       throw new Error('Linux 便携客户端说明标记必须位于载荷根目录。')
     }
   }
+}
+
+async function canonicalRemoteClientMarker() {
+  return readFile(remoteClientMarkerSource, 'utf8')
 }
 
 async function removeManagedRuntime(root) {
@@ -98,6 +100,10 @@ async function findFiles(root, fileName) {
     else if (entry.isFile() && entry.name === fileName) matches.push(fullPath)
   }
   return matches
+}
+
+function normalizeText(value) {
+  return value.replaceAll('\r\n', '\n')
 }
 
 function assertDistinctTrees(source, destination) {
