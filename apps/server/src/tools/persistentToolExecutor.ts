@@ -50,11 +50,11 @@ export async function executePersistedTool(
   const objectiveRevision = run.state.objectiveRevision
   const values = new Map(run.state.toolValueRefs.map(ref => [ref.refId, ref]))
   const pendingLogWrites: Promise<void>[] = []
-  const globalOrSnapshottedConfig = run.runtimeConfigSnapshot
-    ?? await resolveRuntimeConfig(deps.runtimeConfiguration, deps.defaultRuntimeConfig)
-  const runtimeConfig = run.runtimeConfigSnapshot
-    ? globalOrSnapshottedConfig
-    : scopeRuntimeConfigToPrincipal(deps.store.runtimeRoot, globalOrSnapshottedConfig, input.auth)
+  const runtimeConfig = scopeRuntimeConfigToPrincipal(
+    deps.store.runtimeRoot,
+    run.runtimeConfigSnapshot ?? await resolveRuntimeConfig(deps.runtimeConfiguration, deps.defaultRuntimeConfig),
+    input.auth,
+  )
   const context: ToolContext = {
     runId: run.id,
     sessionId: run.sessionId,
