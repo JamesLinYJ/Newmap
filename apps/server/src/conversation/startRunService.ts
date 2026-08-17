@@ -23,6 +23,7 @@ import type { RunTaskCompletionTarget, RunTaskManager } from '../agent/runTaskMa
 import type { RunOptions } from '../agent/runtime.js'
 import { resolveRuntimeConfig } from '../runtime/runtimeConfig.js'
 import type { FileLifecyclePort } from '../store/fileLifecycleService.js'
+import { scopeMemoryContextConfig } from '../memory/paths.js'
 
 export interface StartRunInput {
   auth: AuthContext
@@ -47,7 +48,7 @@ export interface StartRunInput {
   beforeLaunch: (run: AnalysisRun) => void
 }
 
-type StartRunStore = Pick<PlatformPersistenceFacade, 'createThread' | 'getThread' | 'createRun'>
+type StartRunStore = Pick<PlatformPersistenceFacade, 'createThread' | 'getThread' | 'createRun' | 'runtimeRoot'>
   & Pick<PlatformPersistenceFacade, 'runtimeConfiguration'>
 
 export class StartRunService {
@@ -69,10 +70,21 @@ export class StartRunService {
     }
 
     this.dependencies.usageStats.assertWorkspaceCanStartModelRun(input.auth)
-    const runtimeConfig = await resolveRuntimeConfig(
+    const resolvedRuntimeConfig = await resolveRuntimeConfig(
       this.dependencies.store.runtimeConfiguration,
       this.dependencies.defaultRuntimeConfig,
     )
+    const runtimeConfig: AgentRuntimeConfig = {
+      ...resolvedRuntimeConfig,
+      context: scopeMemoryContextConfig(
+        this.dependencies.store.runtimeRoot,
+        resolvedRuntimeConfig.context,
+        {
+          workspaceId: input.auth.defaultWorkspaceId,
+          userId: input.auth.userId,
+        },
+      ),
+    }
     const selectedProvider = input.provider
       ?? input.modelProvider
       ?? this.dependencies.modelRegistry.defaultProvider
