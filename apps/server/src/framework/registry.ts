@@ -16,10 +16,21 @@ import { ensureToolSchemas, schemaParameters, isRecord } from './schema.js'
 import { logger } from '../observability/logger.js'
 import { artifactDisplaySchema } from '../schemas/types.js'
 
+export type ToolExecutionAuthorizer = (
+  toolName: string,
+  context: ToolContext,
+) => Promise<NonNullable<ToolContext['auth']>>
+
 export class ToolRegistry {
   private tools = new Map<string, ToolDef>()
   private providers = new Map<string, ToolProvider>()
   private unavailableProviders = new Map<string, string>()
+  private executionAuthorizer: ToolExecutionAuthorizer | null = null
+
+  setExecutionAuthorizer(authorizer: ToolExecutionAuthorizer): void {
+    if (this.executionAuthorizer) throw new Error('ToolRegistry 执行授权器已经配置。')
+    this.executionAuthorizer = authorizer
+  }
 
   register(provider: ToolProvider): void {
     const tools = validateToolProvider(provider)
@@ -132,6 +143,11 @@ export class ToolRegistry {
     const validatedArgs = validateArguments(tool, args)
     if (valueRefValidatedTools.has(tool)) validateValueRefArguments(tool, validatedArgs, ctx)
 
+    // schema/valueRef 验证无副作用；授权必须紧贴 handler，避免排队、审批、
+    // Handoff 或恢复期间的会话撤销和角色变化继续沿用旧 AuthContext。
+    if (this.executionAuthorizer) {
+      ctx.auth = await this.executionAuthorizer(name, ctx)
+    }
     ctx.log('info', `执行 ${tool.label} (${tool.providerId})`)
     const result = await tool.handler(validatedArgs, ctx)
     if (!result.resultId || !result.source || !result.message || !isRecord(result.payload)) {
