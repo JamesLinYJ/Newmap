@@ -19,6 +19,7 @@ import {
 import { optionalPositiveInteger, requiredRunProvider } from './payload.js'
 import { respondDecision } from './decisionCommand.js'
 import { reserveRunCapture, sendRunSnapshot, snapshotRun, subscribeToRun } from './subscriptions.js'
+import { projectRunForTransport } from './runTransportProjection.js'
 import type { WsCommandRegistry } from './commandRegistry.js'
 import type { AuthContext } from '../security/types.js'
 
@@ -100,7 +101,7 @@ export function registerRunCommands(registry: WsCommandRegistry): void {
         ),
         completion: { onComplete: runId => sendRunSnapshot(context.ws, runId, context.dependencies.store) },
       })
-      return run
+      return projectRunForTransport(run)
     },
   })
 
@@ -121,7 +122,7 @@ export function registerRunCommands(registry: WsCommandRegistry): void {
     payloadSchema: runIdPayloadSchema,
     auth: 'required',
     csrf: true,
-    handler: (payload, context) => context.runTasks.cancel(payload.runId),
+    handler: async (payload, context) => projectRunForTransport(await context.runTasks.cancel(payload.runId)),
   })
 
   registry.register({
@@ -164,7 +165,7 @@ export function registerRunCommands(registry: WsCommandRegistry): void {
         resume: true,
         auth,
       }, { onComplete: runId => sendRunSnapshot(context.ws, runId, context.dependencies.store) })
-      return context.dependencies.store.getRun(payload.runId)
+      return projectRunForTransport(context.dependencies.store.getRun(payload.runId))
     },
   })
 
@@ -173,14 +174,14 @@ export function registerRunCommands(registry: WsCommandRegistry): void {
     payloadSchema: respondDecisionPayloadSchema,
     auth: 'required',
     csrf: true,
-    handler: (payload, context) => respondDecision(
+    handler: async (payload, context) => projectRunForTransport(await respondDecision(
       payload,
       context.dependencies,
       context.runTasks,
       context.ws,
       context.subscriptions,
       requireAuth(context.auth),
-    ),
+    )),
   })
 
   registry.register({
