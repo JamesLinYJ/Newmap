@@ -87,7 +87,7 @@
     "react-resizable-panels": "4.12.2",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
-    "rotating-file-stream": "3.2.9",
+    "rotating-file-stream": "3.2.10",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
