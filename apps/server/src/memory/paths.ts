@@ -63,9 +63,9 @@ export function createMemoryPathConfig(
 
 /**
  * Resolve one principal's durable memory roots from the administrator-configured
- * base directories. The returned context can be snapshotted on a run, so every
- * later memory operation uses the same tenant boundary without relying on
- * process-global state.
+ * base directories. The operation is idempotent so an already scoped run
+ * snapshot can be revalidated at a later tool boundary without creating nested
+ * tenant directories.
  */
 export function scopeMemoryContextConfig(
   runtimeRoot: string,
@@ -79,10 +79,18 @@ export function scopeMemoryContextConfig(
   const roots = createMemoryPathConfig(runtimeRoot, config, projectRoot)
   const workspaceKey = stablePrincipalKey(principal.workspaceId)
   const userKey = stablePrincipalKey(principal.userId)
+  const privateSuffix = path.join('principals', workspaceKey, userKey)
+  const teamSuffix = path.join('workspaces', workspaceKey)
+  const privateRoot = stripTrailingSeparator(roots.privateDir)
+  const teamRoot = stripTrailingSeparator(roots.teamDir)
   return {
     ...config,
-    privateMemoryDir: path.join(stripTrailingSeparator(roots.privateDir), 'principals', workspaceKey, userKey),
-    teamMemoryDir: path.join(stripTrailingSeparator(roots.teamDir), 'workspaces', workspaceKey),
+    privateMemoryDir: hasPathSuffix(privateRoot, privateSuffix)
+      ? privateRoot
+      : path.join(privateRoot, privateSuffix),
+    teamMemoryDir: hasPathSuffix(teamRoot, teamSuffix)
+      ? teamRoot
+      : path.join(teamRoot, teamSuffix),
   }
 }
 
@@ -162,6 +170,20 @@ function resolveConfiguredBase(value: string, runtimeRoot: string): string {
 
 function stripTrailingSeparator(value: string): string {
   return value.endsWith(path.sep) ? value.slice(0, -1) : value
+}
+
+function hasPathSuffix(value: string, suffix: string): boolean {
+  const candidate = path.resolve(value)
+  const suffixParts = suffix.split(path.sep)
+  const candidateParts = candidate.split(path.sep)
+  if (candidateParts.length < suffixParts.length) return false
+  return suffixParts.every((part, index) => {
+    const candidatePart = candidateParts[candidateParts.length - suffixParts.length + index]
+    if (candidatePart === undefined) return false
+    return process.platform === 'win32'
+      ? candidatePart.toLowerCase() === part.toLowerCase()
+      : candidatePart === part
+  })
 }
 
 function ensureTrailingSeparator(value: string): string {
