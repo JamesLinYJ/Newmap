@@ -14,6 +14,8 @@ import type { ToolDef } from '../framework/types.js'
 
 export type ToolExecutionLane = 'shared' | 'exclusive'
 
+type AuthorizationLease = () => Promise<void>
+
 interface ExecutionLease {
   lane: ToolExecutionLane
   nestedExclusiveTail: Promise<void>
@@ -22,6 +24,21 @@ interface ExecutionLease {
 interface WaitingLease {
   lane: ToolExecutionLane
   resolve(): void
+}
+
+const authorizationLeaseContext = new AsyncLocalStorage<AuthorizationLease>()
+
+/**
+ * Bind a live authorization lease to one Agent execution. Every tool operation
+ * that crosses RunToolConcurrencyGate revalidates this lease immediately before
+ * dispatch, after any queue wait. Nested sub-agent/MCP operations inherit the
+ * same lease through AsyncLocalStorage.
+ */
+export function withToolAuthorizationLease<T>(
+  assertAuthorized: AuthorizationLease,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return authorizationLeaseContext.run(assertAuthorized, operation)
 }
 
 // SDK 决定同一轮哪些 function call 并发启动；本闸门只实施平台安全约束。
@@ -36,11 +53,11 @@ export class RunToolConcurrencyGate {
   run<T>(lane: ToolExecutionLane, operation: () => Promise<T>): Promise<T> {
     const parent = this.context.getStore()
     if (parent?.lane === 'exclusive') {
-      if (lane === 'shared') return operation()
+      if (lane === 'shared') return this.runAuthorized(operation)
       return this.runNestedExclusive(parent, operation)
     }
     if (parent?.lane === 'shared') {
-      if (lane === 'shared') return operation()
+      if (lane === 'shared') return this.runAuthorized(operation)
       return Promise.reject(new Error('并发安全调用内部禁止提升为独占工具执行'))
     }
     return this.runWithLease(lane, operation)
@@ -51,7 +68,7 @@ export class RunToolConcurrencyGate {
     const lease: ExecutionLease = { lane, nestedExclusiveTail: Promise.resolve() }
     return this.context.run(lease, async () => {
       try {
-        return await operation()
+        return await this.runAuthorized(operation)
       } finally {
         this.release(lane)
       }
@@ -59,9 +76,18 @@ export class RunToolConcurrencyGate {
   }
 
   private runNestedExclusive<T>(lease: ExecutionLease, operation: () => Promise<T>): Promise<T> {
-    const pending = lease.nestedExclusiveTail.then(operation, operation)
+    const pending = lease.nestedExclusiveTail.then(
+      () => this.runAuthorized(operation),
+      () => this.runAuthorized(operation),
+    )
     lease.nestedExclusiveTail = pending.then(() => undefined, () => undefined)
     return pending
+  }
+
+  private async runAuthorized<T>(operation: () => Promise<T>): Promise<T> {
+    const assertAuthorized = authorizationLeaseContext.getStore()
+    if (assertAuthorized) await assertAuthorized()
+    return operation()
   }
 
   private acquire(lane: ToolExecutionLane): Promise<void> {
