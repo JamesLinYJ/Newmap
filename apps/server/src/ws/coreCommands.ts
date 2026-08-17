@@ -65,10 +65,19 @@ export function registerCoreCommands(registry: WsCommandRegistry): void {
     payloadSchema: emptyPayloadSchema,
     auth: 'required',
     csrf: false,
-    handler: (_payload, context) => resolveRuntimeConfig(
-      context.dependencies.store.runtimeConfiguration,
-      context.dependencies.defaultRuntimeConfig,
-    ),
+    handler: async (_payload, context) => {
+      const auth = requireAuth(context.auth)
+      await context.dependencies.security.authorization.enforce(
+        auth,
+        'admin',
+        'admin',
+        { workspaceId: auth.defaultWorkspaceId },
+      )
+      return resolveRuntimeConfig(
+        context.dependencies.store.runtimeConfiguration,
+        context.dependencies.defaultRuntimeConfig,
+      )
+    },
   })
 
   registry.register({
