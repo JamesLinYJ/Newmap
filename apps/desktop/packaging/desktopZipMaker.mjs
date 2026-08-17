@@ -29,7 +29,7 @@ export class DesktopZipMaker extends MakerBase {
   async make({ dir, makeDir, packageJSON, targetArch, targetPlatform }) {
     const portableSuffix = targetPlatform === 'linux' ? '-remote-client' : ''
     const baseName = path.basename(dir).replace(/\.app$/iu, '')
-    const zipName = `${baseName}-${packageJSON.version}${portableSuffix}.zip`
+    const zipName = `${baseName}-${packageJSON.version}-${targetPlatform}-${targetArch}${portableSuffix}.zip`
     const zipPath = path.resolve(makeDir, 'zip', targetPlatform, targetArch, zipName)
     const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'geo-agent-platform-zip-'))
     try {
