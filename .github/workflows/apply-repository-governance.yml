@@ -1,0 +1,35 @@
+name: Apply Repository Governance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: Apply repository rules and security settings
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Validate governance declaration
+        run: node scripts/apply-repository-governance.mjs --dry-run
+
+      - name: Apply governance through GitHub REST API
+        env:
+          REPOSITORY_ADMIN_TOKEN: ${{ secrets.REPOSITORY_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${REPOSITORY_ADMIN_TOKEN}" ]]; then
+            echo '缺少 REPOSITORY_ADMIN_TOKEN 仓库 Secret。' >&2
+            exit 1
+          fi
+          node scripts/apply-repository-governance.mjs \
+            --repository "${GITHUB_REPOSITORY}"

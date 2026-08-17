@@ -19,13 +19,20 @@
     "build": "npm run typecheck && electron-vite build",
     "package": "npm run package:windows",
     "package:windows": "npm --prefix ../.. run build:desktop && electron-forge package --platform win32 --arch x64",
+    "package:macos:x64": "npm --prefix ../.. run build:desktop && electron-forge package --platform darwin --arch x64",
+    "package:macos:arm64": "npm --prefix ../.. run build:desktop && electron-forge package --platform darwin --arch arm64",
+    "package:linux": "npm --prefix ../.. run build:desktop && electron-forge package --platform linux --arch x64",
     "make": "npm run make:windows",
     "make:windows": "npm --prefix ../.. run build:desktop && pwsh -NoProfile -ExecutionPolicy Bypass -File ../../scripts/prepare-squirrel-vendor.ps1 && electron-forge make --platform win32 --arch x64",
-    "make:linux:rpm": "npm --prefix ../.. run release:runtime:linux && npm --prefix ../.. run verify:runtime && npm --prefix ../.. run build:desktop && electron-forge make --platform linux --arch x64",
+    "make:macos:x64": "npm --prefix ../.. run build:desktop && electron-forge make --platform darwin --arch x64",
+    "make:macos:arm64": "npm --prefix ../.. run build:desktop && electron-forge make --platform darwin --arch arm64",
+    "make:linux": "npm --prefix ../.. run release:runtime:linux && npm run make:linux:from-runtime",
+    "make:linux:rpm": "npm run make:linux",
     "make:release": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../scripts/make-desktop-release.ps1",
     "lint": "oxlint src --type-aware",
     "test": "vitest run src",
-    "test:watch": "vitest src"
+    "test:watch": "vitest src",
+    "make:linux:from-runtime": "npm --prefix ../.. run verify:runtime && npm --prefix ../.. run build:desktop && electron-forge make --platform linux --arch x64"
   },
   "devDependencies": {
     "@better-auth/electron": "1.6.27",
