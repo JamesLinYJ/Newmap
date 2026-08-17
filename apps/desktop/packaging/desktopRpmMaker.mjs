@@ -15,15 +15,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
-const redhatInstaller = require('electron-installer-redhat')
-const RedhatInstaller = redhatInstaller.Installer
 const specTemplatePath = fileURLToPath(new URL('./desktop-rpm.spec.ejs', import.meta.url))
-
-class Rpm6CompatibleInstaller extends RedhatInstaller {
-  async createSpec() {
-    return this.createTemplatedFile(specTemplatePath, this.specPath)
-  }
-}
 
 export class DesktopRpmMaker extends MakerBase {
   name = 'desktop-rpm'
@@ -31,10 +23,13 @@ export class DesktopRpmMaker extends MakerBase {
   requiredExternalBinaries = ['rpmbuild']
 
   isSupportedOnCurrentPlatform() {
-    return this.isInstalled('electron-installer-redhat')
+    return process.platform === 'linux' && this.isInstalled('electron-installer-redhat')
   }
 
   async make({ dir, makeDir, targetArch }) {
+    if (process.platform !== 'linux') {
+      throw new Error('RPM maker 只能在 Linux 主机执行。')
+    }
     const outDir = path.resolve(makeDir, 'rpm', targetArch)
     await this.ensureDirectory(outDir)
     const options = await createRpm({
@@ -49,6 +44,17 @@ export class DesktopRpmMaker extends MakerBase {
 }
 
 async function createRpm(input) {
+  // electron-installer-redhat is intentionally loaded at execution time. Forge
+  // imports every configured maker while reading forge.config.mjs, including on
+  // Windows and macOS where this Linux-only package is not installed.
+  const redhatInstaller = require('electron-installer-redhat')
+  const RedhatInstaller = redhatInstaller.Installer
+  class Rpm6CompatibleInstaller extends RedhatInstaller {
+    async createSpec() {
+      return this.createTemplatedFile(specTemplatePath, this.specPath)
+    }
+  }
+
   const installer = new Rpm6CompatibleInstaller({
     ...input,
     logger: input.logger ?? (() => undefined),
