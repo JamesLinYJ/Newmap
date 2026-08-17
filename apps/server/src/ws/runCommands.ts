@@ -16,6 +16,7 @@ import {
   runGoalInputSchema,
 } from '../schemas/types.js'
 
+import { assertRunCheckpointResumable } from '../agent/runResumePolicy.js'
 import { optionalPositiveInteger, requiredRunProvider } from './payload.js'
 import { respondDecision } from './decisionCommand.js'
 import { reserveRunCapture, sendRunSnapshot, snapshotRun, subscribeToRun } from './subscriptions.js'
@@ -146,14 +147,12 @@ export function registerRunCommands(registry: WsCommandRegistry): void {
       const auth = requireAuth(context.auth)
       const run = context.dependencies.store.getRun(payload.runId)
       const checkpoint = await context.dependencies.store.getRunCheckpoint(payload.runId)
-      if (checkpoint.pendingToolCallIds.length) {
-        await context.dependencies.store.updateRunStatus(payload.runId, 'requires_action')
-        throw new Error(`运行包含状态未知的工具调用，禁止自动重放：${checkpoint.pendingToolCallIds.join(', ')}`)
-      }
+      assertRunCheckpointResumable(run, checkpoint)
+      if (!run.threadId) throw new Error(`运行 '${payload.runId}' 缺少 threadId`)
       if (!run.runtimeConfigSnapshot) throw new Error(`运行 '${payload.runId}' 缺少 runtimeConfigSnapshot`)
       context.dependencies.usageStats.assertWorkspaceCanStartModelRun(auth)
       subscribeToRun(context.ws, payload.runId, context.dependencies.store, context.dependencies.events, context.subscriptions)
-      context.runTasks.startDetached({
+      context.runTasks.startDetachedIfIdle({
         runId: payload.runId,
         threadId: run.threadId,
         sessionId: run.sessionId,

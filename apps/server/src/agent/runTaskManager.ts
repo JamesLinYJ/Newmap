@@ -123,6 +123,18 @@ export class RunTaskManager {
     })
   }
 
+  /**
+   * Idempotent admission for durable continuation workflows. The check and task
+   * registration execute synchronously in the same event-loop turn, so two
+   * retries cannot both acquire one run identity. Returning false means the
+   * exact run is already active; it never redirects to another run.
+   */
+  startDetachedIfIdle(options: RunOptions, target: RunTaskCompletionTarget = {}): boolean {
+    if (this.activeTasks.has(options.runId) || this.launchingRunIds.has(options.runId)) return false
+    this.startDetached(options, target)
+    return true
+  }
+
   cancel(runId: string): Promise<AnalysisRun> {
     const backgroundTaskId = this.activeBackgroundTaskIds.get(runId) ?? runId
     if (this.backgroundTasks?.get(backgroundTaskId)?.status === 'running') this.backgroundTasks.cancel(backgroundTaskId)
