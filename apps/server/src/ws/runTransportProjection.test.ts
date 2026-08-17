@@ -22,10 +22,46 @@ import { describe, expect, it } from 'vitest'
 import {
   projectConversationItemForTransport,
   projectRunEventForTransport,
+  projectRunForTransport,
   projectRunSnapshotForTransport,
 } from './runTransportProjection.js'
 
 describe('run realtime transport projection', () => {
+  it('never transports the internal runtime configuration snapshot', () => {
+    const run = analysisRunSchema.parse({
+      id: 'run_secret_projection',
+      sessionId: 'session_1',
+      threadId: 'thread_1',
+      workspaceId: 'workspace_1',
+      visibility: 'workspace',
+      userQuery: '测试配置投影',
+      status: 'queued',
+      runtimeConfigSnapshot: {
+        sdk: {
+          mcp: {
+            enabled: true,
+            servers: [{
+              name: 'private-mcp',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              headers: { Authorization: 'Bearer secret-value' },
+              env: { API_TOKEN: 'secret-value' },
+            }],
+          },
+        },
+      },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(1).toISOString(),
+      state: { sessionId: 'session_1', threadId: 'thread_1', userQuery: '测试配置投影' },
+    })
+
+    const projected = projectRunForTransport(run)
+
+    expect(run.runtimeConfigSnapshot).not.toBeNull()
+    expect(projected.runtimeConfigSnapshot).toBeNull()
+    expect(JSON.stringify(projected)).not.toContain('secret-value')
+  })
+
   it('keeps canonical large values server-side and produces a bounded client snapshot', () => {
     const coordinates = Array.from({ length: 14_000 }, (_, index) => [
       118 + index / 100_003,
