@@ -1,5 +1,5 @@
-Geo Agent Platform remote-service client
+Geo Agent Platform portable remote-service client
 
-This Windows/macOS package does not install a local managed Runtime Service.
+This portable package does not install or start the local managed runtime.
 On first launch, configure the HTTPS endpoint of a compatible Geo Agent Platform service.
 Loopback HTTP is permitted only for a service already running on this computer.
