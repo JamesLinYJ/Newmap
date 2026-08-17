@@ -226,7 +226,7 @@ describe('desktop packaging contract', () => {
         'zip',
         'linux',
         'x64',
-        `${PRODUCT_EXECUTABLE_BASENAME}-linux-x64-0.1.0-remote-client.zip`,
+        `${PRODUCT_EXECUTABLE_BASENAME}-linux-x64-0.1.0-linux-x64-remote-client.zip`,
       ))
       const archive = await readFile(artifact)
       expect(archive.subarray(0, 4).toString('hex')).toBe('504b0304')
