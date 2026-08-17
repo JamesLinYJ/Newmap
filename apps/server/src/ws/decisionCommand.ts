@@ -18,8 +18,8 @@ import { WebSocket } from 'ws'
 
 import type { AnalysisRun, DecisionRequest } from '../schemas/types.js'
 import type { AuthContext } from '../security/types.js'
+import { scopeRuntimeConfigToPrincipal } from '../security/runtimePrincipalScope.js'
 import type { RunTaskManager } from '../agent/runTaskManager.js'
-import { scopeMemoryContextConfig } from '../memory/paths.js'
 import { nowUtc } from '../utils/ids.js'
 import type { WsDependencies } from './dependencies.js'
 import { optionalString, requiredRunProvider, requiredString } from './payload.js'
@@ -104,17 +104,7 @@ async function scopedRuntimeConfigForAuth(dependencies: WsDependencies, auth: Au
     dependencies.store.runtimeConfiguration,
     dependencies.defaultRuntimeConfig,
   )
-  return {
-    ...resolved,
-    developer: {
-      ...resolved.developer,
-      enabled: resolved.developer.enabled && auth.roles.some(binding => binding.role === 'platform_admin'),
-    },
-    context: scopeMemoryContextConfig(dependencies.store.runtimeRoot, resolved.context, {
-      workspaceId: auth.defaultWorkspaceId,
-      userId: auth.userId,
-    }),
-  }
+  return scopeRuntimeConfigToPrincipal(dependencies.store.runtimeRoot, resolved, auth)
 }
 
 function selectedApprovalValue(decision: DecisionRequest, optionId: string | null): boolean {
