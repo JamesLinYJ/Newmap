@@ -160,8 +160,12 @@ test('repository workflows declare all native release and required security boun
     "needs.validate.outputs.create_tag != 'true'",
   ]) assert.ok(packages.includes(required), `package workflow missing ${required}`)
   assert.doesNotMatch(publishScript, /git\s+tag\s+--annotate/u)
-  const enableDependencyGraphAt = governanceScript.indexOf('/vulnerability-alerts')
-  const enforceRulesAt = governanceScript.indexOf('/rulesets')
+  const enableDependencyGraphAt = governanceScript.indexOf(
+    "await request(`${repositoryPath}/vulnerability-alerts`",
+  )
+  const enforceRulesAt = governanceScript.indexOf(
+    "const existingRulesets = await request(`${repositoryPath}/rulesets`",
+  )
   assert.ok(enableDependencyGraphAt >= 0 && enforceRulesAt >= 0)
   assert.ok(enableDependencyGraphAt < enforceRulesAt, 'security prerequisites must precede ruleset enforcement')
   assert.match(codeql, /security-events:\s*write/u)
