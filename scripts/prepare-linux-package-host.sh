@@ -9,13 +9,17 @@ fi
 sudo apt-get update
 sudo apt-get install --yes rpm
 
+# The package host only needs third-party Python dependencies that back the
+# distro dependency checks. First-party workspace packages are built into the
+# managed Runtime Service by create-runtime-service-artifact.mjs; exporting an
+# editable workspace path here both leaks the runner checkout path and is
+# incompatible with uv's all-or-nothing hash-checking mode.
 requirements="${RUNNER_TEMP}/worker-release-requirements.txt"
 uv export \
   --project apps/worker \
   --locked \
   --no-dev \
-  --no-emit-project \
-  --no-emit-workspace \
+  --no-emit-local \
   --output-file "${requirements}"
 sudo "$(command -v uv)" pip install \
   --system \
