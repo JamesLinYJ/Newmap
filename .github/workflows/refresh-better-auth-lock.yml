@@ -1,0 +1,67 @@
+name: Refresh Better Auth integration lock
+
+on:
+  push:
+    branches:
+      - agent/all-dependabot-updates
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/refresh-better-auth-lock.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-better-auth-integration-lock
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/all-dependabot-updates
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Regenerate the npm lock from declared workspace dependencies
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Verify locked installation
+        run: npm ci
+
+      - name: Verify one Better Auth core instance serves every workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find apps -path '*/node_modules/@better-auth/core' -print -quit | grep -q .; then
+            echo 'Detected a workspace-local @better-auth/core copy; the authentication type universe is still split.' >&2
+            find apps -path '*/node_modules/@better-auth/core' -print >&2
+            exit 1
+          fi
+          npm ls @better-auth/core @better-auth/electron better-auth --all
+
+      - name: Verify server type construction
+        run: npm run build --workspace geo-agent-server
+
+      - name: Commit the generated lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- package-lock.json; then
+            echo 'package-lock.json did not change after declaring the shared Better Auth peer providers.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'fix(deps): align Better Auth peer dependency lock'
+          git push origin HEAD:agent/all-dependabot-updates
