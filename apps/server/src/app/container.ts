@@ -13,7 +13,7 @@ import path from 'node:path'
 import { sql } from 'drizzle-orm'
 
 import { defaultRuntimeConfig } from '../agent/defaultRuntimeConfig.js'
-import { OpenAIAgentsRuntime } from '../agent/runtime.js'
+import { OpenAIAgentsRuntime, type OpenAIAgentsRuntimeOptions } from '../agent/runtime.js'
 import { RunTaskManager } from '../agent/runTaskManager.js'
 import { createDb, type Database } from '../db/connection.js'
 import { verifyDatabaseSchemaCompatibility } from '../db/schemaCompatibility.js'
