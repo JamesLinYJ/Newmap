@@ -12,23 +12,13 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
   exit 1
 fi
 
-git config user.name 'github-actions[bot]'
-git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
-  existing="$(git rev-list -n 1 "${RELEASE_TAG}")"
-  if [[ "${existing}" != "${SOURCE_REVISION}" ]]; then
-    echo "标签 ${RELEASE_TAG} 已指向 ${existing}，不能改写为 ${SOURCE_REVISION}。" >&2
-    exit 1
-  fi
-elif [[ "${GITHUB_EVENT_NAME:-}" == 'workflow_dispatch' ]]; then
-  git tag --annotate "${RELEASE_TAG}" "${SOURCE_REVISION}" \
-    --message "Geo Agent Platform ${RELEASE_VERSION}"
-  git push origin "refs/tags/${RELEASE_TAG}"
-else
-  echo "标签 ${RELEASE_TAG} 不存在。" >&2
+# Production packaging is triggered by the version tag itself. This publishing
+# boundary never creates or moves tags; doing so here would start a second
+# production matrix and race two writers against one Release.
+if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+  echo "标签 ${RELEASE_TAG} 不存在；生产发布只能由既有版本 tag 触发。" >&2
   exit 1
 fi
-
 tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
 if [[ "${tag_commit}" != "${SOURCE_REVISION}" ]]; then
   echo "标签 ${RELEASE_TAG} 指向 ${tag_commit}，与构建提交 ${SOURCE_REVISION} 不一致。" >&2
