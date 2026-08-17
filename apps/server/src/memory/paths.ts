@@ -9,6 +9,7 @@
 //   协助:       OpenAI Codex:GPT-5.5
 // --------------------------------------------------------------------------
 
+import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
@@ -32,6 +33,11 @@ export interface MemoryPathConfig {
   teamDir: string
 }
 
+export interface MemoryPrincipal {
+  workspaceId: string
+  userId: string
+}
+
 export function createMemoryPathConfig(
   runtimeRoot: string,
   config: AgentRuntimeConfig['context'],
@@ -52,6 +58,31 @@ export function createMemoryPathConfig(
     runtimeRoot: path.resolve(runtimeRoot),
     privateDir: ensureTrailingSeparator(path.resolve(privateDir)),
     teamDir: ensureTrailingSeparator(path.resolve(teamDir)),
+  }
+}
+
+/**
+ * Resolve one principal's durable memory roots from the administrator-configured
+ * base directories. The returned context can be snapshotted on a run, so every
+ * later memory operation uses the same tenant boundary without relying on
+ * process-global state.
+ */
+export function scopeMemoryContextConfig(
+  runtimeRoot: string,
+  config: AgentRuntimeConfig['context'],
+  principal: MemoryPrincipal,
+  projectRoot = process.cwd(),
+): AgentRuntimeConfig['context'] {
+  if (!principal.workspaceId.trim() || !principal.userId.trim()) {
+    throw new MemoryPathError('记忆主体必须同时包含 workspaceId 和 userId')
+  }
+  const roots = createMemoryPathConfig(runtimeRoot, config, projectRoot)
+  const workspaceKey = stablePrincipalKey(principal.workspaceId)
+  const userKey = stablePrincipalKey(principal.userId)
+  return {
+    ...config,
+    privateMemoryDir: path.join(stripTrailingSeparator(roots.privateDir), 'principals', workspaceKey, userKey),
+    teamMemoryDir: path.join(stripTrailingSeparator(roots.teamDir), 'workspaces', workspaceKey),
   }
 }
 
@@ -118,11 +149,19 @@ function stableProjectKey(projectRoot: string): string {
   return normalized.replace(/^-+|-+$/gu, '') || 'workspace'
 }
 
+function stablePrincipalKey(value: string): string {
+  return createHash('sha256').update(value.trim(), 'utf8').digest('hex').slice(0, 32)
+}
+
 function resolveConfiguredBase(value: string, runtimeRoot: string): string {
   if (value.startsWith('~/') || value.startsWith('~\\')) {
     return path.join(homedir(), value.slice(2))
   }
   return path.isAbsolute(value) ? value : path.join(runtimeRoot, value)
+}
+
+function stripTrailingSeparator(value: string): string {
+  return value.endsWith(path.sep) ? value.slice(0, -1) : value
 }
 
 function ensureTrailingSeparator(value: string): string {
