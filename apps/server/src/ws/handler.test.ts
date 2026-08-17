@@ -86,7 +86,10 @@ function createWsHandler(server: Parameters<typeof createWsHandlerBase>[0], depe
     dependencies.store,
     dependencies.toolRegistry,
     dependencies.modelRegistry,
-    { createSandboxClient: dependencies.createSandboxClient },
+    {
+      createSandboxClient: dependencies.createSandboxClient,
+      authorizationLease: async auth => auth,
+    },
   )
   const runTasks = dependencies.runTasks ?? new RunTaskManager(runtime, dependencies.store)
   const usageStats = dependencies.usageStats ?? new UsageStatsService(dependencies.store, dependencies.env ?? testEnv())
