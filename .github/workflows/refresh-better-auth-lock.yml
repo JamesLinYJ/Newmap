@@ -49,6 +49,13 @@ jobs:
           fi
           npm ls @better-auth/core @better-auth/electron better-auth --all
 
+      - name: Build server prerequisite workspaces
+        run: |
+          npm run build --workspace @geo-agent-platform/db
+          npm run build --workspace @geo-agent-platform/shared-types
+          npm run build --workspace @geo-agent-platform/conversation-presentation
+          npm run build --workspace @geo-agent-platform/operations-supervisor
+
       - name: Verify server type construction
         run: npm run build --workspace geo-agent-server
 
