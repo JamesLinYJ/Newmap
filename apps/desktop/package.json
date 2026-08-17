@@ -65,7 +65,7 @@
     "@vitejs/plugin-react": "^6.0.5",
     "@xyflow/react": "^12.11.3",
     "archiver": "8.0.0",
-    "better-auth": "1.6.27",
+    "better-auth": "1.6.29",
     "conf": "15.1.0",
     "date-fns": "^4.4.0",
     "electron": "43.4.0",
