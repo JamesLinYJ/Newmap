@@ -17,7 +17,18 @@ export interface SecretPathConfig {
   GEO_AGENT_PLATFORM_LOCAL_ROOT_SECRET_FILE?: string
 }
 
-const SENSITIVE_FILE_NAME = /^(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?)$|\.(?:secret|token|pem|key|p12|pfx|jks|keystore)$/iu
+const SENSITIVE_FILE_NAME = /^(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.dockercfg|credentials(?:\.json)?|application_default_credentials\.json|kubeconfig|auth\.json)$|\.(?:secret|token|pem|key|p12|pfx|jks|keystore)$/iu
+const SENSITIVE_DIRECTORY_NAMES = new Set([
+  '.aws',
+  '.azure',
+  '.docker',
+  '.kube',
+])
+const SENSITIVE_CONFIG_SUBDIRECTORIES = new Set([
+  'gcloud',
+  'gh',
+  'hub',
+])
 
 /**
  * 允许根目录不是秘密读取授权。此拒绝层不可被 Agent 参数或 allowlist 覆盖，
@@ -48,7 +59,15 @@ export function isDeveloperPathSensitive(
     if (resolved && samePath(absolute, resolved)) return true
   }
 
-  return absolute.split(/[\\/]+/u).some(segment => SENSITIVE_FILE_NAME.test(segment))
+  const segments = absolute.split(/[\\/]+/u).filter(Boolean)
+  if (segments.some(segment => SENSITIVE_FILE_NAME.test(segment))) return true
+  const normalized = segments.map(segment => segment.toLowerCase())
+  if (normalized.some(segment => SENSITIVE_DIRECTORY_NAMES.has(segment))) return true
+  return normalized.some((segment, index) => (
+    segment === '.config'
+    && Boolean(normalized[index + 1])
+    && SENSITIVE_CONFIG_SUBDIRECTORIES.has(normalized[index + 1]!)
+  ))
 }
 
 /** 返回 ripgrep 的硬排除 glob；调用方仍需保留路径级拒绝作为第二道防线。 */
@@ -68,6 +87,23 @@ export function sensitiveRipgrepGlobs(root: string, config: SecretPathConfig = p
     '!**/id_dsa',
     '!**/id_ecdsa',
     '!**/id_ed25519',
+    '!**/.npmrc',
+    '!**/.pypirc',
+    '!**/.netrc',
+    '!**/.git-credentials',
+    '!**/.dockercfg',
+    '!**/credentials',
+    '!**/credentials.json',
+    '!**/application_default_credentials.json',
+    '!**/kubeconfig',
+    '!**/auth.json',
+    '!**/.aws/**',
+    '!**/.azure/**',
+    '!**/.docker/**',
+    '!**/.kube/**',
+    '!**/.config/gcloud/**',
+    '!**/.config/gh/**',
+    '!**/.config/hub/**',
   ]
   const runtimeRoot = resolveConfiguredPath(config.RUNTIME_ROOT)
   if (runtimeRoot) appendRelativeDirectoryGlob(globs, root, path.join(runtimeRoot, 'ops'))
