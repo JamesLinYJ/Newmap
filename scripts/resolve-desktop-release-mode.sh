@@ -3,6 +3,7 @@ set -euo pipefail
 
 version="$(node scripts/validate-release-version.mjs)"
 production=false
+create_tag=false
 release_tag=''
 
 if [[ "${GITHUB_REF_TYPE:-}" == 'tag' ]]; then
@@ -20,13 +21,17 @@ elif [[ "${REQUESTED_PUBLISH:-false}" == 'true' ]]; then
   fi
   release_tag="v${REQUESTED_VERSION}"
   node scripts/validate-release-version.mjs "${release_tag}"
-  production=true
+  # Manual publication only creates the immutable version tag. The tag push is
+  # the sole production-build trigger so two signed matrices can never race on
+  # the same GitHub Release.
+  create_tag=true
 fi
 
 source_revision="$(git rev-parse "${GITHUB_SHA}^{commit}")"
 source_date_epoch="$(git show -s --format=%ct "${source_revision}")"
 {
   echo "production=${production}"
+  echo "create_tag=${create_tag}"
   echo "release_tag=${release_tag}"
   echo "source_date_epoch=${source_date_epoch}"
   echo "source_revision=${source_revision}"
