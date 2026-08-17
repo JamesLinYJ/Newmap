@@ -23,7 +23,7 @@ test('Better Auth packages share one exact version and one physical lockfile ins
   assert.equal(rootPackage.dependencies?.['@better-auth/core'], version)
   assert.equal(rootPackage.dependencies?.['@better-auth/electron'], version)
 
-  assert.equal(desktopPackage.dependencies?.['better-auth'], version)
+  assert.equal(desktopPackage.devDependencies?.['better-auth'], version)
   assert.equal(desktopPackage.devDependencies?.['@better-auth/electron'], version)
   assert.equal(serverPackage.dependencies?.['better-auth'], version)
   assert.equal(serverPackage.dependencies?.['@better-auth/electron'], version)
