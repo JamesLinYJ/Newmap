@@ -123,12 +123,23 @@ test('repository workflows declare all native release and required security boun
   ])
 
   const read = relative => readFile(path.join(projectRoot, relative), 'utf8')
-  const [packages, codeql, dependencyReview, dependabot, governanceWorkflow, ci] = await Promise.all([
+  const [
+    packages,
+    codeql,
+    dependencyReview,
+    dependabot,
+    governanceWorkflow,
+    governanceScript,
+    publishScript,
+    ci,
+  ] = await Promise.all([
     read('.github/workflows/package-desktop.yml'),
     read('.github/workflows/codeql.yml'),
     read('.github/workflows/dependency-review.yml'),
     read('.github/dependabot.yml'),
     read('.github/workflows/apply-repository-governance.yml'),
+    read('scripts/apply-repository-governance.mjs'),
+    read('scripts/publish-desktop-release.sh'),
     read('.github/workflows/ci.yml'),
   ])
   for (const required of [
@@ -145,7 +156,14 @@ test('repository workflows declare all native release and required security boun
     'RUNTIME_MANIFEST_ED25519_PRIVATE_KEY_BASE64',
     'actions/attest@v4',
     'SHA256SUMS',
+    'Create immutable release tag',
+    "needs.validate.outputs.create_tag != 'true'",
   ]) assert.ok(packages.includes(required), `package workflow missing ${required}`)
+  assert.doesNotMatch(publishScript, /git\s+tag\s+--annotate/u)
+  const enableDependencyGraphAt = governanceScript.indexOf('/vulnerability-alerts')
+  const enforceRulesAt = governanceScript.indexOf('/rulesets')
+  assert.ok(enableDependencyGraphAt >= 0 && enforceRulesAt >= 0)
+  assert.ok(enableDependencyGraphAt < enforceRulesAt, 'security prerequisites must precede ruleset enforcement')
   assert.match(codeql, /security-events:\s*write/u)
   assert.match(codeql, /CodeQL \(\$\{\{ matrix\.language \}\}\)/u)
   assert.match(dependencyReview, /pull-requests:\s*write/u)
