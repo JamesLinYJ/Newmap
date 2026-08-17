@@ -3,8 +3,12 @@ import path from 'node:path'
 import type { ToolContext } from '../../../framework/types.js'
 import { isInsidePath, parseExplicitAllowedRoots } from './pathPolicy.js'
 
-/** Require both the per-run developer switch and an admin allowlist intersection. */
+/** Require an explicit platform-admin principal plus both runtime and deployment root grants. */
 export function assertDeveloperMode(context: ToolContext): string[] {
+  const auth = context.auth
+  if (!auth || !auth.roles.some(binding => binding.role === 'platform_admin')) {
+    throw new Error('开发者工具仅允许平台管理员执行。')
+  }
   const config = context.runtimeConfig?.developer
   if (!config?.enabled) throw new Error('当前运行未显式启用开发者模式。')
   if (!config.allowedRoots.length) throw new Error('开发者模式没有配置允许根目录。')
