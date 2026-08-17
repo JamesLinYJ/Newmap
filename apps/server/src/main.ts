@@ -23,7 +23,6 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { metricsResponse, normalizedRouteLabel, observeHttpMetrics } from './observability/metrics.js'
 import {
-  annotateHttpRequestFailure,
   logger,
   logHttpRequestSummary,
   traceId,
@@ -33,12 +32,12 @@ import { LocalAgentTracing } from './observability/agentTracing.js'
 import { getEnv } from './framework/env.js'
 import { artifactRoutes } from './routes/artifacts.js'
 import { desktopExportRoutes } from './routes/desktopExports.js'
+import { routeErrorResponse } from './routes/errors.js'
 import { fileRoutes } from './routes/files.js'
 import { layerRoutes } from './routes/layers.js'
 import { mapRoutes } from './routes/map.js'
 import { meteorologyRoutes } from './routes/meteorology.js'
 import { createWsHandler } from './ws/handler.js'
-import { AuthorizationError } from './security/authorizationService.js'
 import { requireHttpAuth, securityRoutes } from './security/routes.js'
 import {
   authRateLimitMiddleware,
@@ -132,10 +131,8 @@ app.route('/', mapRoutes({
 }))
 app.route('/', meteorologyRoutes(container.runtimeRoot, container.fileLifecycle, container.store, container.security, env))
 app.onError((error, c) => {
-  if (error instanceof AuthorizationError) return c.json({ detail: error.message }, 403)
-  if (error.message === '未登录。') return c.json({ detail: '未登录' }, 401)
-  annotateHttpRequestFailure(error)
-  return c.json({ detail: '服务处理失败。请查看服务端日志。' }, 500)
+  const response = routeErrorResponse(error)
+  return c.json({ detail: response.detail }, response.status as never)
 })
 app.notFound(platformNotFoundHandler)
 

@@ -181,6 +181,8 @@ async function startDesktop(logger: DesktopSystemLogger): Promise<void> {
   const supervisor = runtime
     ? new DesktopSupervisorGateway(runtime, logger)
     : new RemoteDesktopOperationsGateway(apiBaseUrl, setup)
+  const downloads = new DesktopDownloadService(apiBaseUrl, auth, { logger })
+  await downloads.initialize()
   const shutdown = new DesktopShutdownCoordinator(
     auth,
     supervisor,
@@ -198,7 +200,7 @@ async function startDesktop(logger: DesktopSystemLogger): Promise<void> {
     api: new DesktopApiGateway(apiBaseUrl, auth),
     auth,
     control,
-    downloads: new DesktopDownloadService(apiBaseUrl, auth),
+    downloads,
     diagnosticExports: new DesktopDiagnosticExportService(),
     exports: new DesktopExportService(apiBaseUrl, auth),
     files,
@@ -214,14 +216,31 @@ async function startDesktop(logger: DesktopSystemLogger): Promise<void> {
     deploymentMode: startup.deploymentMode,
     autoAuth: autoAuth !== null,
   })
-  app.on('before-quit', () => {
+
+  let shutdownStarted = false
+  app.on('before-quit', event => {
+    if (shutdownStarted) return
+    event.preventDefault()
+    shutdownStarted = true
     logger.info('desktop_stopping')
     uninstallNativeMenu()
     revokeMicrophoneOnAuthChange()
     control.close()
     supervisor.close()
-    void auth.close().catch(error => logger.error('desktop_identity_close_failed', error))
-    logger.close()
+    void Promise.allSettled([
+      downloads.shutdown(),
+      auth.close(),
+    ]).then(results => {
+      const [downloadsResult, authResult] = results
+      if (downloadsResult?.status === 'rejected') {
+        logger.error('desktop_temporary_artifact_shutdown_failed', downloadsResult.reason)
+      }
+      if (authResult?.status === 'rejected') {
+        logger.error('desktop_identity_close_failed', authResult.reason)
+      }
+      logger.close()
+      app.quit()
+    })
   })
 }
 

@@ -65,9 +65,21 @@ export class SlidingWindowRateLimiter {
   }
 }
 
-/** HTTP 限流工厂：按 IP 和 IP+邮箱 的默认窗口。 */
+/**
+ * Better Auth 使用两层独立预算：IP 是不可由请求体轮换的粗粒度边界，
+ * identity 是 IP+规范化身份的细粒度边界。
+ */
+export function createAuthIpRateLimiter(): SlidingWindowRateLimiter {
+  return new SlidingWindowRateLimiter(30, 60_000) // 30 req/min/IP
+}
+
+export function createAuthIdentityRateLimiter(): SlidingWindowRateLimiter {
+  return new SlidingWindowRateLimiter(10, 60_000) // 10 req/min/IP+identity
+}
+
+/** 保留旧工厂名作为 identity limiter 的明确别名。 */
 export function createAuthRateLimiter(): SlidingWindowRateLimiter {
-  return new SlidingWindowRateLimiter(10, 60_000) // 10 req/min
+  return createAuthIdentityRateLimiter()
 }
 
 export function createApiRateLimiter(): SlidingWindowRateLimiter {

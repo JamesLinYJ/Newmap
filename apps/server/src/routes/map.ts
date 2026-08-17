@@ -21,7 +21,9 @@ import { MapTileGateway } from '../map/mapTileGateway.js'
 import { TiandituBasemapGateway, type TiandituTileKind } from '../map/tiandituBasemapGateway.js'
 import type { SecurityServices } from '../security/routes.js'
 import { requireAuth } from '../security/routes.js'
+import { StoreNotFoundError } from '../store/storeErrors.js'
 import { MapStore } from '../store/postgres/mapStore.js'
+import { HttpClientError } from './errors.js'
 
 const idSchema = z.string().trim().min(1).max(180).regex(/^[A-Za-z0-9_-]+$/u)
 const tileParamsSchema = z.object({
@@ -132,8 +134,8 @@ async function authorizeThread(
   action: 'read' | 'update',
 ): Promise<void> {
   const scope = await mapStore.getThreadScope(threadId)
-  if (!scope) throw new Error(`线程 '${threadId}' 不存在`)
-  await security.authorization.assertResourceWorkspace(requireAuth(c), 'layer', action, scope)
+  if (!scope) throw new StoreNotFoundError(`线程 '${threadId}' 不存在`)
+  await security.authorization.assertResourceWorkspace(requireAuth(c), 'thread', action, scope)
 }
 
 async function authorizeLayer(
@@ -144,7 +146,7 @@ async function authorizeLayer(
   action: 'read',
 ): Promise<void> {
   const scope = await mapStore.getLayerScope(mapLayerId)
-  if (!scope) throw new Error(`地图图层 '${mapLayerId}' 不存在`)
+  if (!scope) throw new StoreNotFoundError(`地图图层 '${mapLayerId}' 不存在`)
   const auth = requireAuth(c)
   if (scope.system) {
     await security.authorization.enforce(auth, 'layer', action, {
@@ -174,6 +176,6 @@ function tileResponse(
 
 function parseId(value: unknown, label: string): string {
   const parsed = idSchema.safeParse(value)
-  if (!parsed.success) throw new Error(`${label} 无效`)
+  if (!parsed.success) throw new HttpClientError(`${label} 无效`)
   return parsed.data
 }

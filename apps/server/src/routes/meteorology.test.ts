@@ -105,7 +105,8 @@ describe('meteorology routes', () => {
     form.append('file', new Blob(['netcdf'], { type: 'application/x-netcdf' }), 'weather.nc')
     const response = await app.request('/api/v1/meteorology/datasets', { method: 'POST', body: form })
 
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({ detail: '气象数据上传失败。' })
     expect(deleted).toEqual(['file-uploaded'])
   })
 
