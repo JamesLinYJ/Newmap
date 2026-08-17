@@ -19,7 +19,7 @@
     "@geo-agent-platform/db": "file:../../packages/db",
     "@geo-agent-platform/operations-supervisor": "file:../../packages/operations-supervisor",
     "@geo-agent-platform/shared-types": "file:../../packages/shared-types",
-    "@hono/node-server": "^2.1.0",
+    "@hono/node-server": "^2.1.1",
     "@hono/zod-validator": "^0.9.0",
     "@openai/agents": "0.15.0",
     "@turf/turf": "^7.4.0",
