@@ -47,7 +47,7 @@
     "@geo-agent-platform/conversation-presentation": "file:../../packages/conversation-presentation",
     "@geo-agent-platform/operations-supervisor": "file:../../packages/operations-supervisor",
     "@geo-agent-platform/shared-types": "file:../../packages/shared-types",
-    "@hookform/resolvers": "^5.7.1",
+    "@hookform/resolvers": "^5.8.0",
     "@radix-ui/react-accordion": "^1.2.20",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-popover": "^1.1.23",
