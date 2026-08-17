@@ -15,7 +15,7 @@
     "test:watch": "node scripts/run-vitest-with-env.mjs src"
   },
   "dependencies": {
-    "@better-auth/electron": "1.6.27",
+    "@better-auth/electron": "1.6.29",
     "@geo-agent-platform/db": "file:../../packages/db",
     "@geo-agent-platform/operations-supervisor": "file:../../packages/operations-supervisor",
     "@geo-agent-platform/shared-types": "file:../../packages/shared-types",
