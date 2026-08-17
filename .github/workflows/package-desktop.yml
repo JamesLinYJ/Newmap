@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: '签名、创建 v<version> 标签并发布 GitHub Release'
+        description: '从 main 创建不可变 v<version> 标签；标签事件负责签名打包与发布'
         required: true
         type: boolean
         default: false
@@ -42,6 +42,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       production: ${{ steps.release.outputs.production }}
+      create_tag: ${{ steps.release.outputs.create_tag }}
       release_tag: ${{ steps.release.outputs.release_tag }}
       source_date_epoch: ${{ steps.release.outputs.source_date_epoch }}
       source_revision: ${{ steps.release.outputs.source_revision }}
@@ -68,8 +69,40 @@ jobs:
           REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
         run: bash scripts/resolve-desktop-release-mode.sh
 
+  create-release-tag:
+    name: Create immutable release tag
+    if: needs.validate.outputs.create_tag == 'true'
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+      SOURCE_REVISION: ${{ needs.validate.outputs.source_revision }}
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create and push version tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "标签 ${RELEASE_TAG} 已存在；版本标签不可覆盖或重建。" >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --annotate "${RELEASE_TAG}" "${SOURCE_REVISION}" \
+            --message "Geo Agent Platform ${RELEASE_VERSION}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+
   package:
     name: Package ${{ matrix.label }}
+    if: needs.validate.outputs.create_tag != 'true'
     needs: validate
     strategy:
       fail-fast: false
