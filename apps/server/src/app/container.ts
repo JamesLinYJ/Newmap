@@ -40,7 +40,7 @@ import { ensureMeteorologicalTables } from '../routes/meteorology.js'
 import { ensureSecurityTables } from '../security/database.js'
 import { BetterAuthService } from '../security/authService.js'
 import { SecurityAdminService } from '../security/adminService.js'
-import { AuthorizationService } from '../security/authorizationService.js'
+import { AuthorizationError, AuthorizationService } from '../security/authorizationService.js'
 import { PlatformIdentityService } from '../security/platformIdentityService.js'
 import type { SecurityServices } from '../security/routes.js'
 import { PlatformPersistenceFacade } from '../store/platformPersistenceFacade.js'
@@ -220,7 +220,24 @@ export async function createAppContainer(input: {
     store,
     toolRegistry,
     modelRegistry,
-    agentTracing ? { agentTracing } : {},
+    {
+      ...(agentTracing ? { agentTracing } : {}),
+      authorizationLease: async (auth, run) => {
+        if (!run.workspaceId) {
+          throw new AuthorizationError(`运行 '${run.id}' 缺少 workspaceId，无法刷新执行授权。`)
+        }
+        const refreshed = auth.authSessionId.startsWith('automation:')
+          ? await security.auth.buildServiceAuthContext(auth.userId, run.workspaceId)
+          : await refreshInteractiveAuthContext(security, auth)
+        await security.authorization.assertResourceWorkspace(refreshed, 'run', 'execute', {
+          workspaceId: run.workspaceId,
+          createdByUserId: run.createdByUserId,
+          visibility: run.visibility,
+          resourceId: run.id,
+        })
+        return refreshed
+      },
+    },
     modelCompletions,
   )
   const usageStats = new UsageStatsService(store, env)
@@ -367,6 +384,18 @@ export async function createAppContainer(input: {
     })
     throw error
   }
+}
+
+async function refreshInteractiveAuthContext(
+  security: SecurityServices,
+  auth: Parameters<NonNullable<OpenAIAgentsRuntimeOptions['authorizationLease']>>[0],
+) {
+  if (!(await security.auth.isAuthContextActive(auth))) {
+    throw new AuthorizationError('登录会话已失效，运行授权已撤销。')
+  }
+  const roles = await security.auth.listUserRoles(auth.userId)
+  if (!roles.length) throw new AuthorizationError('用户已失去平台角色，运行授权已撤销。')
+  return { ...auth, roles }
 }
 
 async function validateWorkerContracts(env: Env, toolRegistry: ToolRegistry): Promise<string | null> {
