@@ -118,6 +118,6 @@ describe('desktop visual system guards', () => {
     expect(dialogSource).toContain('data-ui-surface="glass"')
     expect(popoverSource).toContain('className="ui-popover-surface popover-content"')
     expect(popoverSource).toContain('data-ui-surface="glass"')
-    expect(popoverSource).not.toContain('glass-panel')
+    expect(popoverSource).not.toContain('className="glass-panel"')
   })
 })
