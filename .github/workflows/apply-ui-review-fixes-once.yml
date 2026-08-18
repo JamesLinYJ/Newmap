@@ -1,0 +1,104 @@
+name: Apply UI review fixes once
+
+on:
+  push:
+    branches:
+      - codex/ui-system-cleanup-v0.1.5
+    paths:
+      - .github/workflows/apply-ui-review-fixes-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout review branch
+        uses: actions/checkout@v7
+        with:
+          ref: codex/ui-system-cleanup-v0.1.5
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Apply exact review fixes
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}')
+              target.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'apps/desktop/src/renderer/features/debug/DebugPage.tsx',
+              "import { LiquidGlassLayer } from '../../shared/components/LiquidGlassLayer'\n",
+              '',
+          )
+          replace_once(
+              'apps/desktop/src/renderer/features/debug/DebugPage.tsx',
+              '      <LiquidGlassLayer />\n',
+              '',
+          )
+          replace_once(
+              'apps/desktop/src/renderer/features/conversation/ChatPanel.tsx',
+              '<button className="alert-btn" onClick={() => submitRename(onRenameTask)} disabled={!titleDraft.trim()}>保存</button>',
+              '<button className="alert-btn primary" onClick={() => submitRename(onRenameTask)} disabled={!titleDraft.trim()}>保存</button>',
+          )
+
+          css_path = 'apps/desktop/src/renderer/app/styles/ui-pages.css'
+          replace_once(
+              css_path,
+              '''.dc-action-button,\n.ui-dialog-actions button:not(.is-secondary) {\n  color: var(--ui-accent-contrast);\n  border-color: var(--ui-accent);\n  background: var(--ui-accent);\n}\n\n.dc-action-button:hover:not(:disabled),\n.ui-dialog-actions button:not(.is-secondary):hover:not(:disabled) {\n  color: var(--ui-accent-contrast);\n  border-color: var(--ui-accent-hover);\n  background: var(--ui-accent-hover);\n}\n''',
+              '''.dc-action-button,\n.ui-dialog-actions :where(.primary, .is-primary, [data-variant="primary"]) {\n  color: var(--ui-accent-contrast);\n  border-color: var(--ui-accent);\n  background: var(--ui-accent);\n}\n\n.dc-action-button:hover:not(:disabled),\n.ui-dialog-actions :where(.primary, .is-primary, [data-variant="primary"]):hover:not(:disabled) {\n  color: var(--ui-accent-contrast);\n  border-color: var(--ui-accent-hover);\n  background: var(--ui-accent-hover);\n}\n''',
+          )
+
+          test_path = 'apps/desktop/src/renderer/__tests__/visualSystem.test.ts'
+          replace_once(
+              test_path,
+              '''async function readRendererFile(relativePath: string): Promise<string> {\n  return readFile(path.join(rendererRoot, relativePath), 'utf8')\n}\n''',
+              '''async function readRendererFile(relativePath: string): Promise<string> {\n  return readFile(path.join(rendererRoot, relativePath), 'utf8')\n}\n\nasync function collectRendererTsxFiles(directory: string): Promise<string[]> {\n  const entries = await readdir(directory, { withFileTypes: true })\n  const nested = await Promise.all(entries.map(async entry => {\n    const absolutePath = path.join(directory, entry.name)\n    if (entry.isDirectory()) return collectRendererTsxFiles(absolutePath)\n    return entry.isFile() && entry.name.endsWith('.tsx') ? [absolutePath] : []\n  }))\n  return nested.flat()\n}\n''',
+          )
+          replace_once(
+              test_path,
+              '''    const [layerSource, generatorSource, assetEntries] = await Promise.all([\n      readRendererFile('shared/components/LiquidGlassLayer.tsx'),\n      readFile(path.join(repositoryRoot, 'scripts', 'generate-liquid-glass-maps.mjs'), 'utf8'),\n      readdir(path.join(rendererRoot, 'assets', 'liquid-glass')),\n    ])\n''',
+              '''    const [layerSource, generatorSource, assetEntries, rendererTsxFiles] = await Promise.all([\n      readRendererFile('shared/components/LiquidGlassLayer.tsx'),\n      readFile(path.join(repositoryRoot, 'scripts', 'generate-liquid-glass-maps.mjs'), 'utf8'),\n      readdir(path.join(rendererRoot, 'assets', 'liquid-glass')),\n      collectRendererTsxFiles(rendererRoot),\n    ])\n''',
+          )
+          replace_once(
+              test_path,
+              '''    expect(generatorSource).not.toContain('const SPECS')\n    expect(assetEntries.filter(name => name.endsWith('.png')).sort()).toEqual(['panel.png'])\n  })\n''',
+              '''    expect(generatorSource).not.toContain('const SPECS')\n    expect(assetEntries.filter(name => name.endsWith('.png')).sort()).toEqual(['panel.png'])\n\n    const rendererTsxSources = await Promise.all(\n      rendererTsxFiles.map(file => readFile(file, 'utf8')),\n    )\n    const mountCount = rendererTsxSources.reduce(\n      (count, source) => count + (source.match(/<LiquidGlassLayer(?:\\s|\\/|>)/gu)?.length ?? 0),\n      0,\n    )\n    expect(mountCount).toBe(1)\n  })\n''',
+          )
+          PY
+
+      - name: Regenerate package lock metadata
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Verify generated diff
+        run: |
+          git diff --check
+          git diff --exit-code -- .github/workflows/apply-ui-review-fixes-once.yml
+          test "$(grep -R --include='*.tsx' -o '<LiquidGlassLayer[ />]' apps/desktop/src/renderer | wc -l)" -eq 1
+          node -e "const lock=require('./package-lock.json'); if(lock.version!=='0.1.5'||lock.packages[''].version!=='0.1.5'||lock.packages['apps/desktop'].version!=='0.1.5') process.exit(1)"
+
+      - name: Commit review fixes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            package-lock.json \
+            apps/desktop/src/renderer/features/debug/DebugPage.tsx \
+            apps/desktop/src/renderer/features/conversation/ChatPanel.tsx \
+            apps/desktop/src/renderer/app/styles/ui-pages.css \
+            apps/desktop/src/renderer/__tests__/visualSystem.test.ts
+          git commit -m 'fix(desktop): address UI system review feedback'
+          git push origin HEAD:codex/ui-system-cleanup-v0.1.5
