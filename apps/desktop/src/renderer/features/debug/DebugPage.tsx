@@ -43,7 +43,6 @@ import {
   supportsAgentSdkLiveSupervisor,
 } from '../../shared/providerCapabilities'
 import { StatusPill } from '../../shared/components/StatusPill'
-import { LiquidGlassLayer } from '../../shared/components/LiquidGlassLayer'
 import { requestDesktopDocument } from '../../app/desktopNavigation'
 import { requestArtifactGeoJsonDownload } from '../artifacts/desktopArtifactDownload'
 import { ToolWorkbench } from './tools/ToolWorkbench'
@@ -299,7 +298,6 @@ export function DebugPage({
 
   return (
     <m.div className="debug-shell" {...buildFadeUpMotion(reducedMotion, 0, 12)}>
-      <LiquidGlassLayer />
       <m.header className="debug-shell__header" layout {...buildFadeUpMotion(reducedMotion, 0.02, 12)}>
         <div>
           <div className="panel__eyebrow">内部调试页</div>

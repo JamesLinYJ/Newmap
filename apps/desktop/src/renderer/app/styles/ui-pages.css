@@ -306,14 +306,14 @@
 }
 
 .dc-action-button,
-.ui-dialog-actions button:not(.is-secondary) {
+.ui-dialog-actions :where(.primary, .is-primary, [data-variant="primary"]) {
   color: var(--ui-accent-contrast);
   border-color: var(--ui-accent);
   background: var(--ui-accent);
 }
 
 .dc-action-button:hover:not(:disabled),
-.ui-dialog-actions button:not(.is-secondary):hover:not(:disabled) {
+.ui-dialog-actions :where(.primary, .is-primary, [data-variant="primary"]):hover:not(:disabled) {
   color: var(--ui-accent-contrast);
   border-color: var(--ui-accent-hover);
   background: var(--ui-accent-hover);

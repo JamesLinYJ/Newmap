@@ -20,12 +20,23 @@ async function readRendererFile(relativePath: string): Promise<string> {
   return readFile(path.join(rendererRoot, relativePath), 'utf8')
 }
 
+async function collectRendererTsxFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const nested = await Promise.all(entries.map(async entry => {
+    const absolutePath = path.join(directory, entry.name)
+    if (entry.isDirectory()) return collectRendererTsxFiles(absolutePath)
+    return entry.isFile() && entry.name.endsWith('.tsx') ? [absolutePath] : []
+  }))
+  return nested.flat()
+}
+
 describe('desktop visual system guards', () => {
   it('keeps exactly one liquid-glass displacement material', async () => {
-    const [layerSource, generatorSource, assetEntries] = await Promise.all([
+    const [layerSource, generatorSource, assetEntries, rendererTsxFiles] = await Promise.all([
       readRendererFile('shared/components/LiquidGlassLayer.tsx'),
       readFile(path.join(repositoryRoot, 'scripts', 'generate-liquid-glass-maps.mjs'), 'utf8'),
       readdir(path.join(rendererRoot, 'assets', 'liquid-glass')),
+      collectRendererTsxFiles(rendererRoot),
     ])
 
     expect(layerSource).toContain("import surfaceMap from '../../assets/liquid-glass/panel.png'")
@@ -40,6 +51,15 @@ describe('desktop visual system guards', () => {
     expect(generatorSource).toContain("const LEGACY_OUTPUTS = ['bar.png', 'chip.png', 'strong.png']")
     expect(generatorSource).not.toContain('const SPECS')
     expect(assetEntries.filter(name => name.endsWith('.png')).sort()).toEqual(['panel.png'])
+
+    const rendererTsxSources = await Promise.all(
+      rendererTsxFiles.map(file => readFile(file, 'utf8')),
+    )
+    const mountCount = rendererTsxSources.reduce(
+      (count, source) => count + (source.match(/<LiquidGlassLayer(?:\s|\/|>)/gu)?.length ?? 0),
+      0,
+    )
+    expect(mountCount).toBe(1)
   })
 
   it('maps every legacy glass token to the canonical material', async () => {

@@ -518,7 +518,7 @@ export function ChatPanel(props: ChatPanelProps) {
             <input className="input" value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} autoFocus placeholder="输入新标题" />
             <GlassDialogActions>
               <button className="alert-btn" onClick={closeDialog}>取消</button>
-              <button className="alert-btn" onClick={() => submitRename(onRenameTask)} disabled={!titleDraft.trim()}>保存</button>
+              <button className="alert-btn primary" onClick={() => submitRename(onRenameTask)} disabled={!titleDraft.trim()}>保存</button>
             </GlassDialogActions>
           </>
         ) : dialog?.mode === 'delete' ? (
