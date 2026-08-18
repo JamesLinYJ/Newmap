@@ -7,6 +7,11 @@
 //   日期:       2026年07月07日
 //   作者:       JamesLinYJ
 //   协助:       OpenAI Codex:GPT-5.5
+//
+//   维护记录 (2026-08-18):
+//     作者: JamesLinYJ
+//     协助: OpenAI ChatGPT:GPT-5.6 Pro
+//     说明: 接入统一浮层语义，避免弹窗继续维护独立玻璃配方。
 // --------------------------------------------------------------------------
 
 import * as Dialog from '@radix-ui/react-dialog'
@@ -31,7 +36,7 @@ export function GlassDialog({ open, onOpenChange, title, description, children, 
           <Dialog.Portal forceMount>
             <Dialog.Overlay asChild>
               <m.div
-                className="alert-overlay"
+                className="ui-dialog-overlay alert-overlay"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -40,20 +45,21 @@ export function GlassDialog({ open, onOpenChange, title, description, children, 
             </Dialog.Overlay>
             <Dialog.Content asChild>
               <m.div
-                className="alert"
-                initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                className="ui-dialog-surface alert"
+                data-ui-surface="glass"
+                initial={{ opacity: 0, scale: 0.97, y: 8 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, y: 8 }}
+                exit={{ opacity: 0, scale: 0.97, y: 8 }}
                 transition={{ type: 'spring', stiffness: 360, damping: 36 }}
               >
                 {title && (
                   <Dialog.Title asChild>
-                    <h2>{title}</h2>
+                    <h2 className="ui-dialog-title">{title}</h2>
                   </Dialog.Title>
                 )}
                 {description && (
                   <Dialog.Description asChild>
-                    <p>{description}</p>
+                    <p className="ui-dialog-description">{description}</p>
                   </Dialog.Description>
                 )}
                 {children}
@@ -67,7 +73,7 @@ export function GlassDialog({ open, onOpenChange, title, description, children, 
 }
 
 export function GlassDialogActions({ children }: { children: ReactNode }) {
-  return <div className="alert-actions">{children}</div>
+  return <div className="ui-dialog-actions alert-actions">{children}</div>
 }
 
 export { Dialog }

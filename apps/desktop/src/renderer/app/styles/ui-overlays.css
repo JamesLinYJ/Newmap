@@ -1,0 +1,208 @@
+/* +-------------------------------------------------------------------------
+ *
+ *   地理智能平台 - UI 设计系统：浮层、滚动与可访问性
+ *
+ *   文件:       ui-overlays.css
+ *
+ *   日期:       2026年08月18日
+ *   作者:       JamesLinYJ
+ *   协助:       OpenAI ChatGPT:GPT-5.6 Pro
+ * -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------
+ * 统一浮层
+ * -------------------------------------------------------------------------- */
+
+.ui-dialog-overlay,
+.alert-overlay,
+.gf-system-logs {
+  position: fixed;
+  z-index: 800;
+  inset: 0;
+  background: var(--ui-overlay);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.ui-dialog-surface,
+.ui-popover-surface {
+  color: var(--ui-text);
+  border: 1px solid var(--ui-glass-border);
+  background: var(--ui-glass-fill);
+  box-shadow: var(--ui-shadow-lg);
+  backdrop-filter:
+    var(--ui-glass-filter)
+    blur(var(--ui-glass-blur))
+    saturate(155%)
+    contrast(1.04);
+  -webkit-backdrop-filter:
+    var(--ui-glass-filter)
+    blur(var(--ui-glass-blur))
+    saturate(155%)
+    contrast(1.04);
+}
+
+.ui-dialog-surface {
+  z-index: 801;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  padding: 20px;
+  overflow: auto;
+  border-radius: var(--ui-radius-xl);
+}
+
+.ui-dialog-title,
+.ui-dialog-description {
+  margin: 0;
+}
+
+.ui-dialog-title {
+  color: var(--ui-text);
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.ui-dialog-description {
+  margin-top: 6px;
+  margin-bottom: 16px;
+  color: var(--ui-text-muted);
+  line-height: 1.6;
+}
+
+.ui-dialog-actions,
+.alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.ui-popover-surface {
+  z-index: 820;
+  min-width: 220px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 10px;
+  border-radius: var(--ui-radius-lg);
+}
+
+.desktop-backend-notice {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+
+.gf-system-logs__panel {
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-lg);
+}
+
+.gf-system-logs__header,
+.gf-system-logs__filters,
+.gf-system-logs__diagnostics {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  background: var(--ui-surface-raised);
+}
+
+/* -------------------------------------------------------------------------
+ * 滚动与可访问性
+ * -------------------------------------------------------------------------- */
+
+#root :where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border-strong) transparent;
+}
+
+#root *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+#root *::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-border-strong);
+  background-clip: padding-box;
+}
+
+#root *::-webkit-scrollbar-thumb:hover {
+  background: var(--ui-text-subtle);
+  background-clip: padding-box;
+}
+
+#root *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@media (max-width: 1220px) {
+  .model-settings__provider-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-settings__hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .model-settings__summary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root,
+  #root *,
+  #root *::before,
+  #root *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  #root :where(button, [role="button"]):active {
+    transform: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  #root :where(button, input, textarea, select, [role="button"]) {
+    border-color: var(--ui-border-strong);
+  }
+
+  .ui-dialog-overlay,
+  .alert-overlay,
+  .gf-system-logs {
+    background: rgb(0 0 0 / 0.66);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .ui-dialog-surface,
+  .ui-popover-surface,
+  .workbench-account__menu {
+    border-color: var(--ui-border-strong);
+    background: var(--ui-surface);
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (forced-colors: active) {
+  #root :where(button, input, textarea, select, table, th, td) {
+    forced-color-adjust: auto;
+  }
+
+  .status-pill,
+  .ui-dialog-surface,
+  .ui-popover-surface,
+  .workbench-account__menu {
+    color: CanvasText;
+    border-color: CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+}

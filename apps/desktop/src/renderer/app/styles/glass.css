@@ -1,154 +1,357 @@
 /* +-------------------------------------------------------------------------
  *
- *   地理智能平台 - 玻璃质感与共享表面样式
+ *   地理智能平台 - 单一玻璃材质与共享表面
  *
  *   文件:       glass.css
  *
  *   日期:       2026年06月26日
  *   作者:       JamesLinYJ
  *   协助:       OpenAI Codex:GPT-5.5
+ *
+ *   维护记录 (2026-08-18):
+ *     作者: JamesLinYJ
+ *     协助: OpenAI ChatGPT:GPT-5.6 Pro
+ *     说明: 将 panel/strong/chip/bar 收敛为一个权威材质；内容卡片改用稳定实色表面。
  * -------------------------------------------------------------------------- */
 
-/* Liquid glass stabilization and shared surface tokens. */
+/*
+ * 材质边界
+ *
+ * 1. 只有浮动导航、弹窗与 Popover 可以使用折射玻璃。
+ * 2. 列表、表格、时间线、设置卡片和调试信息使用稳定内容表面。
+ * 3. 历史 class 名仅做兼容，不能再表达不同玻璃配方。
+ */
+
+:root {
+  --ui-font-sans:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI Variable",
+    "Segoe UI",
+    "PingFang SC",
+    "Noto Sans CJK SC",
+    "Microsoft YaHei UI",
+    sans-serif;
+  --ui-font-mono:
+    "SF Mono",
+    "SFMono-Regular",
+    ui-monospace,
+    "Cascadia Code",
+    "JetBrains Mono",
+    monospace;
+
+  --ui-canvas: #edf3f5;
+  --ui-canvas-soft: #f5f8f9;
+  --ui-surface: #ffffff;
+  --ui-surface-raised: #fbfdfd;
+  --ui-surface-muted: #f3f6f7;
+  --ui-surface-sunken: #e8eef0;
+  --ui-overlay: rgb(19 35 42 / 0.42);
+
+  --ui-text: #172a32;
+  --ui-text-muted: #60747d;
+  --ui-text-subtle: #7b8d94;
+  --ui-accent: #087f98;
+  --ui-accent-hover: #066f85;
+  --ui-accent-soft: #e4f4f7;
+  --ui-accent-contrast: #ffffff;
+  --ui-success: #21865b;
+  --ui-success-soft: #e7f6ef;
+  --ui-warning: #9a6500;
+  --ui-warning-soft: #fff4d7;
+  --ui-danger: #b04444;
+  --ui-danger-soft: #fff0ef;
+
+  --ui-border: #d2dde1;
+  --ui-border-strong: #bac9cf;
+  --ui-border-soft: rgb(84 111 122 / 0.14);
+  --ui-focus-ring: rgb(8 127 152 / 0.26);
+
+  --ui-radius-xs: 5px;
+  --ui-radius-sm: 8px;
+  --ui-radius-md: 12px;
+  --ui-radius-lg: 16px;
+  --ui-radius-xl: 22px;
+  --ui-radius-pill: 999px;
+
+  --ui-shadow-sm: 0 4px 14px rgb(28 57 68 / 0.08);
+  --ui-shadow-md: 0 12px 34px rgb(28 57 68 / 0.11);
+  --ui-shadow-lg: 0 24px 64px rgb(28 57 68 / 0.16);
+
+  --ui-motion-fast: 120ms;
+  --ui-motion-normal: 180ms;
+  --ui-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --ui-glass-fill:
+    linear-gradient(145deg, rgb(255 255 255 / 0.82), rgb(245 250 251 / 0.64));
+  --ui-glass-border: rgb(255 255 255 / 0.78);
+  --ui-glass-filter: url("#dc-liquid-glass-surface");
+  --ui-glass-blur: 18px;
+  --ui-glass-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 16px 42px rgb(29 60 72 / 0.14);
+}
 
 .digital-cartographer,
-.debug-shell {
-  --glass-panel-bg:
-    radial-gradient(circle at 12% -10%, rgb(255 255 255 / 0.46), transparent 34%),
-    linear-gradient(145deg, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0.065) 54%, rgb(255 255 255 / 0.12));
-  --glass-strong-bg:
-    radial-gradient(circle at 12% -12%, rgb(255 255 255 / 0.58), transparent 36%),
-    linear-gradient(145deg, rgb(255 255 255 / 0.33), rgb(255 255 255 / 0.10) 56%, rgb(255 255 255 / 0.16));
-  --glass-chip-bg:
-    radial-gradient(circle at 22% 10%, rgb(255 255 255 / 0.46), transparent 32%),
-    linear-gradient(145deg, rgb(255 255 255 / 0.30), rgb(255 255 255 / 0.09) 60%, rgb(255 255 255 / 0.14));
-  --glass-control-bg:
-    radial-gradient(circle at 26% 10%, rgb(255 255 255 / 0.62), transparent 32%),
-    linear-gradient(145deg, rgb(255 255 255 / 0.38), rgb(255 255 255 / 0.13) 58%, rgb(255 255 255 / 0.18));
-  --glass-control-hover:
-    radial-gradient(circle at 28% 10%, rgb(255 255 255 / 0.76), transparent 34%),
-    linear-gradient(145deg, rgb(255 255 255 / 0.48), rgb(255 255 255 / 0.17) 58%, rgb(255 255 255 / 0.14));
-  --glass-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.78),
-    inset 0 -1px 0 rgb(0 0 0 / 0.10),
-    0 22px 64px rgb(0 0 0 / 0.12);
-  --glass-shadow-soft:
-    inset 0 1px 0 rgb(255 255 255 / 0.68),
-    inset 0 -1px 0 rgb(0 0 0 / 0.07),
-    0 10px 28px rgb(0 0 0 / 0.08);
-  --glass-border: rgb(255 255 255 / 0.54);
+.debug-shell,
+.gf-desktop-shell,
+.dc-auth-screen {
+  /* 旧变量全部映射到同一套语义 token，避免视觉分叉。 */
+  --dc-accent: var(--ui-accent);
+  --dc-accent-2: var(--ui-text-muted);
+  --dc-ink: var(--ui-text);
+  --dc-muted: var(--ui-text-muted);
+  --dc-hairline: var(--ui-border);
+
+  --gf-chrome: var(--ui-canvas);
+  --gf-ribbon: var(--ui-surface-raised);
+  --gf-surface: var(--ui-surface);
+  --gf-surface-subtle: var(--ui-surface-muted);
+  --gf-border: var(--ui-border);
+  --gf-border-strong: var(--ui-border-strong);
+  --gf-text: var(--ui-text);
+  --gf-muted: var(--ui-text-muted);
+  --gf-focus: var(--ui-accent);
+  --gf-focus-soft: var(--ui-accent-soft);
+  --gf-healthy: var(--ui-success);
+  --gf-warning: var(--ui-warning);
+  --gf-danger: var(--ui-danger);
+
+  --glass-panel-bg: var(--ui-surface);
+  --glass-strong-bg: var(--ui-surface);
+  --glass-chip-bg: var(--ui-surface-muted);
+  --glass-control-bg: var(--ui-surface);
+  --glass-control-hover: var(--ui-accent-soft);
+  --glass-border: var(--ui-border);
+  --glass-shadow: var(--ui-shadow-md);
+  --glass-shadow-soft: var(--ui-shadow-sm);
+
+  --liquid-edge: var(--ui-glass-border);
+  --liquid-blur: var(--ui-glass-blur);
+  --liquid-filter: var(--ui-glass-filter);
+  --liquid-filter-panel: var(--ui-glass-filter);
+  --liquid-filter-strong: var(--ui-glass-filter);
+  --liquid-filter-chip: var(--ui-glass-filter);
 }
 
-/* SVG displacement stays on stable shell surfaces only. Frequently scrolling
-   rows use plain CSS backdrop blur to avoid repaint shimmer. */
-.cc-timeline .cc-user-prompt,
-.cc-timeline .cc-result-card,
-.cc-timeline .cc-tool-io-card,
-.cc-timeline .cc-tool-detail,
-.cc-timeline .cc-plan-panel,
-.cc-timeline .cc-plan-review-card__status,
-.cc-timeline .cc-plan-document,
-.cc-timeline .cc-plan-approval-box,
-.cc-timeline .cc-task-progress,
-.cc-timeline .cc-approval-card,
-.cc-timeline .cc-error-card,
-.cc-timeline .cc-system-card,
-.cc-decision-sheet,
-.tool-management__catalog .tool-card,
-.tool-mini-console__card,
-.tool-mini-app__automation-step,
-.tool-mini-app__state,
-.tool-mini-app__contract,
-.tool-mini-result,
-.artifact-list__item {
-  border-color: var(--glass-border);
-  background: var(--glass-panel-bg);
-  box-shadow: var(--glass-shadow-soft);
-  backdrop-filter: blur(14px) saturate(190%) contrast(1.08) brightness(1.04);
-  -webkit-backdrop-filter: blur(14px) saturate(190%) contrast(1.08) brightness(1.04);
+.liquid-glass-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-.cc-timeline .cc-user-prompt::before,
-.cc-timeline .cc-user-prompt::after,
-.cc-timeline .cc-result-card::before,
-.cc-timeline .cc-result-card::after,
-.cc-timeline .cc-tool-io-card::before,
-.cc-timeline .cc-tool-io-card::after,
-.cc-timeline .cc-tool-detail::before,
-.cc-timeline .cc-tool-detail::after,
-.cc-timeline .cc-plan-panel::before,
-.cc-timeline .cc-plan-panel::after,
-.cc-timeline .cc-plan-review-card__status::before,
-.cc-timeline .cc-plan-review-card__status::after,
-.cc-timeline .cc-plan-document::before,
-.cc-timeline .cc-plan-document::after,
-.cc-timeline .cc-plan-approval-box::before,
-.cc-timeline .cc-plan-approval-box::after,
-.cc-timeline .cc-task-progress::before,
-.cc-timeline .cc-task-progress::after,
-.cc-timeline .cc-approval-card::before,
-.cc-timeline .cc-approval-card::after,
-.cc-timeline .cc-error-card::before,
-.cc-timeline .cc-error-card::after,
-.cc-timeline .cc-system-card::before,
-.cc-timeline .cc-system-card::after,
-.cc-decision-sheet::before,
-.cc-decision-sheet::after {
-  opacity: 0.16;
-  transform: none;
+/* 唯一可折射材质。所有兼容 class 共享完全相同的配方。 */
+:where(
+  .liquid-glass-surface,
+  .glass,
+  .glass-subtle,
+  .glass-strong,
+  .glass-panel
+) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--ui-glass-border);
+  background: var(--ui-glass-fill);
+  box-shadow: var(--ui-glass-shadow);
+  backdrop-filter:
+    var(--ui-glass-filter)
+    blur(var(--ui-glass-blur))
+    saturate(155%)
+    contrast(1.04);
+  -webkit-backdrop-filter:
+    var(--ui-glass-filter)
+    blur(var(--ui-glass-blur))
+    saturate(155%)
+    contrast(1.04);
 }
 
-.cc-icon-button,
-.cc-mini-button,
-.cc-composer-tool,
-.cc-mode-trigger,
-.cc-decision-option,
-.cc-decision-submit,
-.toolbar-button,
-.nav-bar__status-chip,
-.dc-mobile-tab {
-  border-color: rgb(255 255 255 / 0.48);
-  background: var(--glass-chip-bg);
-  box-shadow: var(--glass-shadow-soft);
+:where(
+  .liquid-glass-surface,
+  .glass,
+  .glass-subtle,
+  .glass-strong,
+  .glass-panel
+)::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 0.34), transparent 34%),
+    linear-gradient(0deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.2));
+  content: "";
+  pointer-events: none;
 }
 
-.cc-icon-button:hover,
-.cc-mini-button:hover,
-.cc-composer-tool:hover,
-.cc-mode-trigger:hover,
-.cc-decision-option:hover,
-.toolbar-button:hover,
-.dc-mobile-tab:hover {
-  background: var(--glass-control-hover);
+:where(
+  .liquid-glass-surface,
+  .glass,
+  .glass-subtle,
+  .glass-strong,
+  .glass-panel
+) > * {
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * 内容表面不折射。高频滚动区保持清晰稳定，避免文字后的背景位移
+ * 和多层 backdrop-filter 叠加。
+ */
+:where(
+  .cc-timeline .cc-user-prompt,
+  .cc-timeline .cc-result-card,
+  .cc-timeline .cc-tool-io-card,
+  .cc-timeline .cc-tool-detail,
+  .cc-timeline .cc-plan-panel,
+  .cc-timeline .cc-plan-review-card__status,
+  .cc-timeline .cc-plan-document,
+  .cc-timeline .cc-plan-approval-box,
+  .cc-timeline .cc-task-progress,
+  .cc-timeline .cc-approval-card,
+  .cc-timeline .cc-error-card,
+  .cc-timeline .cc-system-card,
+  .cc-decision-sheet,
+  .tool-management__catalog .tool-card,
+  .tool-management__overview-card,
+  .tool-management__detail .panel,
+  .tool-provider-row,
+  .tool-management__schema-column,
+  .tool-mini-console,
+  .tool-mini-console__card,
+  .tool-mini-app,
+  .tool-mini-app__step,
+  .tool-mini-app__automation-step,
+  .tool-mini-app__state,
+  .tool-mini-app__contract,
+  .tool-mini-result,
+  .artifact-list__item,
+  .debug-transcript__entry,
+  .overview-card,
+  .panel
+) {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:where(
+  .cc-timeline .cc-user-prompt,
+  .cc-timeline .cc-result-card,
+  .cc-timeline .cc-tool-io-card,
+  .cc-timeline .cc-tool-detail,
+  .cc-timeline .cc-plan-panel,
+  .cc-timeline .cc-plan-review-card__status,
+  .cc-timeline .cc-plan-document,
+  .cc-timeline .cc-plan-approval-box,
+  .cc-timeline .cc-task-progress,
+  .cc-timeline .cc-approval-card,
+  .cc-timeline .cc-error-card,
+  .cc-timeline .cc-system-card,
+  .cc-decision-sheet
+)::before,
+:where(
+  .cc-timeline .cc-user-prompt,
+  .cc-timeline .cc-result-card,
+  .cc-timeline .cc-tool-io-card,
+  .cc-timeline .cc-tool-detail,
+  .cc-timeline .cc-plan-panel,
+  .cc-timeline .cc-plan-review-card__status,
+  .cc-timeline .cc-plan-document,
+  .cc-timeline .cc-plan-approval-box,
+  .cc-timeline .cc-task-progress,
+  .cc-timeline .cc-approval-card,
+  .cc-timeline .cc-error-card,
+  .cc-timeline .cc-system-card,
+  .cc-decision-sheet
+)::after {
+  display: none;
+}
+
+/* 小控件也使用实色交互表面，不再制造第二种“芯片玻璃”。 */
+:where(
+  .cc-icon-button,
+  .cc-mini-button,
+  .cc-composer-tool,
+  .cc-mode-trigger,
+  .cc-decision-option,
+  .cc-decision-submit,
+  .toolbar-button,
+  .nav-bar__status-chip,
+  .dc-mobile-tab
+) {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+  box-shadow: none;
+}
+
+:where(
+  .cc-icon-button,
+  .cc-mini-button,
+  .cc-composer-tool,
+  .cc-mode-trigger,
+  .cc-decision-option,
+  .cc-decision-submit,
+  .toolbar-button,
+  .dc-mobile-tab
+):hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-accent-soft);
 }
 
 @media (prefers-contrast: more) {
-  .digital-cartographer,
-  .debug-shell {
-    --glass-panel-bg: rgb(255 255 255 / 0.94);
-    --glass-strong-bg: rgb(255 255 255 / 0.96);
-    --glass-chip-bg: rgb(255 255 255 / 0.92);
-    --glass-control-bg: rgb(255 255 255 / 0.94);
-    --glass-control-hover: rgb(255 255 255 / 0.98);
-    --glass-border: rgb(15 23 42 / 0.30);
+  :root {
+    --ui-border: #71838b;
+    --ui-border-strong: #43565f;
+    --ui-text-muted: #40545d;
+    --ui-glass-fill: #ffffff;
+    --ui-glass-border: #43565f;
+    --ui-glass-shadow: none;
   }
 
-  .liquid-glass-surface,
-  .cc-panel,
-  .dc-card,
-  .panel,
-  .tool-mini-app {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+  :where(
+    .liquid-glass-surface,
+    .glass,
+    .glass-subtle,
+    .glass-strong,
+    .glass-panel
+  ) {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .liquid-glass-surface::before,
-  .glass::before,
-  .glass-subtle::before,
-  .glass-strong::before {
-    animation: none !important;
-    transform: none !important;
+  :where(
+    .liquid-glass-surface,
+    .glass,
+    .glass-subtle,
+    .glass-strong,
+    .glass-panel
+  )::before {
+    animation: none;
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :where(
+    .liquid-glass-surface,
+    .glass,
+    .glass-subtle,
+    .glass-strong,
+    .glass-panel
+  ) {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }

@@ -7,27 +7,37 @@
 //   日期:       2026年06月18日
 //   作者:       JamesLinYJ
 //   协助:       OpenAI Codex:GPT-5.5
+//
+//   维护记录 (2026-08-18):
+//     作者: JamesLinYJ
+//     协助: OpenAI ChatGPT:GPT-5.6 Pro
+//     说明: 删除按控件类型分裂的位移图，只生成一个权威表面材质。
 // --------------------------------------------------------------------------
 
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUTPUT = path.join(ROOT, 'apps/desktop/src/renderer/assets/liquid-glass')
-const SPECS = {
-  panel: { width: 180, height: 120, radius: 13, edge: 19, depth: 0.072, ripple: 0.0018 },
-  strong: { width: 210, height: 140, radius: 16, edge: 26, depth: 0.105, ripple: 0.0026 },
-  chip: { width: 110, height: 55, radius: 12, edge: 14, depth: 0.062, ripple: 0.0014 },
-  bar: { width: 320, height: 48, radius: 12, edge: 17, depth: 0.052, ripple: 0.0012 },
+const OUTPUT_NAME = 'panel.png'
+const LEGACY_OUTPUTS = ['bar.png', 'chip.png', 'strong.png']
+const SPEC = {
+  width: 180,
+  height: 120,
+  radius: 13,
+  edge: 19,
+  depth: 0.072,
+  ripple: 0.0018,
 }
 
 await mkdir(OUTPUT, { recursive: true })
-for (const [name, spec] of Object.entries(SPECS)) {
-  const pixels = buildMap(spec)
-  await writeFile(path.join(OUTPUT, `${name}.png`), encodePng(spec.width, spec.height, pixels))
-}
+await Promise.all(
+  LEGACY_OUTPUTS.map(name => rm(path.join(OUTPUT, name), { force: true })),
+)
+const pixels = buildMap(SPEC)
+await writeFile(path.join(OUTPUT, OUTPUT_NAME), encodePng(SPEC.width, SPEC.height, pixels))
 
 function buildMap(spec) {
   const pixelCount = spec.width * spec.height

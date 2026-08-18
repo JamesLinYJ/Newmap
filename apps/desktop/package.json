@@ -1,7 +1,7 @@
 {
   "name": "@geo-agent-platform/desktop",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "可配置产品代号的地理智能工作台",
   "author": {
     "name": "Geo Agent Platform Contributors"

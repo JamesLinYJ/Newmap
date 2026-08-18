@@ -1,0 +1,197 @@
+/* +-------------------------------------------------------------------------
+ *
+ *   地理智能平台 - UI 设计系统：对话、结果、状态、表格与代码
+ *
+ *   文件:       ui-content.css
+ *
+ *   日期:       2026年08月18日
+ *   作者:       JamesLinYJ
+ *   协助:       OpenAI ChatGPT:GPT-5.6 Pro
+ * -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------
+ * 对话、结果与状态
+ * -------------------------------------------------------------------------- */
+
+.cc-panel,
+.cc-conversation,
+.cc-composer,
+.cc-history-panel,
+.cc-decision-sheet {
+  color: var(--ui-text);
+}
+
+.cc-panel,
+.cc-composer {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.cc-timeline {
+  scrollbar-color: var(--ui-border-strong) transparent;
+}
+
+.cc-timeline :where(
+  .cc-user-prompt,
+  .cc-result-card,
+  .cc-tool-io-card,
+  .cc-tool-detail,
+  .cc-plan-panel,
+  .cc-plan-document,
+  .cc-task-progress,
+  .cc-approval-card,
+  .cc-system-card
+) {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+  box-shadow: none;
+}
+
+.cc-timeline .cc-user-prompt {
+  border-color: rgb(8 127 152 / 0.22);
+  background: var(--ui-accent-soft);
+}
+
+.cc-timeline .cc-error-card {
+  color: var(--ui-danger);
+  border-color: rgb(176 68 68 / 0.28);
+  background: var(--ui-danger-soft);
+}
+
+.cc-composer-tool,
+.cc-mode-trigger,
+.cc-icon-button,
+.cc-mini-button {
+  color: var(--ui-text-muted);
+}
+
+.cc-composer-tool:hover:not(:disabled),
+.cc-mode-trigger:hover:not(:disabled),
+.cc-icon-button:hover:not(:disabled),
+.cc-mini-button:hover:not(:disabled) {
+  color: var(--ui-accent-hover);
+}
+
+.status-pill {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-pill);
+  color: var(--ui-text-muted);
+  background: var(--ui-surface-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.status-pill--accent {
+  color: var(--ui-accent-hover);
+  border-color: rgb(8 127 152 / 0.22);
+  background: var(--ui-accent-soft);
+}
+
+.status-pill--success {
+  color: var(--ui-success);
+  border-color: rgb(33 134 91 / 0.22);
+  background: var(--ui-success-soft);
+}
+
+.status-pill--warning {
+  color: var(--ui-warning);
+  border-color: rgb(154 101 0 / 0.22);
+  background: var(--ui-warning-soft);
+}
+
+.status-pill--danger {
+  color: var(--ui-danger);
+  border-color: rgb(176 68 68 / 0.22);
+  background: var(--ui-danger-soft);
+}
+
+:where(
+  .dc-auth-card__error,
+  .model-settings__custom-error,
+  .panel__error,
+  .cc-error-card
+) {
+  color: var(--ui-danger);
+  border-color: rgb(176 68 68 / 0.28);
+  background: var(--ui-danger-soft);
+}
+
+:where(
+  .model-settings__custom-notice,
+  .panel__notice,
+  .cc-system-card
+) {
+  color: var(--ui-success);
+  border-color: rgb(33 134 91 / 0.22);
+  background: var(--ui-success-soft);
+}
+
+:where(
+  .panel__empty,
+  .model-settings__empty,
+  .account-muted
+) {
+  color: var(--ui-text-muted);
+  border-color: var(--ui-border);
+  background: var(--ui-surface-muted);
+}
+
+/* -------------------------------------------------------------------------
+ * 表格、代码与可滚动数据区
+ * -------------------------------------------------------------------------- */
+
+#root :where(table) {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+
+#root :where(th) {
+  color: var(--ui-text-muted);
+  border-bottom: 1px solid var(--ui-border-strong);
+  background: var(--ui-surface-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+}
+
+#root :where(td) {
+  border-bottom: 1px solid var(--ui-border);
+}
+
+#root :where(tbody tr:hover td) {
+  background: rgb(8 127 152 / 0.045);
+}
+
+.debug-pre,
+#root pre {
+  color: #243942;
+  border-color: var(--ui-border);
+  background: #f5f8f9;
+  box-shadow: none;
+}
+
+#root :where(code):not(pre code) {
+  padding: 0.1em 0.35em;
+  border-radius: var(--ui-radius-xs);
+  color: #2b4b57;
+  background: var(--ui-surface-sunken);
+}
+
+#root :where(
+  .gf-system-logs__table,
+  .debug-pre,
+  .usage-run-table,
+  .tool-mini-table-preview
+) {
+  scrollbar-color: var(--ui-border-strong) transparent;
+}

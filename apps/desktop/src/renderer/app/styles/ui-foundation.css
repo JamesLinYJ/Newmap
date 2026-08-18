@@ -1,0 +1,347 @@
+/* +-------------------------------------------------------------------------
+ *
+ *   地理智能平台 - UI 设计系统：基础、控件与桌面 chrome
+ *
+ *   文件:       ui-foundation.css
+ *
+ *   日期:       2026年08月18日
+ *   作者:       JamesLinYJ
+ *   协助:       OpenAI ChatGPT:GPT-5.6 Pro
+ * -------------------------------------------------------------------------- */
+
+:root {
+  color: var(--ui-text);
+  font-family: var(--ui-font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+#root,
+#root *,
+#root *::before,
+#root *::after {
+  box-sizing: border-box;
+}
+
+#root {
+  color: var(--ui-text);
+  background: var(--ui-canvas);
+}
+
+#root ::selection {
+  color: var(--ui-text);
+  background: rgb(8 127 152 / 0.18);
+}
+
+#root :where(h1, h2, h3, h4, p) {
+  text-wrap: pretty;
+}
+
+#root :where(code, pre, kbd, samp) {
+  font-family: var(--ui-font-mono);
+}
+
+#root :where(button, input, textarea, select) {
+  color: inherit;
+  font: inherit;
+}
+
+#root :where(button, [role="button"]) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root :where(button:not(:disabled), [role="button"]:not([aria-disabled="true"])) {
+  cursor: pointer;
+}
+
+#root :where(button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--ui-focus-ring);
+}
+
+#root :where(input, textarea, select):focus-visible {
+  border-color: var(--ui-accent);
+}
+
+#root :where(button, input, textarea, select):disabled,
+#root [aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+#root :where(input, textarea, select)::placeholder {
+  color: var(--ui-text-subtle);
+  opacity: 1;
+}
+
+#root :where(input, textarea, select) {
+  accent-color: var(--ui-accent);
+}
+
+#root :where(a) {
+  color: var(--ui-accent);
+  text-underline-offset: 0.18em;
+}
+
+#root :where(a:hover) {
+  color: var(--ui-accent-hover);
+}
+
+#root :where(hr) {
+  border: 0;
+  border-top: 1px solid var(--ui-border);
+}
+
+/* -------------------------------------------------------------------------
+ * 应用画布与桌面 chrome
+ * -------------------------------------------------------------------------- */
+
+.digital-cartographer,
+.gf-desktop-shell,
+.debug-shell,
+.model-settings,
+.account-page,
+.dc-security-page {
+  color: var(--ui-text);
+  background:
+    radial-gradient(circle at 12% 0%, rgb(8 127 152 / 0.08), transparent 30rem),
+    linear-gradient(180deg, var(--ui-canvas-soft), var(--ui-canvas));
+}
+
+.gf-desktop-shell {
+  isolation: isolate;
+}
+
+.gf-titlebar-region,
+.gf-ribbon,
+.gf-document-tabs,
+.gf-statusbar,
+.workbench-chrome {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  background: var(--ui-surface-raised);
+}
+
+.gf-titlebar-region {
+  box-shadow: 0 1px 0 var(--ui-border);
+}
+
+.gf-ribbon {
+  border-bottom: 1px solid var(--ui-border);
+  box-shadow: 0 5px 18px rgb(28 57 68 / 0.05);
+}
+
+.gf-workspace-panels {
+  background: var(--ui-canvas);
+}
+
+.gf-dock,
+.gf-document-workspace,
+.gf-document-canvas,
+.gf-assistant-body,
+.gf-contents-body {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.gf-dock {
+  box-shadow: none;
+}
+
+.gf-dock-title,
+.gf-contents-tabs {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  background: var(--ui-surface-raised);
+}
+
+.gf-dock-title button,
+.gf-panel-reveal,
+.workbench-chrome__icon {
+  color: var(--ui-text-muted);
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  transition:
+    color var(--ui-motion-fast) var(--ui-ease),
+    border-color var(--ui-motion-fast) var(--ui-ease),
+    background-color var(--ui-motion-fast) var(--ui-ease);
+}
+
+.gf-dock-title button:hover:not(:disabled),
+.gf-panel-reveal:hover:not(:disabled),
+.workbench-chrome__icon:hover:not(:disabled) {
+  color: var(--ui-accent-hover);
+  border-color: var(--ui-border);
+  background: var(--ui-accent-soft);
+}
+
+.gf-panel-separator {
+  position: relative;
+  background: var(--ui-border);
+}
+
+.gf-panel-separator::after {
+  position: absolute;
+  inset: 0 -3px;
+  content: "";
+}
+
+.gf-document-tabs {
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.gf-document-tab {
+  color: var(--ui-text-muted);
+  border-color: transparent;
+  background: transparent;
+}
+
+.gf-document-tab:hover {
+  color: var(--ui-text);
+  background: var(--ui-surface-muted);
+}
+
+.gf-document-tab.is-active {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  border-bottom-color: var(--ui-surface);
+  background: var(--ui-surface);
+}
+
+.gf-document-tab__close {
+  color: var(--ui-text-subtle);
+  border-radius: var(--ui-radius-xs);
+}
+
+.gf-document-tab__close:hover {
+  color: var(--ui-danger);
+  background: var(--ui-danger-soft);
+}
+
+.gf-ribbon-tabs button,
+.gf-contents-tabs button {
+  color: var(--ui-text-muted);
+  border-radius: var(--ui-radius-sm);
+  transition:
+    color var(--ui-motion-fast) var(--ui-ease),
+    background-color var(--ui-motion-fast) var(--ui-ease);
+}
+
+.gf-ribbon-tabs button:hover,
+.gf-contents-tabs button:hover {
+  color: var(--ui-text);
+  background: var(--ui-surface-muted);
+}
+
+.gf-ribbon-tabs button.is-active,
+.gf-contents-tabs button.is-active,
+.gf-ribbon-tabs button[aria-selected="true"],
+.gf-contents-tabs button[aria-selected="true"] {
+  color: var(--ui-accent-hover);
+  background: var(--ui-accent-soft);
+}
+
+.gf-command-search,
+.workbench-workspace-picker,
+.workbench-account__button {
+  color: var(--ui-text);
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.gf-command-search:focus-within,
+.workbench-workspace-picker:focus-within,
+.workbench-account__button:focus-visible {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus-ring);
+}
+
+.gf-command-search input,
+.workbench-workspace-picker select {
+  color: var(--ui-text);
+  background: transparent;
+}
+
+.workbench-chrome__brand strong,
+.workbench-account__copy strong {
+  color: var(--ui-text);
+}
+
+.workbench-chrome__brand small,
+.workbench-account__copy small,
+.workbench-workspace-picker > span {
+  color: var(--ui-text-muted);
+}
+
+.workbench-account__avatar {
+  color: var(--ui-accent-contrast);
+  background: var(--ui-accent);
+  box-shadow: none;
+}
+
+.workbench-account__menu {
+  z-index: 100;
+  min-width: 250px;
+  padding: 7px;
+  overflow: hidden;
+  border: 1px solid var(--ui-glass-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-glass-fill);
+  box-shadow: var(--ui-shadow-lg);
+  backdrop-filter:
+    var(--ui-glass-filter)
+    blur(var(--ui-glass-blur))
+    saturate(155%)
+    contrast(1.04);
+  -webkit-backdrop-filter:
+    var(--ui-glass-filter)
+    blur(var(--ui-glass-blur))
+    saturate(155%)
+    contrast(1.04);
+}
+
+.workbench-account__identity {
+  margin: 2px 2px 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.workbench-account__identity span,
+.workbench-account__identity small {
+  color: var(--ui-text-muted);
+}
+
+.workbench-account__item {
+  min-height: 36px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text);
+}
+
+.workbench-account__item:hover {
+  background: var(--ui-accent-soft);
+}
+
+.workbench-account__item--danger {
+  color: var(--ui-danger);
+}
+
+.workbench-account__item--danger:hover {
+  background: var(--ui-danger-soft);
+}
+
+.gf-statusbar {
+  color: var(--ui-text-muted);
+  border-top: 1px solid var(--ui-border);
+  box-shadow: 0 -1px 0 rgb(255 255 255 / 0.72);
+}
+
+.gf-statusbar .is-online {
+  color: var(--ui-success);
+}
+
+.gf-statusbar .is-error {
+  color: var(--ui-danger);
+}

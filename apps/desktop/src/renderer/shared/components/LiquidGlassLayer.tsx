@@ -7,32 +7,37 @@
 //   日期:       2026年06月18日
 //   作者:       JamesLinYJ
 //   协助:       OpenAI Codex:GPT-5.5
+//
+//   维护记录 (2026-08-18):
+//     作者: JamesLinYJ
+//     协助: OpenAI ChatGPT:GPT-5.6 Pro
+//     说明: 收敛为单一权威玻璃材质；旧 variant 仅保留调用兼容，不再改变视觉。
 // --------------------------------------------------------------------------
 
 // 位移图由 scripts/generate-liquid-glass-maps.mjs 预生成并由 Vite 加内容哈希。
-// 首帧只显示 CSS 玻璃，浏览器空闲后再启用共享 SVG 折射滤镜。
+// 首帧只显示稳定 CSS 表面，浏览器空闲后再启用唯一的共享 SVG 折射滤镜。
 
 import { createElement, useEffect, useState, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react'
-import panelMap from '../../assets/liquid-glass/panel.png'
-import strongMap from '../../assets/liquid-glass/strong.png'
-import chipMap from '../../assets/liquid-glass/chip.png'
-import barMap from '../../assets/liquid-glass/bar.png'
+import surfaceMap from '../../assets/liquid-glass/panel.png'
 
-type GlassVariant = 'panel' | 'strong' | 'chip' | 'bar'
+type LegacyGlassVariant = 'panel' | 'strong' | 'chip' | 'bar'
 type GlassElement = 'div' | 'section' | 'article' | 'aside' | 'header'
 
 interface LiquidGlassSurfaceProps extends Omit<HTMLAttributes<HTMLElement>, 'children'> {
   as?: GlassElement
   children: ReactNode
-  variant?: GlassVariant
+  /**
+   * @deprecated 仅用于兼容旧调用。所有值都映射到同一材质，
+   * 层级差异应通过布局、间距和语义表面表达。
+   */
+  variant?: LegacyGlassVariant
 }
 
-const FILTERS: Record<GlassVariant, { id: string; href: string; scale: number }> = {
-  panel: { id: 'dc-liquid-glass-panel', href: panelMap, scale: 0.09 },
-  strong: { id: 'dc-liquid-glass-strong', href: strongMap, scale: 0.132 },
-  chip: { id: 'dc-liquid-glass-chip', href: chipMap, scale: 0.078 },
-  bar: { id: 'dc-liquid-glass-bar', href: barMap, scale: 0.068 },
-}
+const CANONICAL_FILTER = {
+  id: 'dc-liquid-glass-surface',
+  href: surfaceMap,
+  scale: 0.09,
+} as const
 
 export function LiquidGlassLayer() {
   const [enhanced, setEnhanced] = useState(false)
@@ -60,36 +65,33 @@ export function LiquidGlassLayer() {
   return (
     <svg className="liquid-glass-defs" aria-hidden="true" focusable="false" width="0" height="0">
       <defs>
-        {(Object.entries(FILTERS) as Array<[GlassVariant, (typeof FILTERS)[GlassVariant]]>).map(([variant, filter]) => (
-          <filter
-            key={variant}
-            id={filter.id}
-            x="-0.08"
-            y="-0.08"
-            width="1.16"
-            height="1.16"
-            filterUnits="objectBoundingBox"
-            primitiveUnits="objectBoundingBox"
-            colorInterpolationFilters="sRGB"
-          >
-            <feImage
-              href={enhanced ? filter.href : undefined}
-              x="0"
-              y="0"
-              width="1"
-              height="1"
-              preserveAspectRatio="none"
-              result={`${variant}-map`}
-            />
-            <feDisplacementMap
-              in="SourceGraphic"
-              in2={`${variant}-map`}
-              xChannelSelector="R"
-              yChannelSelector="G"
-              scale={enhanced ? filter.scale : 0}
-            />
-          </filter>
-        ))}
+        <filter
+          id={CANONICAL_FILTER.id}
+          x="-0.08"
+          y="-0.08"
+          width="1.16"
+          height="1.16"
+          filterUnits="objectBoundingBox"
+          primitiveUnits="objectBoundingBox"
+          colorInterpolationFilters="sRGB"
+        >
+          <feImage
+            href={enhanced ? CANONICAL_FILTER.href : undefined}
+            x="0"
+            y="0"
+            width="1"
+            height="1"
+            preserveAspectRatio="none"
+            result="surface-map"
+          />
+          <feDisplacementMap
+            in="SourceGraphic"
+            in2="surface-map"
+            xChannelSelector="R"
+            yChannelSelector="G"
+            scale={enhanced ? CANONICAL_FILTER.scale : 0}
+          />
+        </filter>
       </defs>
     </svg>
   )
@@ -100,17 +102,22 @@ export function LiquidGlassSurface({
   children,
   className = '',
   style,
-  variant = 'panel',
+  variant: legacyVariant,
   ...props
 }: LiquidGlassSurfaceProps) {
+  // 保留旧 prop 只为避免调用方迁移噪声；视觉事实源始终只有一个。
+  void legacyVariant
+  const filter = `url("#${CANONICAL_FILTER.id}")`
   const liquidStyle = {
     ...style,
-    '--liquid-filter': `url("#${FILTERS[variant].id}")`,
+    '--ui-glass-filter': filter,
+    '--liquid-filter': filter,
   } as CSSProperties
 
   return createElement(as, {
     ...props,
-    className: `liquid-glass-surface liquid-glass-surface--${variant} ${className}`.trim(),
+    'data-ui-surface': 'glass',
+    className: `liquid-glass-surface ${className}`.trim(),
     style: liquidStyle,
   }, children)
 }
