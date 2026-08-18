@@ -2,9 +2,6 @@ name: Apply Repository Governance
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/ui-system-cleanup-v0.1.5
 
 permissions:
   contents: read
