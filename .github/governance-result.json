@@ -1,6 +1,0 @@
-{
-  "generatedAt": "2026-08-18T10:23:07.486Z",
-  "success": false,
-  "status": 1,
-  "details": "缺少 REPOSITORY_ADMIN_TOKEN 仓库 Secret。"
-}
