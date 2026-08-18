@@ -1,14 +1,17 @@
-name: Apply Repository Governance
+name: Apply Repository Governance Once
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - codex/apply-repository-governance-once
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   apply:
-    name: Apply repository rules and security settings
+    name: Apply repository rules and security settings once
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -23,13 +26,71 @@ jobs:
         run: node scripts/apply-repository-governance.mjs --dry-run
 
       - name: Apply governance through GitHub REST API
+        id: governance
+        continue-on-error: true
         env:
           REPOSITORY_ADMIN_TOKEN: ${{ secrets.REPOSITORY_ADMIN_TOKEN }}
         run: |
-          set -euo pipefail
+          set +e
           if [[ -z "${REPOSITORY_ADMIN_TOKEN}" ]]; then
-            echo '缺少 REPOSITORY_ADMIN_TOKEN 仓库 Secret。' >&2
-            exit 1
+            output='缺少 REPOSITORY_ADMIN_TOKEN 仓库 Secret。'
+            status=1
+          else
+            output="$(node scripts/apply-repository-governance.mjs \
+              --repository "${GITHUB_REPOSITORY}" 2>&1)"
+            status=$?
           fi
-          node scripts/apply-repository-governance.mjs \
-            --repository "${GITHUB_REPOSITORY}"
+          printf '%s\n' "${output}"
+          {
+            echo "status=${status}"
+            echo 'details<<GOVERNANCE_OUTPUT'
+            printf '%s\n' "${output}" | tail -n 40
+            echo 'GOVERNANCE_OUTPUT'
+          } >> "${GITHUB_OUTPUT}"
+          exit "${status}"
+
+      - name: Report result on UI cleanup pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.governance.outcome }}
+          DETAILS: ${{ steps.governance.outputs.details }}
+        run: |
+          node <<'NODE'
+          const success = process.env.OUTCOME === 'success'
+          const details = (process.env.DETAILS || '未生成执行详情。')
+            .replaceAll('```', '` ` `')
+            .slice(-5000)
+          const body = [
+            '<!-- repository-governance-once -->',
+            `### 仓库治理${success ? '已成功应用' : '执行失败'}`,
+            '',
+            success
+              ? 'Dependency Graph、安全修复与仓库规则已通过现有治理脚本应用。'
+              : '现有治理脚本未能完成；详情如下。',
+            '',
+            '```text',
+            details,
+            '```',
+          ].join('\n')
+          const response = await fetch(
+            `${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/issues/61/comments`,
+            {
+              method: 'POST',
+              headers: {
+                accept: 'application/vnd.github+json',
+                authorization: `Bearer ${process.env.GH_TOKEN}`,
+                'content-type': 'application/json',
+                'x-github-api-version': '2022-11-28',
+              },
+              body: JSON.stringify({ body }),
+            },
+          )
+          if (!response.ok) {
+            throw new Error(`无法回写治理结果：${response.status} ${await response.text()}`)
+          }
+          NODE
+
+      - name: Preserve failure conclusion
+        if: steps.governance.outcome != 'success'
+        run: exit 1
